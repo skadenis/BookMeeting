@@ -1,0 +1,10 @@
+{
+  "name": "bitrix-meetings-monorepo",
+  "private": true,
+  "version": "0.2.0",
+  "scripts": {
+    "start": "./run.sh",
+    "dev": "./run.sh dev",
+    "docker": "./run.sh docker"
+  }
+}

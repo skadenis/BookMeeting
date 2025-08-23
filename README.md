@@ -2,21 +2,23 @@
 
 Full-stack appointments management integrated in Bitrix24.
 
-## Quick start (Docker)
+## One-click run
 
-1. Copy env example:
-
+- With Docker (if available) or fallback to local dev automatically:
 ```
-cp .env.example .env
+npm start
+```
+- Force local dev (SQLite + in-memory Redis):
+```
+npm run dev
+```
+- Force Docker:
+```
+npm run docker
 ```
 
-2. Build and run:
-
-```
-docker compose up -d --build
-```
-
-App will be available at http://localhost:8080 and API at http://localhost:8080/api
+App (Docker): http://localhost:8080
+App (Local dev): http://localhost:5173, API: http://localhost:4000/api
 
 ## Development
 
@@ -24,7 +26,7 @@ App will be available at http://localhost:8080 and API at http://localhost:8080/
 ```
 cd backend
 npm i
-npm run dev
+node src/index.js
 ```
 - Frontend:
 ```
