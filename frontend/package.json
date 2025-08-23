@@ -16,6 +16,7 @@
     "antd": "^5.20.6",
     "@ant-design/icons": "^5.3.7",
     "dayjs": "^1.11.11"
+
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",

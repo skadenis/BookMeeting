@@ -1,3 +1,4 @@
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -15,6 +16,7 @@ services:
 
   redis:
     image: redis:7-alpine
+
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data
@@ -43,6 +45,7 @@ services:
       redis:
         condition: service_started
 
+
   frontend:
     build:
       context: ./frontend
@@ -50,6 +53,7 @@ services:
     volumes:
       - frontend_build:/usr/share/nginx/html
     command: ["sh", "-c", "cp -r /out/* /usr/share/nginx/html 2>/dev/null || true; tail -f /dev/null"]
+
     depends_on:
       - backend
 

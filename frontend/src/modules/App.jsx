@@ -7,6 +7,7 @@ import { CalendarOutlined, EnvironmentOutlined, ClockCircleOutlined, Exclamation
 
 const { Header, Content } = Layout
 
+
 function useBitrixContext() {
   const [token, setToken] = useState(null)
   const [domain, setDomain] = useState(null)
@@ -34,6 +35,7 @@ function useBitrixContext() {
       setToken(import.meta.env.VITE_DEV_BITRIX_TOKEN || null)
       setDomain(import.meta.env.VITE_DEV_BITRIX_DOMAIN || null)
       setLeadId(Number(import.meta.env.VITE_DEV_LEAD_ID) || 22422)
+
     }
   }, [])
 
@@ -59,6 +61,7 @@ function toISODate(date) { return new Date(date).toISOString().slice(0,10) }
 
 const daysLabels = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
 const fullDayLabels = ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота']
+
 
 export function App() {
   const { token, domain, leadId } = useBitrixContext()

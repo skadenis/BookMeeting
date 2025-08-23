@@ -2,12 +2,10 @@ const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
-const { sequelize } = require('./lib/db');
 const { bitrixAuthMiddleware } = require('./middleware/bitrixAuth');
 const { redis } = require('./lib/redis');
 const officesRouter = require('./routes/offices');
 const slotsRouter = require('./routes/slots');
-const templatesRouter = require('./routes/templates');
 const appointmentsRouter = require('./routes/appointments');
 const { seedIfEmpty } = require('./seed');
 
@@ -31,12 +29,15 @@ async function initDbWithRetry() {
 	}
 }
 
+
 async function start() {
-	await initDbWithRetry();
+	await sequelize.authenticate();
+	await sequelize.sync();
 	await redis.connect();
 	await seedIfEmpty();
 
 	const app = express();
+
 	app.set('trust proxy', 1);
 	app.use(cors({ origin: process.env.CORS_ORIGIN || '*', credentials: true }));
 	app.use(express.json());
@@ -47,6 +48,7 @@ async function start() {
 	app.use('/api', bitrixAuthMiddleware);
 	app.use('/api/offices', officesRouter);
 	app.use('/api/slots', slotsRouter);
+
 	app.use('/api/templates', templatesRouter);
 	app.use('/api/appointments', appointmentsRouter);
 

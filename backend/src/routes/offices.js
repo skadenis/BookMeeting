@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const { body, param, validationResult } = require('express-validator');
+
 const { models } = require('../lib/db');
 
 const router = Router();

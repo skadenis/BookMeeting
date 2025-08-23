@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const { body, param, query, validationResult } = require('express-validator');
+
 const { models, Op } = require('../lib/db');
 const { invalidateSlotsCache } = require('../services/slotsService');
 
@@ -37,6 +38,7 @@ router.post('/', [
 		const office = await models.Office.findByPk(office_id);
 		if (!office) return res.status(404).json({ error: 'Office not found' });
 
+
 		const newDate = String(date).slice(0, 10);
 
 		// Один лид — одна активная запись: переносим, если уже есть предстоящая confirmed/pending
@@ -60,11 +62,13 @@ router.post('/', [
 			}
 		}
 
+
 		const appointment = await models.Appointment.create({
 			office_id,
 			bitrix_lead_id: lead_id ?? null,
 			bitrix_deal_id: deal_id ?? null,
 			bitrix_contact_id: contact_id ?? null,
+
 			date: newDate,
 			timeSlot: time_slot,
 			status: 'pending',
@@ -72,6 +76,7 @@ router.post('/', [
 		});
 		await invalidateSlotsCache(office_id, newDate);
 		res.status(201).json({ data: await models.Appointment.findByPk(appointment.id, { include: [{ model: models.Office }] }) });
+
 	} catch (e) { next(e); }
 });
 
@@ -93,6 +98,7 @@ router.put('/:id', [
 		const oldDate = appointment.date;
 		const oldOfficeId = appointment.office_id || (appointment.Office && appointment.Office.id);
 
+
 		if (status) appointment.status = status;
 		if (date) appointment.date = String(date).slice(0, 10);
 		if (time_slot) appointment.timeSlot = time_slot;
@@ -103,6 +109,7 @@ router.put('/:id', [
 		await invalidateSlotsCache(appointment.office_id, appointment.date);
 
 		res.json({ data: await models.Appointment.findByPk(id, { include: [{ model: models.Office }] }) });
+
 	} catch (e) { next(e); }
 });
 

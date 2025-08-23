@@ -85,6 +85,7 @@ Appointment.belongsTo(Office, { foreignKey: { name: 'office_id', allowNull: fals
 Appointment.hasMany(AppointmentHistory, { foreignKey: { name: 'appointment_id', allowNull: false } });
 AppointmentHistory.belongsTo(Appointment, { foreignKey: { name: 'appointment_id', allowNull: false } });
 
+
 Office.hasMany(Template, { foreignKey: { name: 'office_id', allowNull: true } });
 Template.belongsTo(Office, { foreignKey: { name: 'office_id', allowNull: true } });
 

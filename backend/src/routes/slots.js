@@ -3,6 +3,7 @@ const { query, body, validationResult } = require('express-validator');
 const { getAvailableSlots } = require('../services/slotsService');
 const { models, Op } = require('../lib/db');
 
+
 const router = Router();
 
 router.get('/', [

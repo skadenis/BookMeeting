@@ -20,6 +20,7 @@ async function getAvailableSlots(officeId, date) {
 		})
 		.filter((x) => x.free > 0);
 
+
 	await redis.set(cacheKey, JSON.stringify(available), 'EX', 30);
 	return available;
 }
