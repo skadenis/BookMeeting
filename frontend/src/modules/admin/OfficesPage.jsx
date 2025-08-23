@@ -64,7 +64,7 @@ export default function OfficesPage() {
               <Button danger onClick={()=>onDelete(record)}>Удалить</Button>
             </Space>
           ) },
-        ]
+        ]}
       />
     </div>
   )
