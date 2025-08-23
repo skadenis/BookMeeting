@@ -134,31 +134,40 @@ export function App() {
         </div>
       </Header>
       <Content style={{ margin: 16 }}>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(7, minmax(180px, 1fr))', gap:12 }}>
-          {daysLabels.map((label, idx) => (
-            <Card key={idx} loading={loading} title={<span>{label} {toISODate(addDays(weekStart, idx))} {dayHeaderBadge(idx)}</span>}>
-              {(allSlotsWeek[idx]||[]).length === 0 ? (
-                <div style={{ color:'#999' }}>Нет слотов</div>
-              ) : (
-                (allSlotsWeek[idx]||[]).map((slot) => {
-                  const a = findAvailability(idx, slot)
-                  return (
-                    <div key={`${slot.start}-${slot.end}`} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'4px 0', borderBottom:'1px dashed #f0f0f0' }}>
-                      <div style={{ color:'#555' }}>{slot.start}–{slot.end}</div>
-                      {a ? (
-                        <Button size="small" type="primary" onClick={() => createAppointment(idx, slot)}>
-                          Записать ({a.free}/{a.capacity})
-                        </Button>
-                      ) : (
-                        <Tag color="default">Занято</Tag>
-                      )}
-                    </div>
-                  )
-                })
-              )}
-            </Card>
-          ))}
-        </div>
+        {(() => {
+          const timeSet = new Set()
+          ;(allSlotsWeek || []).forEach(day => (day||[]).forEach(s => timeSet.add(s.start)))
+          const timeRows = Array.from(timeSet).sort((a,b)=>a.localeCompare(b))
+          return (
+            <div style={{ display:'grid', gridTemplateColumns:'100px repeat(7, minmax(160px, 1fr))', gap:8 }}>
+              <div></div>
+              {daysLabels.map((label, idx) => (
+                <div key={`h-${idx}`} style={{ fontWeight:600 }}>
+                  {label} {toISODate(addDays(weekStart, idx))} {dayHeaderBadge(idx)}
+                </div>
+              ))}
+              {timeRows.map((t) => (
+                <React.Fragment key={`row-${t}`}>
+                  <div style={{ color:'#666', padding:'4px 0' }}>{t}</div>
+                  {daysLabels.map((_, idx) => {
+                    const slot = (allSlotsWeek[idx]||[]).find(s => s.start === t)
+                    if (!slot) return <div key={`${idx}-${t}`} style={{ padding:'4px 0', color:'#ccc' }}>—</div>
+                    const a = findAvailability(idx, slot)
+                    return (
+                      <div key={`${idx}-${t}`} style={{ padding:'2px 0' }}>
+                        {a ? (
+                          <Button size="small" type="primary" block onClick={() => createAppointment(idx, slot)}>Доступно</Button>
+                        ) : (
+                          <Button size="small" danger block disabled>Занято</Button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </React.Fragment>
+              ))}
+            </div>
+          )
+        })()}
       </Content>
     </Layout>
   )
