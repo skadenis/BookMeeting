@@ -57,11 +57,27 @@ export function Admin() {
     api.get('/offices').then(r => setOffices(r.data.data))
   }, [api])
 
+  const refreshOffices = async () => {
+    const r = await api.get('/offices'); setOffices(r.data.data)
+  }
+
   const createOffice = async () => {
     if (!name || !city || !address) return
     await api.post('/offices', { name, city, address })
-    const r = await api.get('/offices'); setOffices(r.data.data)
+    await refreshOffices()
     setName(''); setCity(''); setAddress('')
+  }
+
+  const startEditOffice = (o) => setOfficeId(o.id)
+  const saveOfficeEdit = async (o) => {
+    await api.put(`/offices/${o.id}`, { name: o.name, city: o.city, address: o.address })
+    await refreshOffices()
+  }
+  const deleteOffice = async (id) => {
+    if (!confirm('Удалить офис?')) return
+    await api.delete(`/offices/${id}`)
+    if (officeId === id) setOfficeId('')
+    await refreshOffices()
   }
 
   const addSlotToDayKey = (dayKey) => {
@@ -140,6 +156,17 @@ export function Admin() {
           <input placeholder="Город" value={city} onChange={e=>setCity(e.target.value)} />
           <input placeholder="Адрес" value={address} onChange={e=>setAddress(e.target.value)} />
           <button onClick={createOffice}>Создать</button>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          {offices.map(o => (
+            <div key={o.id} style={{ display:'grid', gridTemplateColumns:'1fr 1fr 2fr auto auto', gap:8, alignItems:'center', padding:'6px 0', borderBottom:'1px dashed #eee' }}>
+              <input value={o.name} onChange={e=>{ o.name=e.target.value; setOffices([...offices]) }} />
+              <input value={o.city} onChange={e=>{ o.city=e.target.value; setOffices([...offices]) }} />
+              <input value={o.address} onChange={e=>{ o.address=e.target.value; setOffices([...offices]) }} />
+              <button onClick={()=>saveOfficeEdit(o)}>Сохранить</button>
+              <button onClick={()=>deleteOffice(o.id)} style={{ background:'#fee', color:'#900' }}>Удалить</button>
+            </div>
+          ))}
         </div>
       </section>
 
