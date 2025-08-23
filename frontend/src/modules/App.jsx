@@ -17,11 +17,22 @@ function useBitrixContext() {
         const auth = window.BX24.getAuth()
         setToken(auth?.access_token || null)
         setDomain(auth?.domain || null)
-        // TODO: set leadId from widget context if available
-      } catch {}
+        if (window.BX24.placement && window.BX24.placement.info) {
+          window.BX24.placement.info((info) => {
+            const raw = info?.options?.entityId || info?.options?.ID || info?.options?.ENTITY_ID || info?.options?.LEAD_ID
+            const id = Number(raw)
+            setLeadId(Number.isFinite(id) && id > 0 ? id : 22422)
+          })
+        } else {
+          setLeadId(22422)
+        }
+      } catch {
+        setLeadId(22422)
+      }
     } else {
       setToken(import.meta.env.VITE_DEV_BITRIX_TOKEN || null)
       setDomain(import.meta.env.VITE_DEV_BITRIX_DOMAIN || null)
+      setLeadId(Number(import.meta.env.VITE_DEV_LEAD_ID) || 22422)
     }
   }, [])
 
@@ -124,7 +135,7 @@ export function App() {
     <Layout style={{ minHeight: '100vh' }}>
       <Header style={{ background: '#fff', padding: '0 16px', borderBottom:'1px solid #f0f0f0' }}>
         <div style={{ display:'flex', gap:12, alignItems:'center', flexWrap:'wrap' }}>
-          <div style={{ fontWeight: 600 }}>Запись на встречу</div>
+          <div style={{ fontWeight: 600 }}>Запись на встречу{leadId ? ` • Лид #${leadId}` : ''}</div>
           <Select value={officeId} onChange={setOfficeId} placeholder="Выберите офис" style={{ minWidth: 260 }}
             options={offices.map(o => ({ value:o.id, label:`${o.name} • ${o.city}` }))}
           />
