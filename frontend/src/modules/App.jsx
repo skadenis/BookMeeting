@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
+import { Layout, Row, Col, Card, Button, Select, Tag, Space } from 'antd'
+
+const { Header, Content } = Layout
 
 function useBitrixContext() {
   const [token, setToken] = useState(null)
@@ -40,25 +43,7 @@ function addDays(date, n) {
 
 function toISODate(date) { return new Date(date).toISOString().slice(0,10) }
 
-function timeToMinutes(t) { const [h,m] = t.split(':').map(Number); return h*60+m }
-function minutesToTime(mins) { const h = Math.floor(mins/60).toString().padStart(2,'0'); const m = (mins%60).toString().padStart(2,'0'); return `${h}:${m}` }
-
-function mergeTimeRange(allSlotsWeek) {
-  let min = Infinity, max = -Infinity
-  for (const daySlots of allSlotsWeek) {
-    for (const s of daySlots) {
-      min = Math.min(min, timeToMinutes(s.start))
-      max = Math.max(max, timeToMinutes(s.end))
-    }
-  }
-  if (!isFinite(min) || !isFinite(max)) { min = 9*60; max = 18*60 } // default 09:00-18:00
-  // expand to full half-hour grid
-  min = Math.floor(min/30)*30
-  max = Math.ceil(max/30)*30
-  const times = []
-  for (let t=min; t<max; t+=30) times.push(minutesToTime(t))
-  return times
-}
+const daysLabels = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
 
 export function App() {
   const { token, domain, leadId } = useBitrixContext()
@@ -94,32 +79,26 @@ export function App() {
         Promise.all(days.map(d => api.get('/slots/all', { params: { office_id: officeId, date: d } }).then(r=>r.data.data)) ),
         Promise.all(days.map(d => api.get('/slots', { params: { office_id: officeId, date: d } }).then(r=>r.data.data)) ),
       ])
-      setAllSlotsWeek(allSlots)
-      setAvailableWeek(available)
+      // Ensure ordering by time for stable visual
+      const byTime = (a,b) => a.start.localeCompare(b.start)
+      setAllSlotsWeek(allSlots.map(list => (list||[]).slice().sort(byTime)))
+      setAvailableWeek(available.map(list => (list||[]).slice().sort(byTime)))
     } finally { setLoading(false) }
   }
 
   useEffect(() => { loadWeek() }, [api, officeId, weekStart])
 
-  const times = useMemo(() => mergeTimeRange(allSlotsWeek), [allSlotsWeek])
-
-  const daysLabels = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
   const dayHeaderBadge = (dayIdx) => {
     const all = allSlotsWeek[dayIdx] || []
     const avail = availableWeek[dayIdx] || []
-    if (all.length === 0) return <span style={{ color:'#999', fontSize:12 }}>Нет расписания</span>
-    if (avail.length === 0) return <span style={{ color:'#c00', fontSize:12 }}>Все занято</span>
-    return <span style={{ color:'#0a0', fontSize:12 }}>Доступно</span>
+    if (all.length === 0) return <Tag color="default">Нет расписания</Tag>
+    if (avail.length === 0) return <Tag color="error">Все занято</Tag>
+    return <Tag color="success">Доступно</Tag>
   }
 
-  const isSlotAvailable = (dayIdx, start, end) => {
+  const findAvailability = (dayIdx, slot) => {
     const list = availableWeek[dayIdx] || []
-    return list.find(s => s.start === start && s.end === end)
-  }
-
-  const findSlotByTime = (dayIdx, time) => {
-    const list = allSlotsWeek[dayIdx] || []
-    return list.find(s => s.start === time)
+    return list.find(s => s.start === slot.start && s.end === slot.end)
   }
 
   const createAppointment = async (dayIdx, slot) => {
@@ -139,71 +118,48 @@ export function App() {
   const nextWeek = () => setWeekStart(addDays(weekStart, 7))
 
   return (
-    <div style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Arial', padding: 16 }}>
-      <h2 style={{ margin: '8px 0' }}>Запись на встречу</h2>
-
-      <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-        <div>
-          <label>Офис</label><br />
-          <select value={officeId} onChange={e=>setOfficeId(e.target.value)}>
-            <option value="">— выберите офис —</option>
-            {offices.map(o => <option key={o.id} value={o.id}>{o.name} • {o.city}</option>)}
-          </select>
+    <Layout style={{ minHeight: '100vh' }}>
+      <Header style={{ background: '#fff', padding: '0 16px' }}>
+        <div style={{ display:'flex', gap:12, alignItems:'center', flexWrap:'wrap' }}>
+          <div style={{ fontWeight: 600 }}>Запись на встречу</div>
+          <Select value={officeId} onChange={setOfficeId} placeholder="Выберите офис" style={{ minWidth: 260 }}
+            options={offices.map(o => ({ value:o.id, label:`${o.name} • ${o.city}` }))}
+          />
+          <Space>
+            <Button onClick={prevWeek}>←</Button>
+            <Button onClick={goToday}>Сегодня</Button>
+            <Button onClick={nextWeek}>→</Button>
+          </Space>
+          <div style={{ color:'#666' }}>{toISODate(weekStart)} — {toISODate(addDays(weekStart,6))}</div>
         </div>
-        <div>
-          <label>Неделя</label><br />
-          <button onClick={prevWeek}>{'←'}</button>
-          <button onClick={goToday} style={{ margin: '0 8px' }}>Сегодня</button>
-          <button onClick={nextWeek}>{'→'}</button>
-          <span style={{ marginLeft: 8, color:'#555' }}>
-            {toISODate(weekStart)} — {toISODate(addDays(weekStart,6))}
-          </span>
+      </Header>
+      <Content style={{ margin: 16 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(7, minmax(180px, 1fr))', gap:12 }}>
+          {daysLabels.map((label, idx) => (
+            <Card key={idx} loading={loading} title={<span>{label} {toISODate(addDays(weekStart, idx))} {dayHeaderBadge(idx)}</span>}>
+              {(allSlotsWeek[idx]||[]).length === 0 ? (
+                <div style={{ color:'#999' }}>Нет слотов</div>
+              ) : (
+                (allSlotsWeek[idx]||[]).map((slot) => {
+                  const a = findAvailability(idx, slot)
+                  return (
+                    <div key={`${slot.start}-${slot.end}`} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'4px 0', borderBottom:'1px dashed #f0f0f0' }}>
+                      <div style={{ color:'#555' }}>{slot.start}–{slot.end}</div>
+                      {a ? (
+                        <Button size="small" type="primary" onClick={() => createAppointment(idx, slot)}>
+                          Записать ({a.free}/{a.capacity})
+                        </Button>
+                      ) : (
+                        <Tag color="default">Занято</Tag>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </Card>
+          ))}
         </div>
-      </div>
-
-      <div style={{ marginTop: 16 }}>
-        {loading && <div>Загрузка…</div>}
-        <div style={{ overflowX: 'auto', border: '1px solid #eee' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
-            <thead>
-              <tr>
-                <th style={{ width: 80 }}></th>
-                {daysLabels.map((d, idx) => (
-                  <th key={idx} style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: 6 }}>
-                    {d} {toISODate(addDays(weekStart, idx))}<br/>
-                    {dayHeaderBadge(idx)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {times.map(t => (
-                <tr key={t}>
-                  <td style={{ padding: 6, borderRight:'1px solid #f0f0f0', color:'#666', width:80 }}>{t}</td>
-                  {daysLabels.map((_, idx) => {
-                    const slot = findSlotByTime(idx, t)
-                    if (!slot) {
-                      return <td key={idx} style={{ padding: 6, height: 36, borderBottom:'1px solid #fafafa' }}>—</td>
-                    }
-                    const available = isSlotAvailable(idx, slot.start, slot.end)
-                    return (
-                      <td key={idx} style={{ padding: 6, height: 36, borderBottom:'1px solid #fafafa' }}>
-                        {available ? (
-                          <button onClick={() => createAppointment(idx, slot)} style={{ padding:'4px 8px' }}>
-                            Записать ({available.free}/{available.capacity})
-                          </button>
-                        ) : (
-                          <span style={{ color:'#999' }}>Занято</span>
-                        )}
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+      </Content>
+    </Layout>
   )
 }
