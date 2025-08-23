@@ -31,7 +31,7 @@ router.get('/all', [
 		const schedule = await models.Schedule.findOne({ where: { office_id: officeId, date } });
 		if (!schedule || !schedule.get('isWorkingDay')) return res.json({ data: [] });
 		const allSlots = await models.Slot.findAll({ where: { schedule_id: schedule.id }, order: [['start','ASC']] });
-		res.json({ data: allSlots.map(s => ({ id: s.id, start: s.start, end: s.end })) });
+		res.json({ data: allSlots.map(s => ({ id: s.id, start: s.start, end: s.end, capacity: s.capacity })) });
 	} catch (e) { next(e); }
 });
 
@@ -41,6 +41,7 @@ router.post('/bulk', [
 	body('slots').isArray({ min: 1 }),
 	body('slots.*.start').isString().notEmpty(),
 	body('slots.*.end').isString().notEmpty(),
+	body('slots.*.capacity').optional().isInt({ min:1 }),
 ], async (req, res, next) => {
 	try {
 		const errors = validationResult(req);
@@ -53,7 +54,7 @@ router.post('/bulk', [
 		if (!schedule) schedule = await models.Schedule.create({ office_id, date: iso, isWorkingDay: true });
 		await models.Slot.destroy({ where: { schedule_id: schedule.id } });
 		for (const s of slots) {
-			await models.Slot.create({ schedule_id: schedule.id, start: s.start, end: s.end, available: true });
+			await models.Slot.create({ schedule_id: schedule.id, start: s.start, end: s.end, available: true, capacity: s.capacity || 1 });
 		}
 		res.status(201).json({ ok: true });
 	} catch (e) { next(e); }
@@ -81,7 +82,7 @@ router.post('/generate-week', [
 			if (!schedule) schedule = await models.Schedule.create({ office_id, date: iso, isWorkingDay: items.length>0 });
 			await models.Slot.destroy({ where: { schedule_id: schedule.id } });
 			for (const s of items) {
-				await models.Slot.create({ schedule_id: schedule.id, start: s.start, end: s.end, available: true });
+				await models.Slot.create({ schedule_id: schedule.id, start: s.start, end: s.end, available: true, capacity: s.capacity || 1 });
 			}
 		}
 		res.status(201).json({ ok: true });

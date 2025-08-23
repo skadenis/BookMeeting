@@ -11,8 +11,15 @@ async function getAvailableSlots(officeId, date) {
 
 	const slots = await models.Slot.findAll({ where: { schedule_id: schedule.id, available: true }, order: [[ 'start', 'ASC' ]] });
 	const appointments = await models.Appointment.findAll({ where: { office_id: officeId, date, status: 'confirmed' } });
-	const busy = new Set(appointments.map(a => a.timeSlot));
-	const available = slots.filter(s => !busy.has(`${s.start}-${s.end}`)).map(s => ({ id: s.id, start: s.start, end: s.end }));
+	const countByTime = appointments.reduce((acc, a) => { acc[a.timeSlot] = (acc[a.timeSlot]||0)+1; return acc }, {});
+	const available = slots
+		.map((s) => {
+			const key = `${s.start}-${s.end}`;
+			const used = countByTime[key] || 0;
+			return { id: s.id, start: s.start, end: s.end, capacity: s.capacity, used, free: Math.max(0, s.capacity - used) };
+		})
+		.filter((x) => x.free > 0);
+
 	await redis.set(cacheKey, JSON.stringify(available), 'EX', 30);
 	return available;
 }

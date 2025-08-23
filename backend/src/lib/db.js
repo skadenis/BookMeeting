@@ -41,6 +41,7 @@ const Slot = sequelize.define('Slot', {
 	start: { type: DataTypes.STRING(20), allowNull: false },
 	end: { type: DataTypes.STRING(20), allowNull: false },
 	available: { type: DataTypes.BOOLEAN, defaultValue: true },
+	capacity: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
 }, { tableName: 'slots', timestamps: false });
 
 const Appointment = sequelize.define('Appointment', {
@@ -67,7 +68,7 @@ const AppointmentHistory = sequelize.define('AppointmentHistory', {
 const Template = sequelize.define('Template', {
 	id: { type: DataTypes.UUID, primaryKey: true, defaultValue: DataTypes.UUIDV4 },
 	name: { type: DataTypes.STRING(120), allowNull: false },
-	weekdays: { type: DataTypes.JSON, allowNull: false }, // {"1":[{start,end}], ...}
+	weekdays: { type: DataTypes.JSON, allowNull: false }, // {"1":[{start,end,capacity}], ...}
 	isDefault: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false, field: 'is_default' },
 }, { tableName: 'templates', timestamps: false });
 

@@ -114,7 +114,7 @@ export function App() {
 
   const isSlotAvailable = (dayIdx, start, end) => {
     const list = availableWeek[dayIdx] || []
-    return list.some(s => s.start === start && s.end === end)
+    return list.find(s => s.start === start && s.end === end)
   }
 
   const findSlotByTime = (dayIdx, time) => {
@@ -189,7 +189,9 @@ export function App() {
                     return (
                       <td key={idx} style={{ padding: 6, height: 36, borderBottom:'1px solid #fafafa' }}>
                         {available ? (
-                          <button onClick={() => createAppointment(idx, slot)} style={{ padding:'4px 8px' }}>Записать</button>
+                          <button onClick={() => createAppointment(idx, slot)} style={{ padding:'4px 8px' }}>
+                            Записать ({available.free}/{available.capacity})
+                          </button>
                         ) : (
                           <span style={{ color:'#999' }}>Занято</span>
                         )}

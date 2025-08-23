@@ -39,10 +39,10 @@ export default function TemplatesPage() {
 
   const fill = (key) => {
     if (!period?.[0] || !period?.[1]) return
-    const slots = halfHourSlots(period[0].format('HH:mm'), period[1].format('HH:mm'))
+    const slots = halfHourSlots(period[0].format('HH:mm'), period[1].format('HH:mm')).map(s => ({ ...s, capacity: 1 }))
     setWeekdays({ ...weekdays, [key]: slots })
   }
-  const addSlot = (key) => setWeekdays({ ...weekdays, [key]: [ ...(weekdays[key]||[]), { start:'09:00', end:'09:30' } ] })
+  const addSlot = (key) => setWeekdays({ ...weekdays, [key]: [ ...(weekdays[key]||[]), { start:'09:00', end:'09:30', capacity: 1 } ] })
   const updateSlot = (key, idx, field, val) => setWeekdays({ ...weekdays, [key]: (weekdays[key]||[]).map((s,i)=> i===idx ? { ...s, [field]: val } : s) })
   const removeSlot = (key, idx) => setWeekdays({ ...weekdays, [key]: (weekdays[key]||[]).filter((_,i)=>i!==idx) })
 
@@ -79,6 +79,7 @@ export default function TemplatesPage() {
                 <TimePicker value={dayjs(s.start,'HH:mm')} format="HH:mm" minuteStep={30} onChange={(v)=>updateSlot(d.key, idx, 'start', v.format('HH:mm'))} />
                 <span>—</span>
                 <TimePicker value={dayjs(s.end,'HH:mm')} format="HH:mm" minuteStep={30} onChange={(v)=>updateSlot(d.key, idx, 'end', v.format('HH:mm'))} />
+                <Input type="number" min={1} value={s.capacity || 1} style={{ width:90 }} onChange={(e)=>updateSlot(d.key, idx, 'capacity', Number(e.target.value)||1)} prefix="cap:" />
                 <Button danger onClick={()=>removeSlot(d.key, idx)}>Удалить</Button>
               </Space>
             ))}
