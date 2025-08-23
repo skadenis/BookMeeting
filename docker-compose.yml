@@ -41,7 +41,7 @@ services:
       dockerfile: Dockerfile
     volumes:
       - frontend_build:/usr/share/nginx/html
-    command: ["sh", "-c", "cp -r /out/* /usr/share/nginx/html && tail -f /dev/null"]
+    command: ["sh", "-c", "cp -r /out/* /usr/share/nginx/html 2>/dev/null || true; tail -f /dev/null"]
     depends_on:
       - backend
 
