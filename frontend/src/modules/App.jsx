@@ -42,6 +42,28 @@ export function App() {
   const [loading, setLoading] = useState(false)
   const [history, setHistory] = useState([])
 
+  // Функция для группировки слотов по времени суток
+  const groupSlotsByTimeOfDay = (slots) => {
+    const groups = {
+      morning: { title: '🌅 Утро (9:00-12:00)', slots: [], color: '#fff3cd' },
+      day: { title: '☀️ День (12:00-18:00)', slots: [], color: '#d1ecf1' },
+      evening: { title: '🌙 Вечер (18:00-21:00)', slots: [], color: '#f8d7da' }
+    };
+
+    slots.forEach(slot => {
+      const hour = parseInt(slot.start.split(':')[0]);
+      if (hour >= 9 && hour < 12) {
+        groups.morning.slots.push(slot);
+      } else if (hour >= 12 && hour < 18) {
+        groups.day.slots.push(slot);
+      } else if (hour >= 18 && hour < 21) {
+        groups.evening.slots.push(slot);
+      }
+    });
+
+    return Object.values(groups).filter(group => group.slots.length > 0);
+  };
+
   useEffect(() => {
     api.get('/offices').then((r) => setOffices(r.data.data)).catch(console.error)
   }, [api])
@@ -110,12 +132,42 @@ export function App() {
       <div style={{ marginTop: 16 }}>
         <h3 style={{ margin: '8px 0' }}>Доступные слоты</h3>
         {loading ? <div>Загрузка…</div> : (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div>
             {slots.length === 0 && <div>Нет доступных слотов</div>}
-            {slots.map(s => (
-              <button key={s.id} onClick={() => createAppointment(s)} style={{ padding: '6px 10px' }}>
-                {s.start}–{s.end}
-              </button>
+            {groupSlotsByTimeOfDay(slots).map((group, groupIndex) => (
+              <div key={groupIndex} style={{ marginBottom: 20 }}>
+                <h4 style={{ 
+                  margin: '0 0 12px 0', 
+                  padding: '8px 12px', 
+                  backgroundColor: group.color, 
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  fontWeight: '600'
+                }}>
+                  {group.title}
+                </h4>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {group.slots.map(s => (
+                    <button 
+                      key={s.id} 
+                      onClick={() => createAppointment(s)} 
+                      style={{ 
+                        padding: '8px 12px',
+                        border: '1px solid #ddd',
+                        borderRadius: '6px',
+                        backgroundColor: 'white',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: '500'
+                      }}
+                      onMouseOver={(e) => e.target.style.backgroundColor = '#f8f9fa'}
+                      onMouseOut={(e) => e.target.style.backgroundColor = 'white'}
+                    >
+                      {s.start}–{s.end}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         )}
