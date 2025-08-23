@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import dayjs from 'dayjs'
 import 'dayjs/locale/ru'
-import { Layout, Row, Col, Card, Button, Select, Tag, Space, Modal, Typography, Divider } from 'antd'
-import { CalendarOutlined, EnvironmentOutlined, ClockCircleOutlined } from '@ant-design/icons'
+import { Layout, Row, Col, Card, Button, Select, Tag, Space, Modal, Typography, Divider, Tooltip } from 'antd'
+import { CalendarOutlined, EnvironmentOutlined, ClockCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 
 const { Header, Content } = Layout
 
@@ -186,10 +186,15 @@ export function App() {
                 <Tag color={leadAppt.status === 'pending' ? 'gold' : 'green'}>{leadAppt.status === 'pending' ? 'Ожидает подтверждения' : 'Подтверждена'}</Tag>
               </Space>
               <Divider style={{ margin:'8px 0' }} />
-              <Space>
-                {leadAppt.status !== 'confirmed' && <Button type="primary" onClick={() => updateAppointmentStatus(leadAppt.id, 'confirmed')}>Подтвердить</Button>}
-                <Button danger onClick={() => Modal.confirm({ title:'Отменить встречу?', okText:'Да', cancelText:'Нет', onOk: () => updateAppointmentStatus(leadAppt.id, 'cancelled') })}>Отменить</Button>
-              </Space>
+                             <Space>
+                 {leadAppt.status !== 'confirmed' && <Button type="primary" size="large" onClick={() => updateAppointmentStatus(leadAppt.id, 'confirmed')}>Подтвердить</Button>}
+                 <Button size="large" danger onClick={() => Modal.confirm({
+                   title: (<span><ExclamationCircleOutlined style={{ color:'#faad14', marginRight:8 }} />Подтвердите отмену</span>),
+                   content: 'Вы уверены, что хотите отменить встречу?',
+                   okText:'Да, отменить', cancelText:'Нет', okButtonProps:{ danger:true },
+                   onOk: () => updateAppointmentStatus(leadAppt.id, 'cancelled')
+                 })}>Отменить</Button>
+               </Space>
             </Space>
           </Card>
         )})()}
@@ -218,15 +223,15 @@ export function App() {
                         return (
                           <div key={`${idx}-${t}`} style={baseStyle}>
                                                      {a ? (
-                               <Button size="small" block onClick={() => createAppointment(idx, slot)}
-                                 style={{ background:'#52c41a', borderColor:'#52c41a', color:'#fff' }}>
-                                 {t} • Н:{(slot.pendingCount ?? 0)} / П:{(slot.confirmedCount ?? 0)} / Св:{a.free}
-                               </Button>
+                                                            <Button size="large" block onClick={() => createAppointment(idx, slot)}
+                               style={{ background:'#52c41a', borderColor:'#52c41a', color:'#fff' }}>
+                               {t}  |  {a.free} свободно
+                             </Button>
                              ) : (
-                               <Button size="small" block disabled
-                                 style={{ background:'#ff4d4f', borderColor:'#ff4d4f', color:'#fff', opacity:1 }}>
-                                 {t} • Н:{(slot.pendingCount ?? 0)} / П:{(slot.confirmedCount ?? 0)} / Св:0
-                               </Button>
+                                                            <Button size="large" block disabled
+                               style={{ background:'#ff4d4f', borderColor:'#ff4d4f', color:'#fff', opacity:1 }}>
+                               {t}  |  нет мест
+                             </Button>
                              )}
                           </div>
                         )
