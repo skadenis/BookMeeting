@@ -1,0 +1,6 @@
+body { margin: 0; background: #fff; color: #333; }
+select, input, button { font: inherit; }
+button { background: #2fc6f7; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+button:hover { background: #1db6ea; }
+button:disabled { background: #c7eefd; cursor: default; }
+label { font-size: 12px; color: #555; }
