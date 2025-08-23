@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import dayjs from 'dayjs'
 import 'dayjs/locale/ru'
-import { Layout, Row, Col, Card, Button, Select, Tag, Space, Modal } from 'antd'
+import { Layout, Row, Col, Card, Button, Select, Tag, Space, Modal, Typography, Divider } from 'antd'
+import { CalendarOutlined, EnvironmentOutlined, ClockCircleOutlined } from '@ant-design/icons'
 
 const { Header, Content } = Layout
 
@@ -172,18 +173,26 @@ export function App() {
         />
       </Modal>
       <Content style={{ margin: 16 }}>
-        {leadAppt && (
-          <Card style={{ marginBottom: 12 }} title="Запланирована встреча">
-            <div>Офис: {leadAppt.Office?.name || leadAppt.office?.name}</div>
-            <div>Дата: {leadAppt.date}</div>
-            <div>Время: {leadAppt.timeSlot}</div>
-            <div>Статус: {leadAppt.status === 'pending' ? 'Ожидает подтверждения' : 'Подтверждена'}</div>
-            <Space style={{ marginTop: 8 }}>
-              {leadAppt.status !== 'confirmed' && <Button type="primary" onClick={() => updateAppointmentStatus(leadAppt.id, 'confirmed')}>Подтвердить</Button>}
-              <Button danger onClick={() => Modal.confirm({ title:'Отменить встречу?', okText:'Да', cancelText:'Нет', onOk: () => updateAppointmentStatus(leadAppt.id, 'cancelled') })}>Отменить</Button>
+        {leadAppt && (() => { const dd = dayjs(leadAppt.date).locale('ru'); return (
+          <Card style={{ marginBottom: 12, borderColor:'#e6f4ff' }}>
+            <Space direction="vertical" size={4} style={{ width:'100%' }}>
+              <Typography.Text type="secondary">Запланирована встреча</Typography.Text>
+              <Typography.Title level={4} style={{ margin:0 }}>
+                <EnvironmentOutlined style={{ color:'#1677ff', marginRight:8 }} />{leadAppt.Office?.name || leadAppt.office?.name}
+              </Typography.Title>
+              <Space size={16} wrap>
+                <Typography.Text><CalendarOutlined style={{ color:'#1677ff', marginRight:6 }} />{dd.format('D MMMM YYYY')}</Typography.Text>
+                <Typography.Text><ClockCircleOutlined style={{ color:'#1677ff', marginRight:6 }} />{leadAppt.timeSlot}</Typography.Text>
+                <Tag color={leadAppt.status === 'pending' ? 'gold' : 'green'}>{leadAppt.status === 'pending' ? 'Ожидает подтверждения' : 'Подтверждена'}</Tag>
+              </Space>
+              <Divider style={{ margin:'8px 0' }} />
+              <Space>
+                {leadAppt.status !== 'confirmed' && <Button type="primary" onClick={() => updateAppointmentStatus(leadAppt.id, 'confirmed')}>Подтвердить</Button>}
+                <Button danger onClick={() => Modal.confirm({ title:'Отменить встречу?', okText:'Да', cancelText:'Нет', onOk: () => updateAppointmentStatus(leadAppt.id, 'cancelled') })}>Отменить</Button>
+              </Space>
             </Space>
           </Card>
-        )}
+        )})()}
         {(() => {
           const timeSet = new Set()
           ;(allSlotsWeek || []).forEach(day => (day||[]).forEach(s => timeSet.add(s.start)))
