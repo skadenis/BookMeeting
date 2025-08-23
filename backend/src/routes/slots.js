@@ -1,7 +1,7 @@
 const { Router } = require('express');
 const { query, body, validationResult } = require('express-validator');
 const { getAvailableSlots } = require('../services/slotsService');
-const { models } = require('../lib/db');
+const { models, Op } = require('../lib/db');
 
 const router = Router();
 
@@ -31,7 +31,18 @@ router.get('/all', [
 		const schedule = await models.Schedule.findOne({ where: { office_id: officeId, date } });
 		if (!schedule || !schedule.get('isWorkingDay')) return res.json({ data: [] });
 		const allSlots = await models.Slot.findAll({ where: { schedule_id: schedule.id }, order: [['start','ASC']] });
-		res.json({ data: allSlots.map(s => ({ id: s.id, start: s.start, end: s.end, capacity: s.capacity })) });
+		const appointments = await models.Appointment.findAll({ where: { office_id: officeId, date, status: ['pending','confirmed'] } });
+		const pendingByTime = appointments.filter(a=>a.status==='pending').reduce((acc,a)=>{ acc[a.timeSlot]=(acc[a.timeSlot]||0)+1; return acc },{});
+		const confirmedByTime = appointments.filter(a=>a.status==='confirmed').reduce((acc,a)=>{ acc[a.timeSlot]=(acc[a.timeSlot]||0)+1; return acc },{});
+		const data = allSlots.map(s => {
+			const key = `${s.start}-${s.end}`;
+			const pending = pendingByTime[key] || 0;
+			const confirmed = confirmedByTime[key] || 0;
+			const used = pending + confirmed;
+			const free = Math.max(0, s.capacity - used);
+			return { id: s.id, start: s.start, end: s.end, capacity: s.capacity, pendingCount: pending, confirmedCount: confirmed, free };
+		});
+		res.json({ data });
 	} catch (e) { next(e); }
 });
 

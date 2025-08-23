@@ -208,17 +208,17 @@ export function App() {
                         const a = findAvailability(idx, slot)
                         return (
                           <div key={`${idx}-${t}`} style={baseStyle}>
-                            {a ? (
-                              <Button size="small" block onClick={() => createAppointment(idx, slot)}
-                                style={{ background:'#52c41a', borderColor:'#52c41a', color:'#fff' }}>
-                                {t} • {a.free}/{a.capacity}
-                              </Button>
-                            ) : (
-                              <Button size="small" block disabled
-                                style={{ background:'#ff4d4f', borderColor:'#ff4d4f', color:'#fff', opacity:1 }}>
-                                {t} • 0/{(slot && slot.capacity) || 1}
-                              </Button>
-                            )}
+                                                     {a ? (
+                               <Button size="small" block onClick={() => createAppointment(idx, slot)}
+                                 style={{ background:'#52c41a', borderColor:'#52c41a', color:'#fff' }}>
+                                 {t} • Н:{(slot.pendingCount ?? 0)} / П:{(slot.confirmedCount ?? 0)} / Св:{a.free}
+                               </Button>
+                             ) : (
+                               <Button size="small" block disabled
+                                 style={{ background:'#ff4d4f', borderColor:'#ff4d4f', color:'#fff', opacity:1 }}>
+                                 {t} • Н:{(slot.pendingCount ?? 0)} / П:{(slot.confirmedCount ?? 0)} / Св:0
+                               </Button>
+                             )}
                           </div>
                         )
                       })}
