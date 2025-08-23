@@ -12,6 +12,7 @@ router.get('/', [query('lead_id').optional().isInt()], async (req, res, next) =>
 		// Показываем только будущие/активные по умолчанию
 		const today = new Date().toISOString().slice(0,10);
 		where.date = { [Op.gte]: today };
+		where.status = ['pending','confirmed'];
 		const items = await models.Appointment.findAll({
 			where,
 			include: [{ model: models.Office }],

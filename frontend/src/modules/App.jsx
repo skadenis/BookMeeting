@@ -180,7 +180,7 @@ export function App() {
             <div>Статус: {leadAppt.status === 'pending' ? 'Ожидает подтверждения' : 'Подтверждена'}</div>
             <Space style={{ marginTop: 8 }}>
               {leadAppt.status !== 'confirmed' && <Button type="primary" onClick={() => updateAppointmentStatus(leadAppt.id, 'confirmed')}>Подтвердить</Button>}
-              <Button danger onClick={() => updateAppointmentStatus(leadAppt.id, 'cancelled')}>Отменить</Button>
+              <Button danger onClick={() => Modal.confirm({ title:'Отменить встречу?', okText:'Да', cancelText:'Нет', onOk: () => updateAppointmentStatus(leadAppt.id, 'cancelled') })}>Отменить</Button>
             </Space>
           </Card>
         )}
