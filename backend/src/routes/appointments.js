@@ -38,11 +38,11 @@ router.post('/', [
 
 		const newDate = String(date).slice(0, 10);
 
-		// Один лид — одна активная запись: переносим, если уже есть предстоящая confirmed
+		// Один лид — одна активная запись: переносим, если уже есть предстоящая confirmed/pending
 		if (lead_id) {
 			const today = new Date().toISOString().slice(0,10);
 			const existing = await models.Appointment.findOne({
-				where: { bitrix_lead_id: lead_id, status: 'confirmed', date: { [Op.gte]: today } },
+				where: { bitrix_lead_id: lead_id, status: ['pending','confirmed'], date: { [Op.gte]: today } },
 				include: [{ model: models.Office }],
 				order: [['createdAt', 'DESC']],
 			});
@@ -66,7 +66,7 @@ router.post('/', [
 			bitrix_contact_id: contact_id ?? null,
 			date: newDate,
 			timeSlot: time_slot,
-			status: 'confirmed',
+			status: 'pending',
 			createdBy: (req.bitrix && req.bitrix.userId) || 0,
 		});
 		await invalidateSlotsCache(office_id, newDate);

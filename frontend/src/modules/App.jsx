@@ -177,7 +177,7 @@ export function App() {
             <div>Офис: {leadAppt.Office?.name || leadAppt.office?.name}</div>
             <div>Дата: {leadAppt.date}</div>
             <div>Время: {leadAppt.timeSlot}</div>
-            <div>Статус: {leadAppt.status}</div>
+            <div>Статус: {leadAppt.status === 'pending' ? 'Ожидает подтверждения' : 'Подтверждена'}</div>
             <Space style={{ marginTop: 8 }}>
               {leadAppt.status !== 'confirmed' && <Button type="primary" onClick={() => updateAppointmentStatus(leadAppt.id, 'confirmed')}>Подтвердить</Button>}
               <Button danger onClick={() => updateAppointmentStatus(leadAppt.id, 'cancelled')}>Отменить</Button>

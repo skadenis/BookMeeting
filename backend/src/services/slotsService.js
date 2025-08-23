@@ -10,7 +10,7 @@ async function getAvailableSlots(officeId, date) {
 	if (!schedule || !schedule.get('isWorkingDay')) return [];
 
 	const slots = await models.Slot.findAll({ where: { schedule_id: schedule.id, available: true }, order: [[ 'start', 'ASC' ]] });
-	const appointments = await models.Appointment.findAll({ where: { office_id: officeId, date, status: 'confirmed' } });
+	const appointments = await models.Appointment.findAll({ where: { office_id: officeId, date, status: ['pending','confirmed'] } });
 	const countByTime = appointments.reduce((acc, a) => { acc[a.timeSlot] = (acc[a.timeSlot]||0)+1; return acc }, {});
 	const available = slots
 		.map((s) => {
