@@ -79,10 +79,20 @@ export function App() {
   // Data for week view
   const [allSlotsWeek, setAllSlotsWeek] = useState([[],[],[],[],[],[],[]])
   const [availableWeek, setAvailableWeek] = useState([[],[],[],[],[],[],[]])
+  const [leadAppt, setLeadAppt] = useState(null)
 
   useEffect(() => {
     api.get('/offices').then(r => setOffices(r.data.data)).catch(console.error)
   }, [api])
+
+  async function loadLeadAppt() {
+    if (!leadId) { setLeadAppt(null); return }
+    try {
+      const r = await api.get('/appointments', { params: { lead_id: leadId } })
+      const items = (r.data && r.data.data) || []
+      setLeadAppt(items[0] || null)
+    } catch (e) { setLeadAppt(null) }
+  }
 
   async function loadWeek() {
     if (!officeId) { setAllSlotsWeek([[],[],[],[],[],[],[]]); setAvailableWeek([[],[],[],[],[],[],[]]); return }
@@ -101,6 +111,7 @@ export function App() {
   }
 
   useEffect(() => { loadWeek() }, [api, officeId, weekStart])
+  useEffect(() => { loadLeadAppt() }, [api, leadId])
 
   const dayHeaderBadge = (dayIdx) => {
     const all = allSlotsWeek[dayIdx] || []
@@ -125,6 +136,13 @@ export function App() {
       lead_id: leadId,
     })
     await loadWeek()
+    await loadLeadAppt()
+  }
+
+  const updateAppointmentStatus = async (id, status) => {
+    await api.put(`/appointments/${id}`, { status })
+    await loadWeek()
+    await loadLeadAppt()
   }
 
   const goToday = () => setWeekStart(startOfWeek(new Date()))
@@ -154,6 +172,18 @@ export function App() {
         />
       </Modal>
       <Content style={{ margin: 16 }}>
+        {leadAppt && (
+          <Card style={{ marginBottom: 12 }} title="Запланирована встреча">
+            <div>Офис: {leadAppt.Office?.name || leadAppt.office?.name}</div>
+            <div>Дата: {leadAppt.date}</div>
+            <div>Время: {leadAppt.timeSlot}</div>
+            <div>Статус: {leadAppt.status}</div>
+            <Space style={{ marginTop: 8 }}>
+              {leadAppt.status !== 'confirmed' && <Button type="primary" onClick={() => updateAppointmentStatus(leadAppt.id, 'confirmed')}>Подтвердить</Button>}
+              <Button danger onClick={() => updateAppointmentStatus(leadAppt.id, 'cancelled')}>Отменить</Button>
+            </Space>
+          </Card>
+        )}
         {(() => {
           const timeSet = new Set()
           ;(allSlotsWeek || []).forEach(day => (day||[]).forEach(s => timeSet.add(s.start)))
