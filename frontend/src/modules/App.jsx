@@ -156,9 +156,15 @@ export function App() {
                     return (
                       <div key={`${idx}-${t}`} style={{ padding:'2px 0' }}>
                         {a ? (
-                          <Button size="small" type="primary" block onClick={() => createAppointment(idx, slot)}>Доступно</Button>
+                          <Button size="small" block onClick={() => createAppointment(idx, slot)}
+                            style={{ background:'#52c41a', borderColor:'#52c41a', color:'#fff' }}>
+                            {a.free}/{a.capacity}
+                          </Button>
                         ) : (
-                          <Button size="small" danger block disabled>Занято</Button>
+                          <Button size="small" block disabled
+                            style={{ background:'#ff4d4f', borderColor:'#ff4d4f', color:'#fff', opacity:1 }}>
+                            0/{(slot && slot.capacity) || 1}
+                          </Button>
                         )}
                       </div>
                     )
