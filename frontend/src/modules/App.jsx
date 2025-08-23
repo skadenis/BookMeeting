@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
+import dayjs from 'dayjs'
+import 'dayjs/locale/ru'
 import { Layout, Row, Col, Card, Button, Select, Tag, Space, Modal } from 'antd'
 
 const { Header, Content } = Layout
@@ -44,6 +46,7 @@ function addDays(date, n) {
 function toISODate(date) { return new Date(date).toISOString().slice(0,10) }
 
 const daysLabels = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
+const fullDayLabels = ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота']
 
 export function App() {
   const { token, domain, leadId } = useBitrixContext()
@@ -145,13 +148,17 @@ export function App() {
           ;(allSlotsWeek || []).forEach(day => (day||[]).forEach(s => timeSet.add(s.start)))
           const timeRows = Array.from(timeSet).sort((a,b)=>a.localeCompare(b))
                      return (
-             <div style={{ display:'grid', gridTemplateColumns:'120px repeat(7, minmax(160px, 1fr))', gap:0, borderLeft:'1px solid #f0f0f0', borderTop:'1px solid #f0f0f0' }}>
+                           <div style={{ display:'grid', gridTemplateColumns:'120px repeat(7, minmax(180px, 1fr))', gap:0, borderLeft:'2px solid #e6f4ff', borderTop:'2px solid #e6f4ff' }}>
                <div style={{ borderRight:'1px solid #f0f0f0', padding:'8px', background:'#fafafa', fontWeight:600 }}></div>
-               {daysLabels.map((label, idx) => (
-                 <div key={`h-${idx}`} style={{ borderRight:'1px solid #f0f0f0', padding:'8px', background:'#fafafa', fontWeight:600 }}>
-                   {label} {toISODate(addDays(weekStart, idx))} {dayHeaderBadge(idx)}
-                 </div>
-               ))}
+                               {daysLabels.map((label, idx) => {
+                  const d = addDays(weekStart, idx)
+                  const dd = dayjs(d).locale('ru')
+                  return (
+                    <div key={`h-${idx}`} style={{ borderRight:'1px solid #f0f0f0', padding:'8px', background:'#fafafa', fontWeight:600 }}>
+                      {fullDayLabels[dd.day()]}<div style={{ fontWeight:400, color:'#666' }}>{dd.format('D MMMM YYYY')}</div> {dayHeaderBadge(idx)}
+                    </div>
+                  )
+                })}
                {timeRows.map((t) => (
                  <React.Fragment key={`row-${t}`}>
                    <div style={{ borderRight:'1px solid #f0f0f0', borderBottom:'1px solid #f0f0f0', padding:'8px', color:'#666' }}>{t}</div>
