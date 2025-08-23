@@ -6,15 +6,11 @@ services:
       POSTGRES_DB: meetings
       POSTGRES_USER: meetings
       POSTGRES_PASSWORD: meetings
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data
@@ -38,15 +34,14 @@ services:
     depends_on:
       - postgres
       - redis
-    ports:
-      - "4000:4000"
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     volumes:
-      - frontend_build:/out
+      - frontend_build:/usr/share/nginx/html
+    command: ["sh", "-c", "cp -r /out/* /usr/share/nginx/html && tail -f /dev/null"]
     depends_on:
       - backend
 
