@@ -19,6 +19,22 @@ router.get('/', [
 	} catch (e) { next(e); }
 });
 
+router.get('/all', [
+	query('office_id').isString().notEmpty(),
+	query('date').isISO8601(),
+], async (req, res, next) => {
+	try {
+		const errors = validationResult(req);
+		if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+		const officeId = String(req.query.office_id);
+		const date = String(req.query.date).slice(0,10);
+		const schedule = await models.Schedule.findOne({ where: { office_id: officeId, date } });
+		if (!schedule || !schedule.get('isWorkingDay')) return res.json({ data: [] });
+		const allSlots = await models.Slot.findAll({ where: { schedule_id: schedule.id }, order: [['start','ASC']] });
+		res.json({ data: allSlots.map(s => ({ id: s.id, start: s.start, end: s.end })) });
+	} catch (e) { next(e); }
+});
+
 router.post('/bulk', [
 	body('office_id').isString().notEmpty(),
 	body('date').isISO8601(),

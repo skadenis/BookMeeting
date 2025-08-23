@@ -12,6 +12,7 @@ function useBitrixContext() {
         const auth = window.BX24.getAuth()
         setToken(auth?.access_token || null)
         setDomain(auth?.domain || null)
+        // TODO: set leadId from widget context if available
       } catch {}
     } else {
       setToken(import.meta.env.VITE_DEV_BITRIX_TOKEN || null)
@@ -20,6 +21,43 @@ function useBitrixContext() {
   }, [])
 
   return { token, domain, leadId }
+}
+
+function startOfWeek(date) {
+  const d = new Date(date)
+  const day = d.getDay() // 0 Sun..6 Sat
+  const diff = (day === 0 ? -6 : 1) - day // shift to Monday
+  d.setDate(d.getDate() + diff)
+  d.setHours(0,0,0,0)
+  return d
+}
+
+function addDays(date, n) {
+  const d = new Date(date)
+  d.setDate(d.getDate() + n)
+  return d
+}
+
+function toISODate(date) { return new Date(date).toISOString().slice(0,10) }
+
+function timeToMinutes(t) { const [h,m] = t.split(':').map(Number); return h*60+m }
+function minutesToTime(mins) { const h = Math.floor(mins/60).toString().padStart(2,'0'); const m = (mins%60).toString().padStart(2,'0'); return `${h}:${m}` }
+
+function mergeTimeRange(allSlotsWeek) {
+  let min = Infinity, max = -Infinity
+  for (const daySlots of allSlotsWeek) {
+    for (const s of daySlots) {
+      min = Math.min(min, timeToMinutes(s.start))
+      max = Math.max(max, timeToMinutes(s.end))
+    }
+  }
+  if (!isFinite(min) || !isFinite(max)) { min = 9*60; max = 18*60 } // default 09:00-18:00
+  // expand to full half-hour grid
+  min = Math.floor(min/30)*30
+  max = Math.ceil(max/30)*30
+  const times = []
+  for (let t=min; t<max; t+=30) times.push(minutesToTime(t))
+  return times
 }
 
 export function App() {
@@ -35,133 +73,133 @@ export function App() {
   }, [token, domain])
 
   const [offices, setOffices] = useState([])
-  const [selectedOfficeId, setSelectedOfficeId] = useState('')
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
-  const [slots, setSlots] = useState([])
-  const [appointments, setAppointments] = useState([])
+  const [officeId, setOfficeId] = useState('')
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()))
   const [loading, setLoading] = useState(false)
-  const [history, setHistory] = useState([])
+
+  // Data for week view
+  const [allSlotsWeek, setAllSlotsWeek] = useState([[],[],[],[],[],[],[]])
+  const [availableWeek, setAvailableWeek] = useState([[],[],[],[],[],[],[]])
 
   useEffect(() => {
-    api.get('/offices').then((r) => setOffices(r.data.data)).catch(console.error)
+    api.get('/offices').then(r => setOffices(r.data.data)).catch(console.error)
   }, [api])
 
-  useEffect(() => {
-    if (!selectedOfficeId) { setSlots([]); return }
+  async function loadWeek() {
+    if (!officeId) { setAllSlotsWeek([[],[],[],[],[],[],[]]); setAvailableWeek([[],[],[],[],[],[],[]]); return }
     setLoading(true)
-    api.get('/slots', { params: { office_id: selectedOfficeId, date } })
-      .then((r) => setSlots(r.data.data))
-      .finally(() => setLoading(false))
-  }, [api, selectedOfficeId, date])
-
-  useEffect(() => {
-    api.get('/appointments', { params: { lead_id: leadId } }).then((r) => setAppointments(r.data.data)).catch(console.error)
-  }, [api, leadId])
-
-  const refreshHistory = async (id) => {
-    const r = await api.get(`/appointments/${id}/history`)
-    setHistory(r.data.data)
+    try {
+      const days = [...Array(7)].map((_,i) => toISODate(addDays(weekStart,i)))
+      const [allSlots, available] = await Promise.all([
+        Promise.all(days.map(d => api.get('/slots/all', { params: { office_id: officeId, date: d } }).then(r=>r.data.data)) ),
+        Promise.all(days.map(d => api.get('/slots', { params: { office_id: officeId, date: d } }).then(r=>r.data.data)) ),
+      ])
+      setAllSlotsWeek(allSlots)
+      setAvailableWeek(available)
+    } finally { setLoading(false) }
   }
 
-  const createAppointment = async (slot) => {
-    if (!selectedOfficeId) return
+  useEffect(() => { loadWeek() }, [api, officeId, weekStart])
+
+  const times = useMemo(() => mergeTimeRange(allSlotsWeek), [allSlotsWeek])
+
+  const daysLabels = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
+  const dayHeaderBadge = (dayIdx) => {
+    const all = allSlotsWeek[dayIdx] || []
+    const avail = availableWeek[dayIdx] || []
+    if (all.length === 0) return <span style={{ color:'#999', fontSize:12 }}>Нет расписания</span>
+    if (avail.length === 0) return <span style={{ color:'#c00', fontSize:12 }}>Все занято</span>
+    return <span style={{ color:'#0a0', fontSize:12 }}>Доступно</span>
+  }
+
+  const isSlotAvailable = (dayIdx, start, end) => {
+    const list = availableWeek[dayIdx] || []
+    return list.some(s => s.start === start && s.end === end)
+  }
+
+  const findSlotByTime = (dayIdx, time) => {
+    const list = allSlotsWeek[dayIdx] || []
+    return list.find(s => s.start === time)
+  }
+
+  const createAppointment = async (dayIdx, slot) => {
+    if (!officeId) return
+    const date = toISODate(addDays(weekStart, dayIdx))
     await api.post('/appointments', {
-      office_id: selectedOfficeId,
+      office_id: officeId,
       date,
       time_slot: `${slot.start}-${slot.end}`,
       lead_id: leadId,
     })
-    const [a, s] = await Promise.all([
-      api.get('/appointments', { params: { lead_id: leadId } }),
-      api.get('/slots', { params: { office_id: selectedOfficeId, date } }),
-    ])
-    setAppointments(a.data.data)
-    setSlots(s.data.data)
+    await loadWeek()
   }
 
-  const updateAppointment = async (id, data) => {
-    await api.put(`/appointments/${id}`, data)
-    const [a, s] = await Promise.all([
-      api.get('/appointments', { params: { lead_id: leadId } }),
-      selectedOfficeId ? api.get('/slots', { params: { office_id: selectedOfficeId, date } }) : Promise.resolve({ data: { data: [] } })
-    ])
-    setAppointments(a.data.data)
-    if (selectedOfficeId) setSlots(s.data.data)
-    await refreshHistory(id)
-  }
+  const goToday = () => setWeekStart(startOfWeek(new Date()))
+  const prevWeek = () => setWeekStart(addDays(weekStart, -7))
+  const nextWeek = () => setWeekStart(addDays(weekStart, 7))
 
   return (
     <div style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Arial', padding: 16 }}>
-      <h2 style={{ margin: '8px 0' }}>Управление встречами</h2>
+      <h2 style={{ margin: '8px 0' }}>Запись на встречу</h2>
+
       <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
         <div>
           <label>Офис</label><br />
-          <select value={selectedOfficeId} onChange={(e) => setSelectedOfficeId(e.target.value)}>
+          <select value={officeId} onChange={e=>setOfficeId(e.target.value)}>
             <option value="">— выберите офис —</option>
             {offices.map(o => <option key={o.id} value={o.id}>{o.name} • {o.city}</option>)}
           </select>
         </div>
         <div>
-          <label>Дата</label><br />
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <label>Неделя</label><br />
+          <button onClick={prevWeek}>{'←'}</button>
+          <button onClick={goToday} style={{ margin: '0 8px' }}>Сегодня</button>
+          <button onClick={nextWeek}>{'→'}</button>
+          <span style={{ marginLeft: 8, color:'#555' }}>
+            {toISODate(weekStart)} — {toISODate(addDays(weekStart,6))}
+          </span>
         </div>
       </div>
 
       <div style={{ marginTop: 16 }}>
-        <h3 style={{ margin: '8px 0' }}>Доступные слоты</h3>
-        {loading ? <div>Загрузка…</div> : (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {slots.length === 0 && <div>Нет доступных слотов</div>}
-            {slots.map(s => (
-              <button key={s.id} onClick={() => createAppointment(s)} style={{ padding: '6px 10px' }}>
-                {s.start}–{s.end}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div style={{ marginTop: 24, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <div>
-          <h3 style={{ margin: '8px 0' }}>Назначенные встречи</h3>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        {loading && <div>Загрузка…</div>}
+        <div style={{ overflowX: 'auto', border: '1px solid #eee' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
             <thead>
               <tr>
-                <th style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: 6 }}>Дата</th>
-                <th style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: 6 }}>Время</th>
-                <th style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: 6 }}>Офис</th>
-                <th style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: 6 }}>Статус</th>
-                <th style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: 6 }}></th>
+                <th style={{ width: 80 }}></th>
+                {daysLabels.map((d, idx) => (
+                  <th key={idx} style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: 6 }}>
+                    {d} {toISODate(addDays(weekStart, idx))}<br/>
+                    {dayHeaderBadge(idx)}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {appointments.map(a => (
-                <tr key={a.id}>
-                  <td style={{ padding: 6 }}>{a.date}</td>
-                  <td style={{ padding: 6 }}>{a.timeSlot}</td>
-                  <td style={{ padding: 6 }}>{a.Office?.name || a.office?.name}</td>
-                  <td style={{ padding: 6 }}>{a.status}</td>
-                  <td style={{ padding: 6 }}>
-                    {a.status !== 'confirmed' && <button onClick={() => updateAppointment(a.id, { status: 'confirmed' })}>Подтвердить</button>}
-                    {a.status !== 'cancelled' && <button onClick={() => updateAppointment(a.id, { status: 'cancelled' })} style={{ marginLeft: 8 }}>Отменить</button>}
-                    <button onClick={() => refreshHistory(a.id)} style={{ marginLeft: 8 }}>История</button>
-                  </td>
+              {times.map(t => (
+                <tr key={t}>
+                  <td style={{ padding: 6, borderRight:'1px solid #f0f0f0', color:'#666', width:80 }}>{t}</td>
+                  {daysLabels.map((_, idx) => {
+                    const slot = findSlotByTime(idx, t)
+                    if (!slot) {
+                      return <td key={idx} style={{ padding: 6, height: 36, borderBottom:'1px solid #fafafa' }}>—</td>
+                    }
+                    const available = isSlotAvailable(idx, slot.start, slot.end)
+                    return (
+                      <td key={idx} style={{ padding: 6, height: 36, borderBottom:'1px solid #fafafa' }}>
+                        {available ? (
+                          <button onClick={() => createAppointment(idx, slot)} style={{ padding:'4px 8px' }}>Записать</button>
+                        ) : (
+                          <span style={{ color:'#999' }}>Занято</span>
+                        )}
+                      </td>
+                    )
+                  })}
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-        <div>
-          <h3 style={{ margin: '8px 0' }}>История</h3>
-          <div style={{ maxHeight: 280, overflow: 'auto', border: '1px solid #eee', padding: 8 }}>
-            {history.length === 0 && <div>Выберите встречу</div>}
-            {history.map(h => (
-              <div key={h.id} style={{ borderBottom: '1px dashed #eee', padding: '6px 0' }}>
-                <div><strong>{h.action}</strong> — {new Date(h.createdAt || h.created_at).toLocaleString()}</div>
-                <div style={{ fontSize: 12, color: '#666' }}>by {h.changedBy || h.changed_by}</div>
-              </div>
-            ))}
-          </div>
         </div>
       </div>
     </div>
