@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
-const { sequelize, models } = require('./lib/db');
+const { sequelize } = require('./lib/db');
 const { bitrixAuthMiddleware } = require('./middleware/bitrixAuth');
 const { redis } = require('./lib/redis');
 const officesRouter = require('./routes/offices');
@@ -15,9 +15,24 @@ dotenv.config();
 
 const PORT = Number(process.env.PORT || 4000);
 
+async function initDbWithRetry() {
+	const retries = Number(process.env.DB_CONNECT_RETRIES || 20);
+	const delayMs = Number(process.env.DB_CONNECT_DELAY_MS || 2000);
+	for (let attempt = 1; attempt <= retries; attempt++) {
+		try {
+			await sequelize.authenticate();
+			await sequelize.sync();
+			return;
+		} catch (err) {
+			console.error(`DB connect attempt ${attempt}/${retries} failed`, err?.message || err);
+			if (attempt === retries) throw err;
+			await new Promise(r => setTimeout(r, delayMs));
+		}
+	}
+}
+
 async function start() {
-	await sequelize.authenticate();
-	await sequelize.sync();
+	await initDbWithRetry();
 	await redis.connect();
 	await seedIfEmpty();
 

@@ -7,6 +7,11 @@ services:
       POSTGRES_PASSWORD: meetings
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meetings -d meetings"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   redis:
     image: redis:7-alpine
@@ -30,9 +35,13 @@ services:
       REDIS_PORT: 6379
       BITRIX_DEV_MODE: "true"
       CORS_ORIGIN: "*"
+      DB_CONNECT_RETRIES: 30
+      DB_CONNECT_DELAY_MS: 2000
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   frontend:
     build:
