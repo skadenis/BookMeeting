@@ -64,6 +64,13 @@ const AppointmentHistory = sequelize.define('AppointmentHistory', {
 	createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'), field: 'created_at' },
 }, { tableName: 'appointment_history', updatedAt: false });
 
+const Template = sequelize.define('Template', {
+	id: { type: DataTypes.UUID, primaryKey: true, defaultValue: DataTypes.UUIDV4 },
+	name: { type: DataTypes.STRING(120), allowNull: false },
+	weekdays: { type: DataTypes.JSON, allowNull: false }, // {"1":[{start,end}], ...}
+	isDefault: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false, field: 'is_default' },
+}, { tableName: 'templates', timestamps: false });
+
 // Associations
 Office.hasMany(Schedule, { foreignKey: { name: 'office_id', allowNull: false } });
 Schedule.belongsTo(Office, { foreignKey: { name: 'office_id', allowNull: false } });
@@ -77,4 +84,7 @@ Appointment.belongsTo(Office, { foreignKey: { name: 'office_id', allowNull: fals
 Appointment.hasMany(AppointmentHistory, { foreignKey: { name: 'appointment_id', allowNull: false } });
 AppointmentHistory.belongsTo(Appointment, { foreignKey: { name: 'appointment_id', allowNull: false } });
 
-module.exports = { sequelize, Sequelize, DataTypes, Op, models: { Office, Schedule, Slot, Appointment, AppointmentHistory } };
+Office.hasMany(Template, { foreignKey: { name: 'office_id', allowNull: true } });
+Template.belongsTo(Office, { foreignKey: { name: 'office_id', allowNull: true } });
+
+module.exports = { sequelize, Sequelize, DataTypes, Op, models: { Office, Schedule, Slot, Appointment, AppointmentHistory, Template } };

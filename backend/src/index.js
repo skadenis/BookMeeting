@@ -7,6 +7,7 @@ const { bitrixAuthMiddleware } = require('./middleware/bitrixAuth');
 const { redis } = require('./lib/redis');
 const officesRouter = require('./routes/offices');
 const slotsRouter = require('./routes/slots');
+const templatesRouter = require('./routes/templates');
 const appointmentsRouter = require('./routes/appointments');
 const { seedIfEmpty } = require('./seed');
 
@@ -30,6 +31,7 @@ async function start() {
 	app.use('/api', bitrixAuthMiddleware);
 	app.use('/api/offices', officesRouter);
 	app.use('/api/slots', slotsRouter);
+	app.use('/api/templates', templatesRouter);
 	app.use('/api/appointments', appointmentsRouter);
 
 	app.use((err, _req, res, _next) => {
