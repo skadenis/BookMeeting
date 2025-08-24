@@ -2,6 +2,8 @@
 services:
   postgres:
     image: postgres:15-alpine
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: meetings
       POSTGRES_USER: meetings
@@ -26,7 +28,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       PORT: 4000
       DB_HOST: postgres
       DB_PORT: 5432
@@ -39,6 +41,9 @@ services:
       CORS_ORIGIN: "*"
       DB_CONNECT_RETRIES: 30
       DB_CONNECT_DELAY_MS: 2000
+    volumes:
+      - ./backend/src:/app/src
+    command: ["npm", "run", "dev"]
     depends_on:
       postgres:
         condition: service_healthy

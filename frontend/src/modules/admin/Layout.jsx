@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react'
 import { Layout, Menu } from 'antd'
-import { BankOutlined, CalendarOutlined, ScheduleOutlined } from '@ant-design/icons'
+import { BankOutlined, ScheduleOutlined } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 const { Header, Sider, Content } = Layout
@@ -10,7 +10,6 @@ export default function AdminLayout() {
   const navigate = useNavigate()
   const selectedKey = useMemo(() => {
     if (location.pathname.includes('/admin/templates')) return 'templates'
-    if (location.pathname.includes('/admin/overrides')) return 'overrides'
     return 'offices'
   }, [location.pathname])
 
@@ -22,7 +21,6 @@ export default function AdminLayout() {
           items={[
             { key: 'offices', icon: <BankOutlined />, label: 'Офисы' },
             { key: 'templates', icon: <ScheduleOutlined />, label: 'Шаблоны' },
-            { key: 'overrides', icon: <CalendarOutlined />, label: 'Исключения' },
           ]}
         />
       </Sider>

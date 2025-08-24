@@ -1,7 +1,7 @@
 const { Router } = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 
-const { models, Op } = require('../lib/db');
+const { models, Op, Sequelize } = require('../lib/db');
 const { invalidateSlotsCache } = require('../services/slotsService');
 
 const router = Router();
@@ -10,9 +10,8 @@ router.get('/', [query('lead_id').optional().isInt()], async (req, res, next) =>
 	try {
 		const where = {};
 		if (req.query.lead_id) where.bitrix_lead_id = Number(req.query.lead_id);
-		// Показываем только будущие/активные по умолчанию
-		const today = new Date().toISOString().slice(0,10);
-		where.date = { [Op.gte]: today };
+		// Показываем встречи начиная с понедельника текущей недели (PostgreSQL)
+		where.date = { [Op.gte]: Sequelize.literal("DATE_TRUNC('week', CURRENT_DATE)") };
 		where.status = ['pending','confirmed'];
 		const items = await models.Appointment.findAll({
 			where,
@@ -38,37 +37,33 @@ router.post('/', [
 		const office = await models.Office.findByPk(office_id);
 		if (!office) return res.status(404).json({ error: 'Office not found' });
 
-
 		const newDate = String(date).slice(0, 10);
 
-		// Один лид — одна активная запись: переносим, если уже есть предстоящая confirmed/pending
+		// Один лид — одна активная запись: отменяем все активные (pending/confirmed) и создаем новую
 		if (lead_id) {
-			const today = new Date().toISOString().slice(0,10);
-			const existing = await models.Appointment.findOne({
-				where: { bitrix_lead_id: lead_id, status: ['pending','confirmed'], date: { [Op.gte]: today } },
+			const activeAppointments = await models.Appointment.findAll({
+				where: {
+					bitrix_lead_id: lead_id,
+					status: ['pending','confirmed'],
+					date: { [Op.gte]: Sequelize.literal("DATE_TRUNC('week', CURRENT_DATE)") },
+				},
 				include: [{ model: models.Office }],
 				order: [['createdAt', 'DESC']],
 			});
-			if (existing) {
-				const oldOfficeId = existing.office_id || (existing.Office && existing.Office.id);
-				const oldDate = existing.date;
-				existing.office_id = office_id;
-				existing.date = newDate;
-				existing.timeSlot = time_slot;
-				await existing.save();
+			for (const appt of activeAppointments) {
+				const oldOfficeId = appt.office_id || (appt.Office && appt.Office.id);
+				const oldDate = appt.date;
+				appt.status = 'cancelled';
+				await appt.save();
 				await invalidateSlotsCache(oldOfficeId, oldDate);
-				await invalidateSlotsCache(office_id, newDate);
-				return res.status(200).json({ data: existing, rescheduled: true });
 			}
 		}
-
 
 		const appointment = await models.Appointment.create({
 			office_id,
 			bitrix_lead_id: lead_id ?? null,
 			bitrix_deal_id: deal_id ?? null,
 			bitrix_contact_id: contact_id ?? null,
-
 			date: newDate,
 			timeSlot: time_slot,
 			status: 'pending',
@@ -97,7 +92,6 @@ router.put('/:id', [
 		const { status, date, time_slot, office_id } = req.body;
 		const oldDate = appointment.date;
 		const oldOfficeId = appointment.office_id || (appointment.Office && appointment.Office.id);
-
 
 		if (status) appointment.status = status;
 		if (date) appointment.date = String(date).slice(0, 10);

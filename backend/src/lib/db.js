@@ -34,6 +34,9 @@ const Schedule = sequelize.define('Schedule', {
 	id: { type: DataTypes.UUID, primaryKey: true, defaultValue: DataTypes.UUIDV4 },
 	date: { type: DataTypes.DATEONLY, allowNull: false },
 	isWorkingDay: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'is_working_day' },
+	isCustomized: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'is_customized' },
+	customizedBy: { type: DataTypes.BIGINT, allowNull: true, field: 'customized_by' },
+	customizedAt: { type: DataTypes.DATE, allowNull: true, field: 'customized_at' },
 }, { tableName: 'schedules', timestamps: false });
 
 const Slot = sequelize.define('Slot', {

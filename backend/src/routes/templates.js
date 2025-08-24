@@ -1,6 +1,7 @@
 const { Router } = require('express');
-const { body, param, validationResult } = require('express-validator');
-const { models } = require('../lib/db');
+const { body, param, query, validationResult } = require('express-validator');
+const { models, Op } = require('../lib/db');
+const { invalidateSlotsCache } = require('../services/slotsService');
 
 const router = Router();
 
@@ -65,20 +66,227 @@ router.post('/:id/apply', [
 		const tpl = await models.Template.findByPk(req.params.id);
 		if (!tpl) return res.status(404).json({ error: 'Template not found' });
 		const { office_id, start_date, end_date } = req.body;
-		const start = new Date(String(start_date).slice(0,10));
-		const end = new Date(String(end_date).slice(0,10));
-		for (let d = new Date(start); d <= end; d.setDate(d.getDate()+1)) {
-			const iso = d.toISOString().slice(0,10);
-			const weekday = d.getDay();
-			const items = (tpl.weekdays && tpl.weekdays[String(weekday)]) || [];
-			let schedule = await models.Schedule.findOne({ where: { office_id, date: iso } });
-			if (!schedule) schedule = await models.Schedule.create({ office_id, date: iso, isWorkingDay: items.length>0 });
-			await models.Slot.destroy({ where: { schedule_id: schedule.id } });
-			for (const s of items) {
-				await models.Slot.create({ schedule_id: schedule.id, start: s.start, end: s.end, available: true });
+		const parseLocalDate = (s) => { const [y,m,d] = String(s).slice(0,10).split('-').map(Number); return new Date(y, (m||1)-1, d||1) };
+		const start = parseLocalDate(start_date);
+		const end = parseLocalDate(end_date);
+		const isoLocal = (d) => {
+			const y = d.getFullYear();
+			const m = String(d.getMonth()+1).padStart(2,'0');
+			const day = String(d.getDate()).padStart(2,'0');
+			return `${y}-${m}-${day}`;
+		};
+		for (let d = new Date(start); d.getTime() <= end.getTime(); d.setDate(d.getDate()+1)) {
+			const iso = isoLocal(d);
+			// Compute weekday from ISO at UTC midnight to avoid TZ skew
+			const weekday = new Date(`${iso}T00:00:00Z`).getUTCDay();
+			const getItemsForWeekday = (weekdays, wd) => {
+				const map = weekdays || {};
+				const direct = map[String(wd)] || map[wd];
+				if (Array.isArray(direct) && direct.length) return direct;
+				// Support templates that store Sunday under key "7"
+				if (wd === 0) {
+					const alt = map['7'] || map[7];
+					if (Array.isArray(alt)) return alt;
+				}
+				return [];
+			};
+			const items = getItemsForWeekday(tpl.weekdays, weekday);
+			// Remove any existing schedules for this office/date (avoid duplicates)
+			const existingList = await models.Schedule.findAll({ where: { office_id, date: iso } });
+			for (const sch of existingList) {
+				await models.Slot.destroy({ where: { schedule_id: sch.id } });
+			}
+			await models.Schedule.destroy({ where: { office_id, date: iso } });
+			if (items.length > 0) {
+				const schedule = await models.Schedule.create({ office_id, date: iso, isWorkingDay: true });
+				for (const s of items) {
+					await models.Slot.create({ schedule_id: schedule.id, start: s.start, end: s.end, available: true, capacity: s.capacity || 1 });
+				}
 			}
 		}
 		res.json({ ok: true });
+	} catch (e) { next(e); }
+});
+
+// Preview how a template would map to dates without applying
+router.get('/:id/preview', [
+	param('id').isString().notEmpty(),
+	body('office_id').optional(),
+	body('start_date').optional().isISO8601(),
+	body('end_date').optional().isISO8601(),
+], async (req, res, next) => {
+	try {
+		const tpl = await models.Template.findByPk(req.params.id);
+		if (!tpl) return res.status(404).json({ error: 'Template not found' });
+		const q = req.query || {};
+		const parseLocalDate = (s) => { const [y,m,d] = String(s).slice(0,10).split('-').map(Number); return new Date(y, (m||1)-1, d||1) };
+		const start = q.start_date ? parseLocalDate(q.start_date) : new Date();
+		const end = q.end_date ? parseLocalDate(q.end_date) : new Date(start.getFullYear(), start.getMonth(), start.getDate()+6);
+		const isoLocal = (d) => {
+			const y = d.getFullYear();
+			const m = String(d.getMonth()+1).padStart(2,'0');
+			const day = String(d.getDate()).padStart(2,'0');
+			return `${y}-${m}-${day}`;
+		};
+		const getItemsForWeekday = (weekdays, wd) => {
+			const map = weekdays || {};
+			const direct = map[String(wd)] || map[wd];
+			if (Array.isArray(direct) && direct.length) return direct;
+			if (wd === 0) {
+				const alt = map['7'] || map[7];
+				if (Array.isArray(alt)) return alt;
+			}
+			return [];
+		};
+		const days = [];
+		for (let d = new Date(start); d.getTime() <= end.getTime(); d.setDate(d.getDate()+1)) {
+			const iso = isoLocal(d);
+			const weekday = d.getDay();
+			const items = getItemsForWeekday(tpl.weekdays, weekday);
+			days.push({ date: iso, weekday, itemsCount: (items||[]).length });
+		}
+		res.json({ data: days });
+	} catch (e) { next(e); }
+});
+
+// GET route for applying template to specific date (for frontend compatibility)
+router.get('/:id/apply', [
+	param('id').isString().notEmpty(),
+	query('office_id').isString().notEmpty(),
+	query('date').isISO8601(),
+], async (req, res, next) => {
+	try {
+		const errors = validationResult(req);
+		if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+		const template_id = req.params.id;
+		const { office_id, date } = req.query;
+
+		const template = await models.Template.findByPk(template_id);
+		if (!template) return res.status(404).json({ error: 'Template not found' });
+
+		const office = await models.Office.findByPk(office_id);
+		if (!office) return res.status(404).json({ error: 'Office not found' });
+
+		// Apply template to specific date
+		const dateObj = new Date(`${date}T00:00:00Z`);
+		const weekday = dateObj.getUTCDay();
+
+		const getItemsForWeekday = (weekdays, wd) => {
+			const map = weekdays || {};
+			const direct = map[String(wd)] || map[wd];
+			if (Array.isArray(direct) && direct.length) return direct;
+			if (wd === 0) {
+				const alt = map['7'] || map[7];
+				if (Array.isArray(alt)) return alt;
+			}
+			return [];
+		};
+
+		const items = getItemsForWeekday(template.weekdays, weekday);
+
+		// Remove existing schedule/slots for this date
+		const existingList = await models.Schedule.findAll({ where: { office_id, date } });
+		for (const sch of existingList) {
+			await models.Slot.destroy({ where: { schedule_id: sch.id } });
+		}
+		await models.Schedule.destroy({ where: { office_id, date } });
+
+		// Create new schedule with template slots
+		if (items.length > 0) {
+			const schedule = await models.Schedule.create({
+				office_id,
+				date,
+				isWorkingDay: true,
+				isCustomized: true,
+				customizedAt: new Date()
+			});
+
+			for (const s of items) {
+				await models.Slot.create({
+					schedule_id: schedule.id,
+					start: s.start,
+					end: s.end,
+					available: true,
+					capacity: s.capacity || 1
+				});
+			}
+
+			// Invalidate cache
+			await invalidateSlotsCache(office_id, date);
+		}
+
+		res.json({ success: true, message: 'Template applied to date' });
+	} catch (e) { next(e); }
+});
+
+// Apply template to a specific date
+router.post('/apply-to-date', [
+	body('template_id').isString().notEmpty(),
+	body('office_id').isString().notEmpty(),
+	body('date').isISO8601(),
+], async (req, res, next) => {
+	try {
+		const errors = validationResult(req);
+		if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+		const { template_id, office_id, date } = req.body;
+
+		const template = await models.Template.findByPk(template_id);
+		if (!template) return res.status(404).json({ error: 'Template not found' });
+
+		const office = await models.Office.findByPk(office_id);
+		if (!office) return res.status(404).json({ error: 'Office not found' });
+
+		// Apply template to specific date
+		const dateObj = new Date(`${date}T00:00:00Z`);
+		const weekday = dateObj.getUTCDay();
+
+		const getItemsForWeekday = (weekdays, wd) => {
+			const map = weekdays || {};
+			const direct = map[String(wd)] || map[wd];
+			if (Array.isArray(direct) && direct.length) return direct;
+			if (wd === 0) {
+				const alt = map['7'] || map[7];
+				if (Array.isArray(alt)) return alt;
+			}
+			return [];
+		};
+
+		const items = getItemsForWeekday(template.weekdays, weekday);
+
+		// Remove existing schedule/slots for this date
+		const existingList = await models.Schedule.findAll({ where: { office_id, date } });
+		for (const sch of existingList) {
+			await models.Slot.destroy({ where: { schedule_id: sch.id } });
+		}
+		await models.Schedule.destroy({ where: { office_id, date } });
+
+		// Create new schedule with template slots
+		if (items.length > 0) {
+			const schedule = await models.Schedule.create({
+				office_id,
+				date,
+				isWorkingDay: true,
+				isCustomized: true,
+				customizedAt: new Date()
+			});
+
+			for (const s of items) {
+				await models.Slot.create({
+					schedule_id: schedule.id,
+					start: s.start,
+					end: s.end,
+					available: true,
+					capacity: s.capacity || 1
+				});
+			}
+
+			// Invalidate cache
+			await invalidateSlotsCache(office_id, date);
+		}
+
+		res.json({ success: true, message: 'Template applied to date' });
 	} catch (e) { next(e); }
 });
 
