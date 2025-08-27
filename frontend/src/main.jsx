@@ -5,7 +5,8 @@ import { App } from './modules/App.jsx'
 import AdminLayout from './modules/admin/Layout.jsx'
 import Dashboard from './modules/admin/Dashboard.jsx'
 import OfficeDetail from './modules/admin/OfficeDetail.jsx'
-import TemplatesManager from './modules/admin/TemplatesManager.jsx'
+import TemplatesPage from './modules/admin/TemplatesPage.jsx'
+import TemplateEditPage from './modules/admin/TemplateEditPage.jsx'
 import 'antd/dist/reset.css'
 import { ConfigProvider } from 'antd'
 import ruRU from 'antd/locale/ru_RU'
@@ -24,7 +25,9 @@ const router = createBrowserRouter([
       { index: true, element: <Dashboard /> },
       { path: 'offices', element: <Dashboard /> },
       { path: 'offices/:id', element: <OfficeDetail /> },
-      { path: 'templates', element: <TemplatesManager /> },
+      { path: 'templates', element: <TemplatesPage /> },
+      { path: 'templates/new', element: <TemplateEditPage /> },
+      { path: 'templates/:id/edit', element: <TemplateEditPage /> },
     ]
   },
 ])

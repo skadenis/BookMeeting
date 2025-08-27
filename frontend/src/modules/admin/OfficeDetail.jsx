@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Tabs, Card, Space, Button, DatePicker, Typography, message, Skeleton, Select, Input } from 'antd'
+import { Tabs, Card, Space, Button, DatePicker, Typography, message, Skeleton, Select, Input, Modal, Form, TimePicker, Divider, Tag, Tooltip, Dropdown } from 'antd'
+import { MoreOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import 'dayjs/locale/ru'
@@ -7,7 +8,7 @@ import axios from 'axios'
 
 function useApi() {
   const api = useMemo(() => axios.create({
-    baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api'
+    baseURL: import.meta.env.VITE_API_BASE_URL || '/api'
   }), [])
   api.interceptors.request.use((config) => {
     config.headers['Authorization'] = 'Bearer dev'
@@ -28,8 +29,10 @@ export default function OfficeDetail() {
   // Debug: log available variables
   console.log('🎯 OfficeDetail component loaded:', { id, api: !!api })
   const [office, setOffice] = useState(null)
-  const [editOffice, setEditOffice] = useState({ name: '', city: '', address: '' })
+  const [editOffice, setEditOffice] = useState({ name: '', city: '', address: '', bitrixOfficeId: '' })
   const [loading, setLoading] = useState(true)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState('')
 
   // Templates
   const [templates, setTemplates] = useState([])
@@ -44,7 +47,48 @@ export default function OfficeDetail() {
   const [editSlot, setEditSlot] = useState(null)
   const [editCapacity, setEditCapacity] = useState(1)
   const [dayEditModal, setDayEditModal] = useState(null)
-  const [apiTestResult, setApiTestResult] = useState(null)
+  const [modalTplId, setModalTplId] = useState(undefined)
+  const [closeAfter, setCloseAfter] = useState('')
+  const [openFrom, setOpenFrom] = useState('')
+
+  // Bulk selection state for slots in preview calendar
+  const [selectedSlots, setSelectedSlots] = useState([]) // [{date,start,end,slotId}]
+  const isSlotSelected = (dateISO, start, end, slotId) => selectedSlots.some(s => (s.slotId ? s.slotId===slotId : (s.date===dateISO && s.start===start && s.end===end)))
+  const toggleSelectSlot = (dateISO, start, end, slotId, additive) => {
+    setSelectedSlots(prev => {
+      const exists = prev.some(s => (s.slotId ? s.slotId===slotId : (s.date===dateISO && s.start===start && s.end===end)))
+      if (additive) {
+        if (exists) return prev.filter(s => !(s.slotId ? s.slotId===slotId : (s.date===dateISO && s.start===start && s.end===end)))
+        return [...prev, { date: dateISO, start, end, slotId }]
+      }
+      return exists ? [] : [{ date: dateISO, start, end, slotId }]
+    })
+  }
+
+  // Reset bulk selection on ESC when no modal is open
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      const isEsc = e.key === 'Escape' || e.key === 'Esc' || e.code === 'Escape'
+      if (!isEsc) return
+      if (!editSlot && !dayEditModal && !deleteOpen) {
+        setSelectedSlots([])
+      }
+    }
+    // Capture phase to bypass stopPropagation inside nested components
+    window.addEventListener('keydown', onKeyDown, true)
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      document.removeEventListener('keydown', onKeyDown, true)
+    }
+  }, [editSlot, dayEditModal, deleteOpen])
+
+
+  useEffect(() => {
+    if (dayEditModal) {
+      setModalTplId(selectedTplId)
+    }
+  }, [dayEditModal, selectedTplId])
 
   useEffect(() => {
     let mounted = true
@@ -56,7 +100,7 @@ export default function OfficeDetail() {
         if (!o) { message.error('Офис не найден'); navigate('/admin'); return }
         if (!mounted) return
         setOffice(o)
-        setEditOffice({ name: o.name || '', city: o.city || '', address: o.address || '' })
+        setEditOffice({ name: o.name || '', city: o.city || '', address: o.address || '', bitrixOfficeId: o.bitrixOfficeId ? String(o.bitrixOfficeId) : '' })
         // load templates for quick apply
         const t = await api.get('/templates')
         if (!mounted) return
@@ -81,6 +125,43 @@ export default function OfficeDetail() {
 
   useEffect(() => { if (office) { loadPreview() } }, [office, previewStart])
 
+  // Websocket live updates for admin preview
+  useEffect(() => {
+    let ws
+    try {
+      const base = (import.meta.env.VITE_API_BASE_URL || '/api')
+      let url
+      if (base.startsWith('http')) {
+        const u = new URL(base.replace(/\/$/, ''))
+        u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
+        u.pathname = (u.pathname.replace(/\/$/, '')) + '/ws'
+        url = u.toString()
+      } else {
+        const loc = window.location
+        url = `${loc.protocol === 'https:' ? 'wss:' : 'ws:'}//${loc.host}${base.replace(/\/$/, '')}/ws`
+      }
+      ws = new WebSocket(url)
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data)
+          if (msg.type === 'slots.updated') {
+            if (id && String(msg.office_id) === String(id)) {
+              loadPreview()
+            }
+          } else if (msg.type === 'appointment.updated') {
+            const apptOfficeId = msg?.appointment?.office_id || msg?.office_id
+            if (id && apptOfficeId && String(apptOfficeId) === String(id)) {
+              loadPreview()
+            }
+          } else if (msg.type === 'time.tick') {
+            if (id) loadPreview()
+          }
+        } catch {}
+      }
+    } catch {}
+    return () => { try { ws && ws.close() } catch {} }
+  }, [id, previewStart])
+
   if (loading) return <Skeleton active />
 
   const prevWeek = () => setPreviewStart(dayjs(previewStart).subtract(7,'day'))
@@ -101,7 +182,7 @@ export default function OfficeDetail() {
 
   return (
     <div>
-      <Typography.Title level={3} style={{ marginTop:0 }}>{office?.name} <span style={{ color:'#999', fontWeight:400 }}>• {office?.city}</span></Typography.Title>
+      <Typography.Title level={3} style={{ marginTop:0 }}>{office?.city} <span style={{ color:'#999', fontWeight:400 }}>• {office?.address}</span></Typography.Title>
       <Tabs
         defaultActiveKey="calendar"
         items={[
@@ -109,12 +190,9 @@ export default function OfficeDetail() {
             key:'office', label:'Офис', children: (
               <Space direction="vertical" size={12} style={{ width:'100%' }}>
                 <Card>
-                  <Space direction="vertical" size={12} style={{ width:'100%' }}>
-                    <div style={{ display:'grid', gridTemplateColumns:'repeat(3, minmax(220px, 1fr))', gap:12 }}>
-                      <div>
-                        <div style={{ fontWeight:500, marginBottom:6 }}>Название</div>
-                        <Input value={editOffice.name} onChange={(e)=>setEditOffice({ ...editOffice, name: e.target.value })} />
-                      </div>
+                  <div style={{ display:'grid', gridTemplateColumns:'10fr 2fr', gap:16, alignItems:'start' }}>
+                    <div>
+                    <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
                       <div>
                         <div style={{ fontWeight:500, marginBottom:6 }}>Город</div>
                         <Input value={editOffice.city} onChange={(e)=>setEditOffice({ ...editOffice, city: e.target.value })} />
@@ -123,15 +201,67 @@ export default function OfficeDetail() {
                         <div style={{ fontWeight:500, marginBottom:6 }}>Адрес</div>
                         <Input value={editOffice.address} onChange={(e)=>setEditOffice({ ...editOffice, address: e.target.value })} />
                       </div>
+                      <div>
+                        <div style={{ fontWeight:500, marginBottom:6 }}>Примечание</div>
+                        <Input.TextArea 
+                          value={editOffice.addressNote||''}
+                          onChange={(e)=>setEditOffice({ ...editOffice, addressNote: e.target.value })}
+                          autoSize={{ minRows: 4, maxRows: 8 }}
+                          placeholder="Например: вход со двора; 3 этаж, офис 305; паспорт при входе; парковка во дворе"
+                        />
+                        <div style={{ marginTop:4, fontSize:12, color:'#8c8c8c' }}>
+                          Добавьте инструкции: как пройти, к кому обратиться на ресепшене, где парковка и т.п.
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{ fontWeight:500, marginBottom:6 }}>Bitrix Office ID</div>
+                        <Input 
+                          value={editOffice.bitrixOfficeId}
+                          placeholder="например, 12345"
+                          onChange={(e)=>{
+                            const v = e.target.value.replace(/[^0-9]/g, '')
+                            setEditOffice({ ...editOffice, bitrixOfficeId: v })
+                          }} 
+                        />
+                      </div>
                     </div>
-                    <Space>
-                      <Button type="primary" onClick={async()=>{
-                        await api.put(`/offices/${id}`, { name: editOffice.name, city: editOffice.city, address: editOffice.address })
+                    <div style={{ marginTop:12, display:'flex', justifyContent:'flex-start', gap:12, flexWrap:'wrap' }}>
+                      <Button type="primary" size="large" onClick={async()=>{
+                        await api.put(`/offices/${id}`, { 
+                          city: editOffice.city, 
+                          address: editOffice.address,
+                          addressNote: editOffice.addressNote || undefined,
+                          bitrixOfficeId: editOffice.bitrixOfficeId ? Number(editOffice.bitrixOfficeId) : undefined
+                        })
                         message.success('Сохранено')
-                        setOffice({ ...office, ...editOffice })
+                        setOffice({ ...office, ...editOffice, bitrixOfficeId: editOffice.bitrixOfficeId ? Number(editOffice.bitrixOfficeId) : null })
                       }}>Сохранить</Button>
-                    </Space>
-                  </Space>
+                    </div>
+                    </div>
+                    <div style={{ display:'flex', justifyContent:'flex-end', alignItems:'flex-start' }}>
+                      <Dropdown
+                        placement="bottomRight"
+                        trigger={["click"]}
+                        menu={{
+                          items: [
+                            {
+                              key: 'delete',
+                              label: (
+                                <span style={{ color: '#ff4d4f', display:'flex', alignItems:'center', gap:8 }}>
+                                  <DeleteOutlined />Удалить офис
+                                </span>
+                              ),
+                            },
+                          ],
+                          onClick: ({ key }) => {
+                            if (key === 'delete') { setDeleteConfirm(''); setDeleteOpen(true) }
+                          },
+                        }}
+                      >
+                        <Button size="middle" type="default" icon={<MoreOutlined />}>Действия</Button>
+                      </Dropdown>
+                    </div>
+                  </div>
                 </Card>
               </Space>
             )
@@ -160,46 +290,7 @@ export default function OfficeDetail() {
                   />
                   <DatePicker.RangePicker value={applyRange} onChange={setApplyRange} />
                   <Button type="primary" onClick={applyExistingTemplate}>Применить шаблон к диапазону</Button>
-                  <Button onClick={async () => {
-                    console.log('🔍 API TEST BUTTON CLICKED')
-                    try {
-                      console.log('📡 Testing API connection...')
-                      const result = await api.get('/test-connection?test=frontend')
-                      console.log('✅ API test result:', result.data)
-                      setApiTestResult(result.data)
-                      message.success('API соединение работает!')
-                    } catch (err) {
-                      console.error('❌ API test failed:', err)
-                      setApiTestResult({ error: err.message, stack: err.stack })
-                      message.error('Ошибка соединения с API')
-                    }
-                  }}>🔍 Проверить API</Button>
-                  <Button onClick={async () => {
-                    console.log('🧪 DIRECT TEST BUTTON CLICKED')
-                    try {
-                      console.log('📡 Testing direct close-day call...')
-                      const result = await api.post('/slots/close-day', {
-                        office_id: 'e870c5a7-3cc4-442f-8619-d7e3e048989b',
-                        date: '2025-08-30'
-                      })
-                      console.log('✅ Direct test result:', result.data)
-                      message.success('Direct test successful!')
-                    } catch (err) {
-                      console.error('❌ Direct test failed:', err)
-                      message.error('Direct test failed')
-                    }
-                  }}>🧪 Тест close-day</Button>
-                  {apiTestResult && (
-                    <div style={{
-                      padding: 8,
-                      background: '#f0f8ff',
-                      borderRadius: 4,
-                      fontSize: 12,
-                      border: '1px solid #1890ff'
-                    }}>
-                      <strong>API Test:</strong> {JSON.stringify(apiTestResult, null, 2)}
-                    </div>
-                  )}
+
                     </Space>
                   </Space>
                 </Card>
@@ -215,29 +306,86 @@ export default function OfficeDetail() {
                       <div key={`h-${i}`} style={{ position:'sticky', top:0, background:'#fafafa', padding:8, borderRight:'1px solid #eee', borderBottom:'1px solid #eee' }}>
                         <div style={{ fontWeight: 600, marginBottom: 4 }}>{dow}</div>
                         <div style={{ color:'#666', marginBottom: 6, fontSize: 12 }}>{full}</div>
-                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                           {hasSlots ? (
                             <>
-                              <Button size="small" danger type="text" onClick={async () => {
-                                console.log('🔴 CLOSE DAY BUTTON CLICKED:', { id, dateISO })
-                                try {
-                                  console.log('📡 Sending POST to /slots/close-day')
-                                  await api.post('/slots/close-day', {
-                                    office_id: id,
-                                    date: dateISO
-                                  })
-                                  console.log('✅ Request successful')
-                                  message.success('День закрыт')
-                                  await loadPreview()
-                                } catch (err) {
-                                  console.error('❌ Request failed:', err)
-                                  message.error('Ошибка закрытия дня')
-                                }
-                              }}>Закрыть</Button>
-                              <Button size="small" type="text" onClick={() => setDayEditModal({ date: dateISO, dateLabel: full })}>Изменить</Button>
+                              <button 
+                                style={{ 
+                                  border: 'none', 
+                                  background: '#ff4d4f', 
+                                  color: 'white', 
+                                  padding: '4px 8px', 
+                                  borderRadius: 4, 
+                                  fontSize: 11, 
+                                  cursor: 'pointer',
+                                  fontWeight: 500,
+                                  transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => e.target.style.background = '#ff7875'}
+                                onMouseLeave={(e) => e.target.style.background = '#ff4d4f'}
+                                onClick={async () => {
+                                  console.log('🔴 CLOSE DAY BUTTON CLICKED:', { id, dateISO })
+                                  try {
+                                    console.log('📡 Sending POST to /slots/close-day')
+                                    await api.post('/slots/close-day', {
+                                      office_id: id,
+                                      date: dateISO
+                                    })
+                                    console.log('✅ Request successful')
+                                    message.success('День закрыт')
+                                    await loadPreview()
+                                  } catch (err) {
+                                    console.error('❌ Request failed:', err)
+                                    message.error('Ошибка закрытия дня')
+                                  }
+                                }}
+                              >
+                                Закрыть
+                              </button>
+                              <button 
+                                style={{ 
+                                  border: '1px solid #d9d9d9', 
+                                  background: 'white', 
+                                  color: '#595959', 
+                                  padding: '4px 8px', 
+                                  borderRadius: 4, 
+                                  fontSize: 11, 
+                                  cursor: 'pointer',
+                                  fontWeight: 500,
+                                  transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.target.style.borderColor = '#40a9ff'
+                                  e.target.style.color = '#40a9ff'
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.target.style.borderColor = '#d9d9d9'
+                                  e.target.style.color = '#595959'
+                                }}
+                                onClick={() => setDayEditModal({ date: dateISO, dateLabel: full })}
+                              >
+                                Изменить
+                              </button>
                             </>
                           ) : (
-                            <Button size="small" type="primary" ghost onClick={() => setDayEditModal({ date: dateISO, dateLabel: full })}>Открыть</Button>
+                            <button 
+                              style={{ 
+                                border: '1px solid #1890ff', 
+                                background: '#1890ff', 
+                                color: 'white', 
+                                padding: '4px 8px', 
+                                borderRadius: 4, 
+                                fontSize: 11, 
+                                cursor: 'pointer',
+                                fontWeight: 500,
+                                transition: 'all 0.2s'
+                              }}
+                              onMouseEnter={(e) => e.target.style.background = '#40a9ff'}
+                              onMouseLeave={(e) => e.target.style.background = '#1890ff'}
+                              onClick={() => setDayEditModal({ date: dateISO, dateLabel: full })}
+                            >
+                              Открыть
+                            </button>
                           )}
                         </div>
                       </div>
@@ -258,14 +406,25 @@ export default function OfficeDetail() {
                           const has = !!slot
                           const free = Number(slot?.free ?? 0)
                           const cap = Number(slot?.capacity ?? 0)
-                          const bg = has ? (free > 0 ? '#f6ffed' : '#fff1f0') : '#fafafa'
-                          const fg = has ? (free > 0 ? '#389e0d' : '#cf1322') : '#999'
-                          const baseStyle = { borderRight:'1px solid #eee', borderBottom:'1px solid #eee', padding:6, background: bg, color: fg }
+                          const isBreak = has && cap === 0
+                          const dateISO = toLocalISO(dayjs(previewStart).add(i,'day'))
+                          const selected = has && isSlotSelected(dateISO, slot?.start, slot?.end, slot?.id)
+                          const bg = selected ? '#e6f4ff' : (has ? (isBreak ? '#fff2e8' : (free > 0 ? '#f6ffed' : '#fff1f0')) : '#fafafa')
+                          const fg = has ? (isBreak ? '#d46b08' : (free > 0 ? '#389e0d' : '#cf1322')) : '#999'
+                          const baseStyle = { borderRight:'1px solid #eee', borderBottom:'1px solid #eee', padding:6, background: bg, color: fg, cursor: has ? 'pointer' : 'default', boxShadow: selected ? 'inset 0 0 0 2px #1677ff' : 'none' }
                           return <div key={`${i}-${t}`} style={baseStyle} onClick={() => {
                             if (!has) return
-                            setEditSlot({ ...slot, date: toLocalISO(dayjs(previewStart).add(i,'day')), office_id: id })
+                            const additive = (window.event && (window.event.metaKey || window.event.ctrlKey))
+                            const dateISO2 = toLocalISO(dayjs(previewStart).add(i,'day'))
+                            if (additive) {
+                              toggleSelectSlot(dateISO2, slot.start, slot.end, slot.id, true)
+                              return
+                            }
+                            // normal click: open editor and reset selection
+                            setSelectedSlots([])
+                            setEditSlot({ ...slot, date: dateISO2, office_id: id })
                             setEditCapacity(cap || 1)
-                          }}>{has ? `${slot.start} • ${free}/${cap}` : '—'}</div>
+                          }}>{has ? (isBreak ? `${slot.start} • Перерыв` : `${slot.start} • ${free}/${cap}`) : '—'}</div>
                         })}
                       </React.Fragment>
                     ))
@@ -276,86 +435,237 @@ export default function OfficeDetail() {
           }
         ]}
       />
-      {editSlot && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.35)', display:'flex', alignItems:'center', justifyContent:'center' }}>
-          <div style={{ background:'#fff', borderRadius:8, padding:16, width:360 }}>
-            <div style={{ fontWeight:600, marginBottom:12 }}>Изменить вместимость</div>
-            <div style={{ marginBottom:12, color:'#666' }}>{dayjs(editSlot.date).locale('ru').format('dddd, D MMMM YYYY')} • {editSlot.start}—{editSlot.end}</div>
-            <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-              <span>Вместимость:</span>
-              <Input type="number" min={1} value={editCapacity} onChange={(e)=>setEditCapacity(Math.max(1, Number(e.target.value)||1))} style={{ width:100 }} />
-            </div>
-            <div style={{ marginTop:16, display:'flex', justifyContent:'flex-end', gap:8 }}>
-              <Button onClick={()=>setEditSlot(null)}>Отмена</Button>
-              <Button type="primary" onClick={async()=>{
-                console.log('🔴 SAVE CAPACITY BUTTON CLICKED:', { editSlot, editCapacity, id })
-                try {
-                  console.log('📡 Sending capacity update:', `/slots/all?office_id=${id}&date=${editSlot.date}&update_slot_id=${editSlot.id}&new_capacity=${editCapacity}`)
-                  await api.get(`/slots/all?office_id=${id}&date=${editSlot.date}&update_slot_id=${editSlot.id}&new_capacity=${editCapacity}`)
-                  console.log('✅ Capacity update successful')
-                  message.success('Вместимость обновлена')
-                  setEditSlot(null)
-                  await loadPreview()
-                } catch (err) {
-                  console.error('❌ Capacity update failed:', err)
-                  message.error('Ошибка обновления вместимости')
-                }
-              }}>Сохранить</Button>
-            </div>
-          </div>
+      {selectedSlots.length > 0 && (
+        <div style={{ position:'sticky', bottom:16, zIndex:3, display:'flex', gap:12, alignItems:'center', background:'#fff', padding:'8px 12px', border:'1px solid #e6f4ff', boxShadow:'0 8px 24px rgba(0,0,0,0.08)', borderRadius:8 }}>
+          <div style={{ fontWeight:600 }}>Выбрано: {selectedSlots.length}</div>
+          <div style={{ color:'#555' }}>Изменить максимальную вместимость:</div>
+          <Input type="number" min={0} style={{ width:160 }} placeholder="например, 2 (0 — перерыв)" value={editCapacity} onChange={(e)=>setEditCapacity(Math.max(0, Number(e.target.value)||0))} />
+          <Button type="primary" onClick={async()=>{
+            try {
+              // Prefer precise id-based updates if available
+              const hasIds = selectedSlots.every(s => s.slotId)
+              if (hasIds) {
+                await Promise.all(selectedSlots.map(s => api.post('/slots/capacity', { slot_id: s.slotId, capacity: editCapacity })))
+              } else {
+                await Promise.all(selectedSlots.map(s => api.get('/slots/all', { params: { office_id: id, date: s.date, update_slot_id: s.slotId, new_capacity: editCapacity } })))
+              }
+              message.success('Изменения применены к выбранным слотам')
+              setSelectedSlots([])
+              await loadPreview()
+            } catch (e) { message.error('Не удалось применить массовое изменение') }
+          }}>Применить</Button>
+          <Button onClick={()=>setSelectedSlots([])}>Сбросить</Button>
         </div>
+      )}
+      {editSlot && (
+        <Modal
+          open
+          title={<div><div style={{ fontWeight: 600 }}>Изменить вместимость</div><div style={{ color:'#666', fontSize: 12 }}>{dayjs(editSlot.date).locale('ru').format('dddd, D MMMM YYYY')} • {editSlot.start}—{editSlot.end}</div></div>}
+          onCancel={()=>setEditSlot(null)}
+          footer={null}
+          width={400}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <Card size="small">
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                <div style={{ fontSize: 14, fontWeight: 500 }}>Вместимость:</div>
+                <Input 
+                  type="number" 
+                  min={0} 
+                  value={editCapacity} 
+                  onChange={(e)=>setEditCapacity(Math.max(0, Number(e.target.value)||0))} 
+                  style={{ width: 100 }} 
+                />
+                {editCapacity === 0 && (
+                  <div style={{ color: '#ff4d4f', fontSize: 12, fontWeight: 500 }}>
+                    Обеденный перерыв
+                  </div>
+                )}
+              </div>
+              <div style={{ marginTop: 8, fontSize: 12, color: '#8c8c8c' }}>
+                💡 Установите 0 для создания обеденного перерыва или технической паузы
+              </div>
+              <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <Button onClick={()=>setEditSlot(null)}>Отмена</Button>
+                <Button type="primary" onClick={async()=>{
+                  console.log('🔴 SAVE CAPACITY BUTTON CLICKED:', { editSlot, editCapacity, id })
+                  try {
+                    console.log('📡 Sending capacity update:', `/slots/all?office_id=${id}&date=${editSlot.date}&update_slot_id=${editSlot.id}&new_capacity=${editCapacity}`)
+                    await api.get(`/slots/all?office_id=${id}&date=${editSlot.date}&update_slot_id=${editSlot.id}&new_capacity=${editCapacity}`)
+                    console.log('✅ Capacity update successful')
+                    message.success('Вместимость обновлена')
+                    setEditSlot(null)
+                    await loadPreview()
+                  } catch (err) {
+                    console.error('❌ Capacity update failed:', err)
+                    message.error('Ошибка обновления вместимости')
+                  }
+                }}>Сохранить</Button>
+              </div>
+            </Card>
+          </div>
+        </Modal>
       )}
       
       {/* Day Edit Modal */}
       {dayEditModal && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.35)', display:'flex', alignItems:'center', justifyContent:'center' }}>
-          <div style={{ background:'#fff', borderRadius:8, padding:24, width:480 }}>
-            <div style={{ fontWeight:600, marginBottom:16 }}>Редактировать день</div>
-            <div style={{ marginBottom:16, color:'#666' }}>{dayEditModal.dateLabel}</div>
-            
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <div>
-                <div style={{ marginBottom: 8, fontWeight: 500 }}>Быстрые действия:</div>
-                <Space wrap>
-                  <Button onClick={async () => {
-                    if (!selectedTplId) {
-                      message.warning('Выберите шаблон')
-                      return
-                    }
+        <Modal
+          open
+          title={<div><div style={{ fontWeight: 600 }}>Редактировать день</div><div style={{ color:'#666', fontSize: 12 }}>{dayEditModal.dateLabel}</div></div>}
+          onCancel={()=>setDayEditModal(null)}
+          footer={null}
+          width={600}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Открыть по шаблону */}
+            <Card size="small">
+              <div style={{ marginBottom: 12, fontWeight: 500 }}>Открыть по шаблону</div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+                <div style={{ flex: 1 }}>
+                  <Select
+                    placeholder="Выберите шаблон"
+                    value={modalTplId}
+                    onChange={setModalTplId}
+                    style={{ width: '100%' }}
+                    options={(templates||[]).map(t => ({ value: t.id, label: t.name }))}
+                  />
+                </div>
+                <Button type="primary" onClick={async () => {
+                  if (!modalTplId) return message.warning('Выберите шаблон')
+                  try {
+                    await api.post('/slots/open-day', { office_id: id, date: dayEditModal.date, template_id: modalTplId })
+                    message.success('День открыт по шаблону')
+                    setDayEditModal(null)
+                    await loadPreview()
+                  } catch (err) {
+                    message.error('Ошибка открытия по шаблону')
+                  }
+                }}>Открыть</Button>
+              </div>
+            </Card>
+
+            {/* Точечные изменения */}
+            <Card size="small">
+              <div style={{ marginBottom: 12, fontWeight: 500 }}>Точечные изменения</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div>
+                  <div style={{ marginBottom: 8, fontSize: 12, color: '#666' }}>Закрыть с времени</div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <TimePicker 
+                      format="HH:mm" 
+                      minuteStep={30} 
+                      placeholder="16:00" 
+                      style={{ flex: 1 }}
+                      onChange={(v)=>setCloseAfter(v? v.format('HH:mm'): '')} 
+                    />
+                    <Button size="small" onClick={async () => {
+                      if (!closeAfter) return message.warning('Укажите время')
+                      try {
+                        await api.post('/slots/close-early', { office_id: id, date: dayEditModal.date, close_after: closeAfter, template_id: modalTplId })
+                        message.success('Закрыто с указанного времени')
+                        setDayEditModal(null)
+                        setCloseAfter('')
+                        await loadPreview()
+                      } catch (err) {
+                        message.error('Ошибка закрытия с времени')
+                      }
+                    }}>Применить</Button>
+                  </div>
+                </div>
+                <div>
+                  <div style={{ marginBottom: 8, fontSize: 12, color: '#666' }}>Открыть с времени</div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <TimePicker 
+                      format="HH:mm" 
+                      minuteStep={30} 
+                      placeholder="10:00" 
+                      style={{ flex: 1 }}
+                      onChange={(v)=>setOpenFrom(v? v.format('HH:mm'): '')} 
+                    />
+                    <Button size="small" onClick={async () => {
+                      if (!openFrom) return message.warning('Укажите время')
+                      try {
+                        await api.post('/slots/open-late', { office_id: id, date: dayEditModal.date, open_from: openFrom, template_id: modalTplId })
+                        message.success('Открыто с указанного времени')
+                        setDayEditModal(null)
+                        setOpenFrom('')
+                        await loadPreview()
+                      } catch (err) {
+                        message.error('Ошибка открытия с времени')
+                      }
+                    }}>Применить</Button>
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            {/* Окно работы */}
+            <Card size="small">
+              <div style={{ marginBottom: 12, fontWeight: 500 }}>Окно работы</div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>Открыть с</div>
+                  <TimePicker 
+                    format="HH:mm" 
+                    minuteStep={30} 
+                    placeholder="10:00" 
+                    style={{ width: '100%' }}
+                    onChange={(v)=>setOpenFrom(v? v.format('HH:mm'): '')} 
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ marginBottom: 4, fontSize: 12, color: '#666' }}>Закрыть с</div>
+                  <TimePicker 
+                    format="HH:mm" 
+                    minuteStep={30} 
+                    placeholder="22:00" 
+                    style={{ width: '100%' }}
+                    onChange={(v)=>setCloseAfter(v? v.format('HH:mm'): '')} 
+                  />
+                </div>
+                <Tooltip title="Пересоздаёт слоты по шаблону и применяет окно. Недостающие интервалы будут дозаполнены.">
+                  <Button type="primary" onClick={async () => {
                     try {
-                      // Use GET request with query params for template application
-                      await api.get(`/templates/${selectedTplId}/apply?office_id=${id}&date=${dayEditModal.date}`)
-                      message.success('День открыт по шаблону')
+                      await api.post('/slots/set-window', { office_id: id, date: dayEditModal.date, template_id: modalTplId, open_from: openFrom||undefined, close_after: closeAfter||undefined })
+                      message.success('Окно применено')
                       setDayEditModal(null)
                       await loadPreview()
                     } catch (err) {
-                      message.error('Ошибка применения шаблона')
+                      message.error('Ошибка применения окна')
                     }
-                  }}>Открыть по шаблону</Button>
-                  
-                  <Input placeholder="16:00" style={{ width: 80 }} disabled />
-                  <span style={{ color: '#999' }}>Закрытие с времени (в разработке)</span>
-                </Space>
-                
-                <Space wrap style={{ marginTop: 8 }}>
-                  <Input placeholder="10:00" style={{ width: 80 }} disabled />
-                  <span style={{ color: '#999' }}>Открытие с времени (в разработке)</span>
-                </Space>
+                  }}>Применить окно</Button>
+                </Tooltip>
               </div>
-              
-              <div style={{ marginTop: 16, padding: 12, background: '#fff3cd', borderRadius: 6, fontSize: 13, color: '#856404' }}>
-                🚧 <strong>Функция в разработке</strong><br/>
-                Пока используйте кнопку "Применить шаблон к диапазону" выше для управления расписанием офиса. 
-                Кастомные правки отдельных дней будут доступны в ближайших обновлениях.
+              <div style={{ marginTop: 12, padding: 8, background: '#f6f8fa', borderRadius: 4, fontSize: 12, color: '#666' }}>
+                💡 <strong>Окно работы</strong> — самое быстрое действие. Остальные — для точечных правок.
               </div>
-            </Space>
-            
-            <div style={{ marginTop:20, display:'flex', justifyContent:'flex-end', gap:8 }}>
-              <Button onClick={()=>setDayEditModal(null)}>Отмена</Button>
-            </div>
+            </Card>
           </div>
-        </div>
+        </Modal>
       )}
+      {/* Delete office modal */}
+      <Modal
+        open={deleteOpen}
+        onCancel={()=>setDeleteOpen(false)}
+        onOk={async ()=>{
+          try {
+            await api.delete(`/offices/${id}`)
+            message.success('Офис удалён')
+            setDeleteOpen(false)
+            navigate('/admin')
+          } catch (e) {
+            message.error('Не удалось удалить офис')
+          }
+        }}
+        okButtonProps={{ danger: true, disabled: (deleteConfirm.trim() !== (office?.name||'')) }}
+        title="Удалить офис"
+      >
+        <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+          <Typography.Text>Это действие необратимо. Для подтверждения введите название офиса:</Typography.Text>
+          <Typography.Text code>{office?.name}</Typography.Text>
+          <Input placeholder="Точное название офиса" value={deleteConfirm} onChange={(e)=>setDeleteConfirm(e.target.value)} />
+        </div>
+      </Modal>
     </div>
   )
 }

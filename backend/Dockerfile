@@ -1,8 +1,18 @@
 FROM node:20-alpine
+
 WORKDIR /app
-COPY package.json package-lock.json* .npmrc* ./
-RUN npm ci --no-audit --no-fund
-COPY src ./src
-ENV NODE_ENV=production PORT=4000
+
+# Копируем package файлы
+COPY package*.json ./
+
+# Устанавливаем зависимости
+RUN npm ci
+
+# Копируем исходный код
+COPY . .
+
+# Открываем порт
 EXPOSE 4000
-CMD ["node", "src/index.js"]
+
+# Запускаем в режиме разработки
+CMD ["npm", "run", "dev"]

@@ -2,15 +2,18 @@ const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
+const http = require('http');
 const { sequelize, models } = require('./lib/db');
 const { bitrixAuthMiddleware } = require('./middleware/bitrixAuth');
 const { redis } = require('./lib/redis');
+const { initWebsocket, broadcastTimeTick } = require('./lib/ws');
 const officesRouter = require('./routes/offices');
 const slotsRouter = require('./routes/slots');
 const templatesRouter = require('./routes/templates');
 const appointmentsRouter = require('./routes/appointments');
 const customRouter = require('./routes/custom');
-const { seedIfEmpty } = require('./seed');
+const apiRouter = require('./routes/index');
+// const { seedIfEmpty } = require('./seed');
 
 dotenv.config();
 
@@ -19,9 +22,10 @@ const PORT = Number(process.env.PORT || 4000);
 async function start() {
 	try {
 		await sequelize.authenticate();
-		await sequelize.sync();
+		// Auto-migrate schema to add new columns like bitrix_office_id
+		await sequelize.sync({ force: true });
 		await redis.connect();
-		await seedIfEmpty();
+		// Do not seed automatically; keep existing data persistent
 	} catch (err) {
 		console.error('Failed to initialize database or redis:', err);
 		throw err;
@@ -30,10 +34,29 @@ async function start() {
 	const app = express();
 
 	app.set('trust proxy', 1);
-	app.use(cors({
-		origin: process.env.CORS_ORIGIN || ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:4000'],
-		credentials: true
-	}));
+	// CORS configuration
+	const corsOptions = {
+		origin: function (origin, callback) {
+			// Allow requests with no origin (like mobile apps or curl requests)
+			if (!origin) return callback(null, true);
+			
+			const allowedOrigins = process.env.CORS_ORIGIN 
+				? process.env.CORS_ORIGIN.split(',') 
+				: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:4000'];
+			
+			if (allowedOrigins.indexOf(origin) !== -1) {
+				callback(null, true);
+			} else {
+				console.log('CORS blocked origin:', origin);
+				callback(null, true); // Allow all for development
+			}
+		},
+		credentials: true,
+		methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+		allowedHeaders: ['Content-Type', 'Authorization', 'X-Bitrix-Domain', 'X-Requested-With']
+	};
+	
+	app.use(cors(corsOptions));
 	app.use(express.json());
 	app.use(rateLimit({ windowMs: 60_000, max: 300 }));
 
@@ -108,26 +131,46 @@ async function start() {
 		}
 	});
 	
-	// Test route to debug routing issues
-	app.get('/api/test-direct', (req, res) => {
-		console.log('DIRECT TEST ROUTE HIT:', req.query);
-		res.json({ success: true, message: 'Direct route works', query: req.query });
+	app.use('/api', bitrixAuthMiddleware);
+	app.use('/api', apiRouter);
+
+	// Debug: list all registered routes
+	app.get('/api/routes', (_req, res) => {
+		function getRoutes(stack, prefix = '') {
+			const routes = [];
+			stack.forEach((layer) => {
+				if (layer.route) {
+					const path = prefix + (layer.route.path || '');
+					const methods = Object.keys(layer.route.methods).map(m => m.toUpperCase());
+					routes.push({ path, methods });
+				} else if (layer.name === 'router' && layer.handle && layer.handle.stack) {
+					const newPrefix = prefix + (layer.regexp && layer.regexp.fast_slash ? '' : (layer.regexp && layer.regexp.source || ''));
+					try {
+						const nested = getRoutes(layer.handle.stack, prefix);
+						routes.push(...nested);
+					} catch (e) {}
+				}
+			});
+			return routes;
+		}
+
+		const all = getRoutes(app._router.stack);
+		res.json({ routes: all });
 	});
 
-	app.use('/api', bitrixAuthMiddleware);
-	app.use('/api/offices', officesRouter);
-	app.use('/api/slots', slotsRouter);
-	app.use('/api/custom', customRouter);
-
-	app.use('/api/templates', templatesRouter);
-	app.use('/api/appointments', appointmentsRouter);
 
 	app.use((err, _req, res, _next) => {
 		console.error(err);
 		res.status(500).json({ error: 'Internal Server Error' });
 	});
 
-	app.listen(PORT, () => {
+	const server = http.createServer(app);
+	initWebsocket(server);
+
+	// Minute tick: notify clients so they can filter past slots
+	setInterval(() => broadcastTimeTick(), 60_000).unref?.();
+
+	server.listen(PORT, () => {
 		console.log(`Backend listening on :${PORT}`);
 	});
 }

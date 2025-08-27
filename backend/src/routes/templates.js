@@ -12,8 +12,27 @@ router.get('/', async (_req, res, next) => {
 	} catch (e) { next(e); }
 });
 
+router.get('/:id', [
+	param('id').isString().notEmpty(),
+], async (req, res, next) => {
+	try {
+		const errors = validationResult(req);
+		if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+		
+		const item = await models.Template.findByPk(req.params.id);
+		if (!item) return res.status(404).json({ error: 'Template not found' });
+		
+		res.json({ data: item });
+	} catch (e) { next(e); }
+});
+
 router.post('/', [
 	body('name').isString().notEmpty(),
+	body('description').optional().isString(),
+	body('baseStartTime').optional().isString(),
+	body('baseEndTime').optional().isString(),
+	body('slotDuration').optional().isInt({ min: 15, max: 120 }),
+	body('defaultCapacity').optional().isInt({ min: 1, max: 100 }),
 	body('weekdays').isObject(),
 	body('office_id').optional().isString(),
 	body('isDefault').optional().isBoolean(),
@@ -21,15 +40,61 @@ router.post('/', [
 	try {
 		const errors = validationResult(req);
 		if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-		const { name, weekdays, office_id, isDefault } = req.body;
-		const tpl = await models.Template.create({ name, weekdays, office_id: office_id || null, isDefault: !!isDefault });
+		const { 
+			name, 
+			description, 
+			baseStartTime, 
+			baseEndTime, 
+			slotDuration, 
+			defaultCapacity, 
+			weekdays, 
+			office_id, 
+			isDefault 
+		} = req.body;
+		
+		// Проверяем формат weekdays и конвертируем если нужно
+		let processedWeekdays = weekdays;
+		if (weekdays && typeof weekdays === 'object') {
+			const firstDay = Object.values(weekdays)[0];
+			if (firstDay && Array.isArray(firstDay)) {
+				// Это уже массив слотов (старый формат), оставляем как есть
+				processedWeekdays = weekdays;
+			} else {
+				// Это новый формат, конвертируем в старый для совместимости
+				processedWeekdays = {};
+				for (const [dayKey, profile] of Object.entries(weekdays)) {
+					if (profile && profile.start && profile.end) {
+						// Генерируем слоты на основе профиля дня
+						const slots = generateSlotsFromWeekday(profile, { slotDuration: slotDuration || 30, defaultCapacity: defaultCapacity || 1 });
+						processedWeekdays[dayKey] = slots;
+					}
+				}
+			}
+		}
+		
+		const tpl = await models.Template.create({ 
+			name, 
+			description: description || null,
+			baseStartTime: baseStartTime || '09:00',
+			baseEndTime: baseEndTime || '18:00',
+			slotDuration: slotDuration || 30,
+			defaultCapacity: defaultCapacity || 1,
+			weekdays: processedWeekdays, 
+			office_id: office_id || null, 
+			isDefault: !!isDefault 
+		});
 		res.status(201).json({ data: tpl });
 	} catch (e) { next(e); }
-});
+ });
 
 router.put('/:id', [
 	param('id').isString().notEmpty(),
 	body('name').optional().isString().notEmpty(),
+	body('description').optional().isString(),
+	body('baseStartTime').optional().isString(),
+	body('baseEndTime').optional().isString(),
+	body('slotDuration').optional().isInt({ min: 15, max: 120 }),
+	body('defaultCapacity').optional().isInt({ min: 1, max: 100 }),
 	body('weekdays').optional().isObject(),
 	body('isDefault').optional().isBoolean(),
 ], async (req, res, next) => {
@@ -38,10 +103,47 @@ router.put('/:id', [
 		if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 		const item = await models.Template.findByPk(req.params.id);
 		if (!item) return res.status(404).json({ error: 'Not found' });
-		const { name, weekdays, isDefault } = req.body;
+		const { 
+			name, 
+			description, 
+			baseStartTime, 
+			baseEndTime, 
+			slotDuration, 
+			defaultCapacity, 
+			weekdays, 
+			isDefault 
+		} = req.body;
+		
 		if (name) item.name = name;
-		if (weekdays) item.weekdays = weekdays;
+		if (description !== undefined) item.description = description;
+		if (baseStartTime) item.baseStartTime = baseStartTime;
+		if (baseEndTime) item.baseEndTime = baseEndTime;
+		if (slotDuration) item.slotDuration = slotDuration;
+		if (defaultCapacity) item.defaultCapacity = defaultCapacity;
+		if (weekdays) {
+			// Проверяем формат weekdays и конвертируем если нужно
+			let processedWeekdays = weekdays;
+			if (weekdays && typeof weekdays === 'object') {
+				const firstDay = Object.values(weekdays)[0];
+				if (firstDay && Array.isArray(firstDay)) {
+					// Это уже массив слотов (старый формат), оставляем как есть
+					processedWeekdays = weekdays;
+				} else {
+					// Это новый формат, конвертируем в старый для совместимости
+					processedWeekdays = {};
+					for (const [dayKey, profile] of Object.entries(weekdays)) {
+						if (profile && profile.start && profile.end) {
+							// Генерируем слоты на основе профиля дня
+							const slots = generateSlotsFromWeekday(profile, { slotDuration: item.slotDuration || 30, defaultCapacity: item.defaultCapacity || 1 });
+							processedWeekdays[dayKey] = slots;
+						}
+					}
+				}
+			}
+			item.weekdays = processedWeekdays;
+		}
 		if (typeof isDefault === 'boolean') item.isDefault = isDefault;
+		
 		await item.save();
 		res.json({ data: item });
 	} catch (e) { next(e); }
@@ -53,6 +155,47 @@ router.delete('/:id', [param('id').isString().notEmpty()], async (req, res, next
 		res.json({ ok: true });
 	} catch (e) { next(e); }
 });
+
+// Функция для генерации слотов из профиля дня
+function generateSlotsFromWeekday(weekday, template) {
+	if (!weekday || !weekday.start || !weekday.end) return [];
+	
+	const slots = [];
+	const startMin = parseInt(weekday.start.split(':')[0]) * 60 + parseInt(weekday.start.split(':')[1]);
+	const endMin = parseInt(weekday.end.split(':')[0]) * 60 + parseInt(weekday.end.split(':')[1]);
+	const duration = template.slotDuration || 30;
+	
+	for (let time = startMin; time < endMin; time += duration) {
+		const startTime = `${String(Math.floor(time/60)).padStart(2,'0')}:${String(time%60).padStart(2,'0')}`;
+		const endTime = `${String(Math.floor((time+duration)/60)).padStart(2,'0')}:${String((time+duration)%60).padStart(2,'0')}`;
+		
+		slots.push({
+			start: startTime,
+			end: endTime,
+			capacity: weekday.capacity || template.defaultCapacity || 1
+		});
+	}
+	
+	// Применяем специальные слоты
+	if (weekday.specialSlots && Array.isArray(weekday.specialSlots)) {
+		weekday.specialSlots.forEach(special => {
+			const specialStartMin = parseInt(special.start.split(':')[0]) * 60 + parseInt(special.start.split(':')[1]);
+			const specialEndMin = parseInt(special.end.split(':')[0]) * 60 + parseInt(special.end.split(':')[1]);
+			
+			slots.forEach(slot => {
+				const slotStartMin = parseInt(slot.start.split(':')[0]) * 60 + parseInt(slot.start.split(':')[1]);
+				const slotEndMin = parseInt(slot.end.split(':')[0]) * 60 + parseInt(slot.end.split(':')[1]);
+				
+				if (slotStartMin >= specialStartMin && slotEndMin <= specialEndMin) {
+					slot.capacity = special.capacity;
+					slot.type = special.type;
+				}
+			});
+		});
+	}
+	
+	return slots;
+}
 
 router.post('/:id/apply', [
 	param('id').isString().notEmpty(),
@@ -75,35 +218,64 @@ router.post('/:id/apply', [
 			const day = String(d.getDate()).padStart(2,'0');
 			return `${y}-${m}-${day}`;
 		};
+		
 		for (let d = new Date(start); d.getTime() <= end.getTime(); d.setDate(d.getDate()+1)) {
 			const iso = isoLocal(d);
 			// Compute weekday from ISO at UTC midnight to avoid TZ skew
 			const weekday = new Date(`${iso}T00:00:00Z`).getUTCDay();
-			const getItemsForWeekday = (weekdays, wd) => {
+			const getWeekdayProfile = (weekdays, wd) => {
 				const map = weekdays || {};
 				const direct = map[String(wd)] || map[wd];
-				if (Array.isArray(direct) && direct.length) return direct;
+				if (direct && typeof direct === 'object') return direct;
 				// Support templates that store Sunday under key "7"
 				if (wd === 0) {
 					const alt = map['7'] || map[7];
-					if (Array.isArray(alt)) return alt;
+					if (alt && typeof alt === 'object') return alt;
 				}
-				return [];
+				return null;
 			};
-			const items = getItemsForWeekday(tpl.weekdays, weekday);
-			// Remove any existing schedules for this office/date (avoid duplicates)
+			
+			const weekdayProfile = getWeekdayProfile(tpl.weekdays, weekday);
+			if (!weekdayProfile) continue;
+
+			// Normalize profile to array of items (old format) or generate from new format
+			const items = Array.isArray(weekdayProfile) ? weekdayProfile : generateSlotsFromWeekday(weekdayProfile, tpl);
+			
+			// Remove any existing schedules for this office/date
 			const existingList = await models.Schedule.findAll({ where: { office_id, date: iso } });
 			for (const sch of existingList) {
 				await models.Slot.destroy({ where: { schedule_id: sch.id } });
 			}
 			await models.Schedule.destroy({ where: { office_id, date: iso } });
-			if (items.length > 0) {
-				const schedule = await models.Schedule.create({ office_id, date: iso, isWorkingDay: true });
-				for (const s of items) {
-					await models.Slot.create({ schedule_id: schedule.id, start: s.start, end: s.end, available: true, capacity: s.capacity || 1 });
+			
+			// Create schedule and slots
+			if ((items||[]).length > 0) {
+				const schedule = await models.Schedule.create({ 
+					office_id, 
+					date: iso, 
+					isWorkingDay: true,
+					isCustomized: true,
+					customizedAt: new Date()
+				});
+				
+				for (const slot of items) {
+					await models.Slot.create({ 
+						schedule_id: schedule.id, 
+						start: slot.start, 
+						end: slot.end, 
+						available: true, 
+						capacity: slot.capacity || 1 
+					});
 				}
 			}
 		}
+		
+		// Invalidate cache for the date range
+		for (let d = new Date(start); d.getTime() <= end.getTime(); d.setDate(d.getDate()+1)) {
+			const iso = isoLocal(d);
+			await invalidateSlotsCache(office_id, iso);
+		}
+		
 		res.json({ ok: true });
 	} catch (e) { next(e); }
 });

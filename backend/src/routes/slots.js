@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { query, body, param, validationResult } = require('express-validator');
 const { getAvailableSlots, invalidateSlotsCache } = require('../services/slotsService');
+const { broadcastSlotsUpdated } = require('../lib/ws');
 const { models, Op } = require('../lib/db');
 
 // Helper function to apply template to a specific date
@@ -53,6 +54,24 @@ async function applyTemplateToDate(officeId, date, weekdaysTemplate, markAsCusto
 
 const router = Router();
 
+// Debug: list routes defined in this router
+router.get('/_routes', (req, res) => {
+	try {
+		const routes = [];
+		for (const layer of router.stack) {
+			if (layer.route) {
+				routes.push({
+					path: layer.route.path,
+					methods: Object.keys(layer.route.methods).map(m => m.toUpperCase())
+				});
+			}
+		}
+		res.json({ routes });
+	} catch (e) {
+		res.status(500).json({ error: e.message });
+	}
+});
+
 // SIMPLE TEST ROUTE
 router.get('/test-simple', (req, res) => {
   console.log('GET /test-simple works!');
@@ -77,6 +96,7 @@ router.get('/fix-slot', async (req, res) => {
           schedule.customizedAt = new Date();
           await schedule.save();
           await invalidateSlotsCache(schedule.office_id, schedule.date);
+          broadcastSlotsUpdated(schedule.office_id, schedule.date);
         }
         
         console.log('SUCCESS: Updated slot capacity from', oldCapacity, 'to', slot.capacity);
@@ -98,6 +118,7 @@ router.get('/fix-slot', async (req, res) => {
             schedule.customizedAt = new Date();
             await schedule.save();
             await invalidateSlotsCache(office_id, date);
+            broadcastSlotsUpdated(office_id, date);
             console.log('SUCCESS: Closed day');
             return res.json({ success: true, message: 'Day closed' });
           }
@@ -117,6 +138,7 @@ router.get('/fix-slot', async (req, res) => {
               schedule.customizedAt = new Date();
               await schedule.save();
               await invalidateSlotsCache(office_id, date);
+              broadcastSlotsUpdated(office_id, date);
               console.log('SUCCESS: Closed early after', req.query.close_after);
               return res.json({ success: true, message: `Closed early after ${req.query.close_after}` });
             }
@@ -137,6 +159,7 @@ router.get('/fix-slot', async (req, res) => {
               schedule.customizedAt = new Date();
               await schedule.save();
               await invalidateSlotsCache(office_id, date);
+              broadcastSlotsUpdated(office_id, date);
               console.log('SUCCESS: Opened late from', req.query.open_from);
               return res.json({ success: true, message: `Opened late from ${req.query.open_from}` });
             }
@@ -171,7 +194,10 @@ router.post('/close-day', async (req, res) => {
 		schedule.isCustomized = true;
 		schedule.customizedAt = new Date();
 		await schedule.save();
+		// Remove all slots for this schedule to ensure the day is effectively closed
+		await models.Slot.destroy({ where: { schedule_id: schedule.id } });
 		await invalidateSlotsCache(office_id, date);
+		broadcastSlotsUpdated(office_id, date);
 
 		console.log('SUCCESS: Closed day', date, 'for office', office_id);
 		res.json({ success: true, message: 'Day closed successfully' });
@@ -179,6 +205,176 @@ router.post('/close-day', async (req, res) => {
 		console.error('Close day error:', e);
 		res.status(500).json({ error: e.message });
 	}
+});
+
+// Open day by applying a template's weekday items for the specific date
+router.post('/open-day', async (req, res) => {
+    try {
+        const { office_id, date, template_id } = req.body;
+        if (!office_id || !date) {
+            return res.status(400).json({ error: 'Missing office_id or date' });
+        }
+        let template;
+        if (template_id) {
+            template = await models.Template.findByPk(template_id);
+            if (!template) return res.status(404).json({ error: 'Template not found' });
+        } else {
+            // Find default template for office or any default
+            template = await models.Template.findOne({ where: { office_id: office_id } })
+                || await models.Template.findOne({ where: { isDefault: true } });
+            if (!template) return res.status(400).json({ error: 'Template is required to open day' });
+        }
+
+        await applyTemplateToDate(office_id, date, template.weekdays, true);
+        await invalidateSlotsCache(office_id, date);
+        broadcastSlotsUpdated(office_id, date);
+        res.json({ success: true, message: 'Day opened by template' });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Close early: remove all slots with start >= close_after (e.g., '16:00')
+router.post('/close-early', async (req, res) => {
+    try {
+        const { office_id, date, close_after, template_id } = req.body;
+        if (!office_id || !date || !close_after) return res.status(400).json({ error: 'Missing params' });
+        let schedule = await models.Schedule.findOne({ where: { office_id, date } });
+
+        // If no schedule or no slots exist, attempt to open by template first
+        if (!schedule) {
+            let template;
+            if (template_id) {
+                template = await models.Template.findByPk(template_id);
+            } else {
+                template = await models.Template.findOne({ where: { office_id } }) || await models.Template.findOne({ where: { isDefault: true } });
+            }
+            if (!template) return res.status(400).json({ error: 'Template required to modify empty day' });
+            await applyTemplateToDate(office_id, date, template.weekdays, true);
+            schedule = await models.Schedule.findOne({ where: { office_id, date } });
+        }
+
+        await models.Slot.destroy({ where: { schedule_id: schedule.id, start: { [Op.gte]: close_after } } });
+        schedule.isCustomized = true;
+        schedule.customizedAt = new Date();
+        await schedule.save();
+        await invalidateSlotsCache(office_id, date);
+        broadcastSlotsUpdated(office_id, date);
+        res.json({ success: true, message: `Closed early after ${close_after}` });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Open late: remove all slots with end <= open_from (e.g., '12:00')
+router.post('/open-late', async (req, res) => {
+    try {
+        const { office_id, date, open_from, template_id } = req.body;
+        if (!office_id || !date || !open_from) return res.status(400).json({ error: 'Missing params' });
+        let schedule = await models.Schedule.findOne({ where: { office_id, date } });
+
+        // If no schedule or no slots exist, attempt to open by template first
+        if (!schedule) {
+            let template;
+            if (template_id) {
+                template = await models.Template.findByPk(template_id);
+            } else {
+                template = await models.Template.findOne({ where: { office_id } }) || await models.Template.findOne({ where: { isDefault: true } });
+            }
+            if (!template) return res.status(400).json({ error: 'Template required to modify empty day' });
+            await applyTemplateToDate(office_id, date, template.weekdays, true);
+            schedule = await models.Schedule.findOne({ where: { office_id, date } });
+        }
+
+        await models.Slot.destroy({ where: { schedule_id: schedule.id, end: { [Op.lte]: open_from } } });
+        schedule.isCustomized = true;
+        schedule.customizedAt = new Date();
+        await schedule.save();
+        await invalidateSlotsCache(office_id, date);
+        broadcastSlotsUpdated(office_id, date);
+        res.json({ success: true, message: `Opened late from ${open_from}` });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Set working window for a day: regenerate from template, then trim by bounds
+router.post('/set-window', async (req, res) => {
+    try {
+        const { office_id, date, template_id, open_from, close_after } = req.body;
+        if (!office_id || !date) return res.status(400).json({ error: 'Missing office_id or date' });
+        const parseMin = (t) => { const [h,m] = String(t).slice(0,5).split(':').map(Number); return h*60 + m };
+        const toTime = (m) => `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+
+        let schedule = await models.Schedule.findOne({ where: { office_id, date } });
+
+        // If no schedule exists, try to regenerate from template
+        if (!schedule) {
+            let template;
+            if (template_id) {
+                template = await models.Template.findByPk(template_id);
+            } else {
+                template = await models.Template.findOne({ where: { office_id } }) || await models.Template.findOne({ where: { isDefault: true } });
+            }
+            if (template) {
+                await applyTemplateToDate(office_id, date, template.weekdays, true);
+                schedule = await models.Schedule.findOne({ where: { office_id, date } });
+            }
+            // If still no schedule and no template available, create empty schedule to allow extension purely by window
+            if (!schedule) {
+                schedule = await models.Schedule.create({ office_id, date, isWorkingDay: true, isCustomized: true, customizedAt: new Date() });
+            }
+        }
+
+        // Trim existing slots per bounds
+        if (open_from) {
+            await models.Slot.destroy({ where: { schedule_id: schedule.id, end: { [Op.lte]: open_from } } });
+        }
+        if (close_after) {
+            await models.Slot.destroy({ where: { schedule_id: schedule.id, start: { [Op.gte]: close_after } } });
+        }
+
+        // Reload current slots ordered
+        let slots = await models.Slot.findAll({ where: { schedule_id: schedule.id }, order: [['start','ASC']] });
+
+        // Determine capacity baseline
+        const baseCapacity = slots.length > 0 ? (slots[slots.length-1].capacity || 1) : 1;
+
+        // Extend start side (optional): if open_from is earlier than first slot start, fill gaps forward until first slot
+        if (open_from && slots.length > 0) {
+            const firstStartMin = parseMin(slots[0].start);
+            const openFromMin = parseMin(open_from);
+            // Usually open_from >= firstStart means trim only; if open_from < firstStart, we could add earlier slots - skipping unless needed
+        }
+
+        // Extend end side: if close_after provided and the last end is before it, fill in 30-min slots until close_after
+        if (close_after) {
+            const closeAfterMin = parseMin(close_after);
+            let lastEndMin = 0;
+            if (slots.length > 0) {
+                lastEndMin = parseMin(slots[slots.length-1].end);
+            } else if (open_from) {
+                lastEndMin = parseMin(open_from);
+            }
+            let cursor = lastEndMin;
+            while (cursor < closeAfterMin) {
+                const start = toTime(cursor);
+                const end = toTime(cursor + 30);
+                if (parseMin(end) > closeAfterMin) break;
+                // Avoid duplicates if any
+                const exists = await models.Slot.findOne({ where: { schedule_id: schedule.id, start, end } });
+                if (!exists) {
+                    await models.Slot.create({ schedule_id: schedule.id, start, end, available: true, capacity: baseCapacity });
+                }
+                cursor += 30;
+            }
+        }
+
+        schedule.isWorkingDay = true;
+        schedule.isCustomized = true;
+        schedule.customizedAt = new Date();
+        await schedule.save();
+        await invalidateSlotsCache(office_id, date);
+        broadcastSlotsUpdated(office_id, date);
+
+        res.json({ success: true, message: 'Window applied' });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // List schedules (exceptions/days) in a period
@@ -235,6 +431,7 @@ router.get('/all', async (req, res, next) => {
 					// TODO: set customizedBy from auth context
 					await schedule.save();
 					await invalidateSlotsCache(officeId, date);
+					broadcastSlotsUpdated(officeId, date);
 				}
 				
 				console.log('SUCCESS: Updated slot capacity from', oldCapacity, 'to', slot.capacity);
@@ -268,6 +465,7 @@ router.get('/all', async (req, res, next) => {
 						if (template) {
 							// Apply template for this specific date
 							await applyTemplateToDate(officeId, date, template.weekdays, true);
+							broadcastSlotsUpdated(officeId, date);
 							console.log('SUCCESS: Opened day with template');
 						}
 					}
@@ -317,6 +515,16 @@ router.get('/all', async (req, res, next) => {
 		
 		const schedule = await models.Schedule.findOne({ where: { office_id: officeId, date } });
 		if (!schedule) return res.json({ data: [], meta: { isWorkingDay: false, isCustomized: false } });
+		// If the day is marked as non-working, do not return any slots
+		if (schedule.isWorkingDay === false) {
+			const meta = {
+				isWorkingDay: schedule.isWorkingDay,
+				isCustomized: schedule.isCustomized,
+				customizedAt: schedule.customizedAt,
+				scheduleId: schedule.id
+			};
+			return res.json({ data: [], meta });
+		}
 		
 		const allSlots = await models.Slot.findAll({ where: { schedule_id: schedule.id }, order: [['start','ASC']] });
 		const appointments = await models.Appointment.findAll({ where: { office_id: officeId, date, status: ['pending','confirmed'] } });
@@ -364,6 +572,7 @@ router.post('/update-capacity', [
 		const schedule = await models.Schedule.findByPk(slot.schedule_id);
 		if (schedule) {
 			await invalidateSlotsCache(schedule.office_id, schedule.date);
+			broadcastSlotsUpdated(schedule.office_id, schedule.date);
 		}
 		
 		res.json({ success: true, data: { id: slot.id, capacity: slot.capacity } });
@@ -480,7 +689,10 @@ router.post('/capacity', async (req, res, next) => {
     slot.capacity = Number(req.body.capacity);
     await slot.save();
     const schedule = await models.Schedule.findByPk(slot.schedule_id);
-    if (schedule) await invalidateSlotsCache(schedule.office_id, schedule.date);
+    if (schedule) {
+      await invalidateSlotsCache(schedule.office_id, schedule.date);
+      broadcastSlotsUpdated(schedule.office_id, schedule.date);
+    }
     res.json({ data: { id: slot.id, capacity: slot.capacity } });
   } catch (e) { next(e); }
 });

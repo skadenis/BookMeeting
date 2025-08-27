@@ -12,13 +12,25 @@ async function getAvailableSlots(officeId, date) {
 	const slots = await models.Slot.findAll({ where: { schedule_id: schedule.id, available: true }, order: [[ 'start', 'ASC' ]] });
 	const appointments = await models.Appointment.findAll({ where: { office_id: officeId, date, status: ['pending','confirmed'] } });
 	const countByTime = appointments.reduce((acc, a) => { acc[a.timeSlot] = (acc[a.timeSlot]||0)+1; return acc }, {});
+	// Filter out past slots for the current day
+	const now = new Date();
+	const isToday = String(date) === new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().slice(0,10);
 	const available = slots
 		.map((s) => {
 			const key = `${s.start}-${s.end}`;
 			const used = countByTime[key] || 0;
 			return { id: s.id, start: s.start, end: s.end, capacity: s.capacity, used, free: Math.max(0, s.capacity - used) };
 		})
-		.filter((x) => x.free > 0);
+		.filter((x) => {
+			if (x.free <= 0) return false;
+			if (!isToday) return true;
+			try {
+				const [hh, mm] = String(x.start).split(':').map(Number);
+				const startDt = new Date();
+				startDt.setHours(Number.isFinite(hh)?hh:0, Number.isFinite(mm)?mm:0, 0, 0);
+				return startDt.getTime() > now.getTime();
+			} catch { return true }
+		});
 
 
 	await redis.set(cacheKey, JSON.stringify(available), 'EX', 30);

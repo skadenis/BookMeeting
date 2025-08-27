@@ -4,3 +4,57 @@ button { background: #2fc6f7; color: #fff; border: none; border-radius: 4px; cur
 button:hover { background: #1db6ea; }
 button:disabled { background: #c7eefd; cursor: default; }
 label { font-size: 12px; color: #555; }
+
+/* Стилизация всех модалок */
+.ant-modal {
+  border-radius: 12px !important;
+  overflow: hidden;
+  box-shadow: 0 6px 32px rgba(0, 0, 0, 0.12) !important;
+}
+
+.ant-modal-content {
+  border-radius: 12px !important;
+  padding: 0 !important;
+}
+
+.ant-modal-header {
+  background: #fafafa !important;
+  border-bottom: 1px solid #f0f0f0 !important;
+  padding: 16px 24px !important;
+  border-radius: 12px 12px 0 0 !important;
+}
+
+.ant-modal-body {
+  padding: 24px !important;
+}
+
+.ant-modal-close {
+  top: 16px !important;
+  right: 16px !important;
+  width: 32px !important;
+  height: 32px !important;
+  background: rgba(0, 0, 0, 0.04) !important;
+  border-radius: 8px !important;
+  transition: all 0.2s !important;
+}
+
+.ant-modal-close:hover {
+  background: rgba(0, 0, 0, 0.08) !important;
+}
+
+.ant-modal-close-x {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  height: 100% !important;
+  font-size: 16px !important;
+  color: #8c8c8c !important;
+}
+
+.ant-modal-close:hover .ant-modal-close-x {
+  color: #595959 !important;
+}
+
+/* В предпросмотре шаблона скрываем любые кнопки в заголовках столбцов, если они вдруг попадают из кэша/стороннего стиля */
+.template-preview button { display: none !important; }

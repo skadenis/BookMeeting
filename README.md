@@ -1,42 +1,60 @@
-# Bitrix24 Meetings App
+# BookMeeting - Система управления встречами
 
-Full-stack appointments management integrated in Bitrix24.
+Полнофункциональное приложение для управления встречами с интеграцией в Bitrix24.
 
+## 🚀 Быстрый запуск
 
-## One-click run
+### Требования
+- Docker Desktop
+- Docker Compose
 
-- With Docker (if available) or fallback to local dev automatically:
-```
-npm start
-```
-- Force local dev (SQLite + in-memory Redis):
-```
-npm run dev
-```
-- Force Docker:
-```
-npm run docker
-```
+### Запуск
+```bash
+# Запустить проект
+./start.sh
 
-App (Docker): http://localhost:8080
-App (Local dev): http://localhost:5173, API: http://localhost:4000/api
+# Остановить проект  
+./stop.sh
 
-
-## Development
-
-- Backend:
-```
-cd backend
-npm i
-
-node src/index.js
-
-- Frontend:
-```
-cd frontend
-npm i
-npm run dev
+# Посмотреть логи
+docker-compose logs -f
 ```
 
-## Bitrix auth
-The app expects a Bearer token from Bitrix and domain in `X-Bitrix-Domain`. For local development, set `BITRIX_DEV_MODE=true` and use `VITE_DEV_BITRIX_TOKEN`/`VITE_DEV_BITRIX_DOMAIN`.
+## 🌐 Доступные сервисы
+
+- **Frontend**: http://localhost:5173
+- **Backend API**: http://localhost:4000
+- **PostgreSQL**: localhost:5432
+- **Redis**: localhost:6379
+
+## 📁 Структура проекта
+
+```
+BookMeeting/
+├── backend/          # Node.js API сервер
+├── frontend/         # React приложение
+├── docker-compose.yml # Конфигурация Docker
+├── start.sh          # Скрипт запуска
+└── stop.sh           # Скрипт остановки
+```
+
+## 🔧 Разработка
+
+Все изменения в коде автоматически перезагружаются благодаря volume mounts в Docker.
+
+## 🗄️ База данных
+
+PostgreSQL с автоматическим созданием схемы через Sequelize ORM.
+
+## 📝 Логи
+
+```bash
+# Все сервисы
+docker-compose logs -f
+
+# Только backend
+docker-compose logs -f backend
+
+# Только frontend  
+docker-compose logs -f frontend
+```

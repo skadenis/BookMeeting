@@ -2,32 +2,26 @@ const { Sequelize, DataTypes, Op } = require('sequelize');
 const dotenv = require('dotenv');
 dotenv.config();
 
-let sequelize;
-if (String(process.env.USE_SQLITE) === 'true') {
-	sequelize = new Sequelize({
-		dialect: 'sqlite',
-		storage: process.env.SQLITE_PATH || ':memory:',
+const sequelize = new Sequelize(
+	process.env.DB_NAME || 'meetings',
+	process.env.DB_USERNAME || 'meetings',
+	process.env.DB_PASSWORD || 'meetings',
+	{
+		host: process.env.DB_HOST || 'localhost',
+		port: Number(process.env.DB_PORT || 5432),
+		dialect: 'postgres',
 		logging: false,
-	});
-} else {
-	sequelize = new Sequelize(
-		process.env.DB_NAME || 'meetings',
-		process.env.DB_USERNAME || 'meetings',
-		process.env.DB_PASSWORD || 'meetings',
-		{
-			host: process.env.DB_HOST || 'localhost',
-			port: Number(process.env.DB_PORT || 5432),
-			dialect: 'postgres',
-			logging: false,
-		}
-	);
-}
+	}
+);
 
 const Office = sequelize.define('Office', {
 	id: { type: DataTypes.UUID, primaryKey: true, defaultValue: DataTypes.UUIDV4 },
-	name: { type: DataTypes.STRING(120), allowNull: false },
+	name: { type: DataTypes.STRING(120), allowNull: true },
 	city: { type: DataTypes.STRING(120), allowNull: false },
 	address: { type: DataTypes.STRING(120), allowNull: false },
+	addressNote: { type: DataTypes.TEXT, allowNull: true, field: 'address_note' },
+	// Bitrix office identifier (optional)
+	bitrixOfficeId: { type: DataTypes.BIGINT, allowNull: true, field: 'bitrix_office_id' },
 }, { tableName: 'offices', timestamps: false });
 
 const Schedule = sequelize.define('Schedule', {
@@ -71,7 +65,15 @@ const AppointmentHistory = sequelize.define('AppointmentHistory', {
 const Template = sequelize.define('Template', {
 	id: { type: DataTypes.UUID, primaryKey: true, defaultValue: DataTypes.UUIDV4 },
 	name: { type: DataTypes.STRING(120), allowNull: false },
-	weekdays: { type: DataTypes.JSON, allowNull: false }, // {"1":[{start,end,capacity}], ...}
+	description: { type: DataTypes.TEXT, allowNull: true },
+	office_id: { type: DataTypes.UUID, allowNull: true, field: 'office_id' },
+	// Базовые настройки
+	baseStartTime: { type: DataTypes.STRING(5), allowNull: false, defaultValue: '09:00', field: 'base_start_time' },
+	baseEndTime: { type: DataTypes.STRING(5), allowNull: false, defaultValue: '18:00', field: 'base_end_time' },
+	slotDuration: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 30, field: 'slot_duration' }, // в минутах
+	defaultCapacity: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1, field: 'default_capacity' },
+	// Дневные профили
+	weekdays: { type: DataTypes.JSON, allowNull: false }, // {"1":{start,end,capacity,specialSlots:[{start,end,capacity,type}]}, ...}
 	isDefault: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false, field: 'is_default' },
 }, { tableName: 'templates', timestamps: false });
 

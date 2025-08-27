@@ -21,25 +21,43 @@ declare global {
 export async function bitrixAuthMiddleware(req: Request, res: Response, next: NextFunction) {
 	try {
 		const authHeader = req.header('Authorization');
-		const token = authHeader?.startsWith('Bearer ')
+		let token = authHeader?.startsWith('Bearer ')
 			? authHeader.substring('Bearer '.length)
 			: undefined;
 
-		const domain = (req.header('X-Bitrix-Domain') || req.query.domain || '').toString();
+		// Also accept token from query (?AUTH_ID=... or ?auth=...)
+		if (!token) {
+			const qAuth = (req.query.AUTH_ID || req.query.auth || req.query.access_token) as string | undefined;
+			if (qAuth) token = String(qAuth);
+		}
+
+		const domainFromHeader = req.header('X-Bitrix-Domain');
+		const domainParam = (req.query.DOMAIN || req.query.domain) as string | undefined;
+		const domain = (domainFromHeader || domainParam || '').toString();
 		const leadId = req.query.lead_id ? Number(req.query.lead_id) : undefined;
 		const dealId = req.query.deal_id ? Number(req.query.deal_id) : undefined;
 		const contactId = req.query.contact_id ? Number(req.query.contact_id) : undefined;
+		const userId = req.query.user_id ? Number(req.query.user_id) : undefined;
 
 		if (process.env.BITRIX_DEV_MODE === 'true') {
 			const devToken = token || process.env.VITE_DEV_BITRIX_TOKEN || 'dev-token';
+			
+			// Логируем что приходит в middleware
+			console.log('🔍 Middleware bitrixAuth (TypeScript):');
+			console.log('  - req.query.user_id:', req.query.user_id);
+			console.log('  - userId после Number():', userId);
+			console.log('  - BITRIX_DEV_MODE:', process.env.BITRIX_DEV_MODE);
+			
 			req.bitrix = {
-				userId: 1,
+				userId: userId || 0, // Используем user_id из query параметра, fallback на 0
 				domain: domain || (process.env.VITE_DEV_BITRIX_DOMAIN as string) || 'example.bitrix24.ru',
 				leadId,
 				dealId,
 				contactId,
 				accessToken: devToken,
 			};
+			
+			console.log('  - req.bitrix.userId установлен как:', req.bitrix?.userId);
 			return next();
 		}
 

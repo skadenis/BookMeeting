@@ -13,28 +13,70 @@ function useBitrixContext() {
   const [domain, setDomain] = useState(null)
   const [leadId, setLeadId] = useState(undefined)
 
+  const extractParam = (name) => {
+    try {
+      const sp = new URLSearchParams(window.location.search)
+      if (sp.has(name)) return sp.get(name)
+      // В Bitrix часть параметров может оказаться после # — достанем через regex из href
+      const href = String(window.location.href || '')
+      const re = new RegExp(`[?#&]${name}=([^&#]+)`) // ищем и в hash тоже
+      const m = href.match(re)
+      return m ? decodeURIComponent(m[1]) : null
+    } catch {
+      return null
+    }
+  }
+
+  // 1) Сохраняем AUTH_ID/DOMAIN/lead_id из query/hash в sessionStorage и применяем
+  useEffect(() => {
+    try {
+      const qAuth = extractParam('AUTH_ID') || extractParam('auth') || extractParam('access_token')
+      const qDomain = extractParam('DOMAIN') || extractParam('domain')
+      const qLead = extractParam('lead_id') || extractParam('leadId') || extractParam('LEAD_ID')
+      if (qAuth) { sessionStorage.setItem('bx.AUTH_ID', qAuth); setToken(qAuth) }
+      if (qDomain) { sessionStorage.setItem('bx.DOMAIN', qDomain); setDomain(qDomain) }
+      const idNum = Number(qLead)
+      if (Number.isFinite(idNum) && idNum > 0) { sessionStorage.setItem('bx.LEAD_ID', String(idNum)); setLeadId(idNum) }
+    } catch {}
+  }, [])
+
+  // 2) Если ничего нет в query — поднимаем из sessionStorage
+  useEffect(() => {
+    const sAuth = sessionStorage.getItem('bx.AUTH_ID')
+    const sDomain = sessionStorage.getItem('bx.DOMAIN')
+    const sLead = sessionStorage.getItem('bx.LEAD_ID')
+    if (sAuth && !token) setToken(sAuth)
+    if (sDomain && !domain) setDomain(sDomain)
+    const n = Number(sLead)
+    if (!leadId && Number.isFinite(n) && n > 0) setLeadId(n)
+  }, [])
+
   useEffect(() => {
     if (window.BX24 && window.BX24.getAuth) {
       try {
         const auth = window.BX24.getAuth()
-        setToken(auth?.access_token || null)
-        setDomain(auth?.domain || null)
+        setToken(prev => prev || auth?.access_token || null)
+        setDomain(prev => prev || auth?.domain || null)
         if (window.BX24.placement && window.BX24.placement.info) {
           window.BX24.placement.info((info) => {
             const raw = info?.options?.entityId || info?.options?.ID || info?.options?.ENTITY_ID || info?.options?.LEAD_ID
             const id = Number(raw)
-            setLeadId(Number.isFinite(id) && id > 0 ? id : 22422)
+            // Не перезатираем leadId, если он уже пришёл из query-параметра
+            setLeadId(prev => {
+              if (Number.isFinite(prev) && prev > 0) return prev
+              return Number.isFinite(id) && id > 0 ? id : 135624
+            })
           })
         } else {
-          setLeadId(22422)
+          setLeadId(prev => (Number.isFinite(prev) && prev > 0 ? prev : 135624))
         }
       } catch {
-        setLeadId(22422)
+        setLeadId(prev => (Number.isFinite(prev) && prev > 0 ? prev : 135624))
       }
     } else {
       setToken(import.meta.env.VITE_DEV_BITRIX_TOKEN || null)
       setDomain(import.meta.env.VITE_DEV_BITRIX_DOMAIN || null)
-      setLeadId(Number(import.meta.env.VITE_DEV_LEAD_ID) || 22422)
+      setLeadId(prev => (Number.isFinite(prev) && prev > 0 ? prev : (Number(import.meta.env.VITE_DEV_LEAD_ID) || 135624)))
 
     }
   }, [])
@@ -85,6 +127,25 @@ export function App() {
   const [allSlotsWeek, setAllSlotsWeek] = useState([[],[],[],[],[],[],[]])
   const [availableWeek, setAvailableWeek] = useState([[],[],[],[],[],[],[]])
   const [leadAppt, setLeadAppt] = useState(null)
+  const [showCtx, setShowCtx] = useState(false)
+  const [placementRes, setPlacementRes] = useState(null)
+  const [placementLoading, setPlacementLoading] = useState(false)
+
+  const parseAllParams = () => {
+    const obj = {}
+    try {
+      const href = String(window.location.href || '')
+      const re = /[?#&]([^=&#]+)=([^&#]*)/g
+      let m
+      while ((m = re.exec(href))) {
+        const key = decodeURIComponent(m[1])
+        const val = decodeURIComponent(m[2])
+        obj[key] = val
+      }
+    } catch {}
+    return obj
+  }
+  const allParams = useMemo(() => parseAllParams(), [])
 
   useEffect(() => {
     api.get('/offices').then(r => setOffices(r.data.data)).catch(console.error)
@@ -121,6 +182,51 @@ export function App() {
 
   useEffect(() => { loadWeek() }, [api, officeId, weekStart])
   useEffect(() => { loadLeadAppt() }, [api, leadId])
+
+  // Websocket live updates
+  useEffect(() => {
+    let ws
+    try {
+      const base = (import.meta.env.VITE_API_BASE_URL || '/api')
+      // Convert base to absolute ws URL if needed
+      let url
+      if (base.startsWith('http')) {
+        const u = new URL(base.replace(/\/$/, ''))
+        u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
+        u.pathname = (u.pathname.replace(/\/$/, '')) + '/ws'
+        url = u.toString()
+      } else {
+        // Assume same origin
+        const loc = window.location
+        url = `${loc.protocol === 'https:' ? 'wss:' : 'ws:'}//${loc.host}${base.replace(/\/$/, '')}/ws`
+      }
+      ws = new WebSocket(url)
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data)
+          if (msg.type === 'slots.updated') {
+            // If update concerns selected office and week window, refresh
+            if (officeId && msg.office_id && String(msg.office_id) === String(officeId)) {
+              loadWeek()
+            }
+          } else if (msg.type === 'appointment.updated') {
+            // If appointment concerns our lead, refresh banner
+            const lead = msg?.appointment?.lead_id
+            if (lead && leadId && Number(lead) === Number(leadId)) {
+              loadLeadAppt()
+            } else {
+              // Also refresh available slots since appointment affects capacity
+              if (officeId) loadWeek()
+            }
+          } else if (msg.type === 'time.tick') {
+            // Periodic time tick: refresh today to hide past slots
+            if (officeId) loadWeek()
+          }
+        } catch {}
+      }
+    } catch {}
+    return () => { try { ws && ws.close() } catch {} }
+  }, [officeId, leadId])
 
   const dayHeaderBadge = (dayIdx) => {
     const all = allSlotsWeek[dayIdx] || []
@@ -208,18 +314,29 @@ export function App() {
   const prevWeek = () => setWeekStart(addDays(weekStart, -7))
   const nextWeek = () => setWeekStart(addDays(weekStart, 7))
 
+  const isAppointmentInPast = (appt) => {
+    try {
+      if (!appt) return false
+      const [start, end] = String(appt.timeSlot||'').split('-')
+      const endTime = end || start || '00:00'
+      const dt = dayjs(`${appt.date} ${endTime}`, 'YYYY-MM-DD HH:mm')
+      return dt.isBefore(dayjs())
+    } catch { return false }
+  }
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Header style={{ position:'sticky', top:0, zIndex:100, background: '#fff', padding: '0 16px', borderBottom:'1px solid #f0f0f0' }}>
         <div style={{ display:'flex', gap:12, alignItems:'center', flexWrap:'wrap' }}>
           <div style={{ fontWeight: 600 }}>Запись на встречу{leadId ? ` • Лид #${leadId}` : ''}</div>
           <Select value={officeId} onChange={setOfficeId} placeholder="Выберите офис" style={{ minWidth: 260 }}
-            options={offices.map(o => ({ value:o.id, label:`${o.name} • ${o.city}` }))}
+            options={offices.filter(o => Number(o.bitrixOfficeId) > 0).map(o => ({ value:o.id, label:[o.city, o.address].filter(Boolean).join(' • ') }))}
           />
           <Space>
             <Button onClick={prevWeek}>←</Button>
             <Button onClick={goToday}>Сегодня</Button>
             <Button onClick={nextWeek}>→</Button>
+            <Button size="small" onClick={()=> setShowCtx(true)}>Контекст</Button>
           </Space>
           <div style={{ color:'#666' }}>{toLocalISO(weekStart)} — {toLocalISO(addDays(weekStart,6))}</div>
         </div>
@@ -227,41 +344,44 @@ export function App() {
       <Modal open={!officeId} footer={null} closable={false} centered>
         <div style={{ fontSize:16, fontWeight:600, marginBottom:8 }}>Выберите офис</div>
         <Select autoFocus value={officeId || undefined} onChange={setOfficeId} placeholder="Офис" style={{ width:'100%' }}
-          options={offices.map(o => ({ value:o.id, label:`${o.name} • ${o.city}` }))}
+          options={offices.filter(o => Number(o.bitrixOfficeId) > 0).map(o => ({ value:o.id, label:[o.city, o.address].filter(Boolean).join(' • ') }))}
         />
       </Modal>
       <Content style={{ margin: 16 }}>
-        {leadAppt && (() => { const dd = dayjs(leadAppt.date).locale('ru'); return (
+        {leadAppt && !isAppointmentInPast(leadAppt) && (() => { const dd = dayjs(leadAppt.date).locale('ru'); return (
           <Card style={{ marginBottom: 12, borderColor:'#e6f4ff' }}>
             <Space direction="vertical" size={4} style={{ width:'100%' }}>
               <Typography.Text type="secondary">Запланирована встреча</Typography.Text>
               <Typography.Title level={4} style={{ margin:0 }}>
                 <EnvironmentOutlined style={{ color:'#1677ff', marginRight:8 }} />
                 <a onClick={jumpToLeadOffice} style={{ color:'#1677ff' }}>
-                  {leadAppt.Office?.name || leadAppt.office?.name || 'Офис не указан'}
+                  {[leadAppt.Office?.city || leadAppt.office?.city, leadAppt.Office?.address || leadAppt.office?.address].filter(Boolean).join(' • ') || 'Адрес не указан'}
                 </a>
               </Typography.Title>
-              <Typography.Text type="secondary">{leadAppt.Office?.city || leadAppt.office?.city || 'Город не указан'}</Typography.Text>
               <Space size={16} wrap style={{ marginTop: 8 }}>
                 <Typography.Text><CalendarOutlined style={{ color:'#1677ff', marginRight:6 }} />{dd.format('dddd, D MMMM YYYY')}</Typography.Text>
                 <Typography.Text><ClockCircleOutlined style={{ color:'#1677ff', marginRight:6 }} />{leadAppt.timeSlot}</Typography.Text>
-                <Tag color={leadAppt.status === 'pending' ? 'gold' : 'green'}>{leadAppt.status === 'pending' ? 'Ожидает подтверждения' : 'Подтверждена'}</Tag>
+                {isAppointmentInPast(leadAppt) ? (
+                  <Tag color="default">Прошло</Tag>
+                ) : (
+                  <Tag color={leadAppt.status === 'pending' ? 'gold' : 'green'}>{leadAppt.status === 'pending' ? 'Ожидает подтверждения' : 'Подтверждена'}</Tag>
+                )}
               </Space>
               <Divider style={{ margin:'8px 0' }} />
-                             <Space>
-                 {leadAppt.status !== 'confirmed' && <Button type="primary" size="large" onClick={() => Modal.confirm({
-                   title: (<span><CheckCircleOutlined style={{ color:'#52c41a', marginRight:8 }} />Подтвердить встречу?</span>),
-                   content: 'Вы уверены, что хотите подтвердить эту встречу?',
-                   okText:'Да, подтвердить', cancelText:'Нет', okButtonProps:{ type:'primary' },
-                   onOk: () => updateAppointmentStatus(leadAppt.id, 'confirmed')
-                 })}>Подтвердить</Button>}
-                 <Button size="large" danger onClick={() => Modal.confirm({
-                   title: (<span><ExclamationCircleOutlined style={{ color:'#faad14', marginRight:8 }} />Подтвердите отмену</span>),
-                   content: 'Вы уверены, что хотите отменить встречу?',
-                   okText:'Да, отменить', cancelText:'Нет', okButtonProps:{ danger:true },
-                   onOk: () => updateAppointmentStatus(leadAppt.id, 'cancelled')
-                 })}>Отменить</Button>
-               </Space>
+              <Space>
+                {leadAppt.status !== 'confirmed' && <Button type="primary" size="large" onClick={() => Modal.confirm({
+                  title: (<span><CheckCircleOutlined style={{ color:'#52c41a', marginRight:8 }} />Подтвердить встречу?</span>),
+                  content: 'Вы уверены, что хотите подтвердить эту встречу?',
+                  okText:'Да, подтвердить', cancelText:'Нет', okButtonProps:{ type:'primary' },
+                  onOk: () => updateAppointmentStatus(leadAppt.id, 'confirmed')
+                })}>Подтвердить</Button>}
+                <Button size="large" danger onClick={() => Modal.confirm({
+                  title: (<span><ExclamationCircleOutlined style={{ color:'#faad14', marginRight:8 }} />Подтвердите отмену</span>),
+                  content: 'Вы уверены, что хотите отменить встречу?',
+                  okText:'Да, отменить', cancelText:'Нет', okButtonProps:{ danger:true },
+                  onOk: () => updateAppointmentStatus(leadAppt.id, 'cancelled')
+                })}>Отменить</Button>
+              </Space>
             </Space>
           </Card>
         )})()}
@@ -302,16 +422,23 @@ export function App() {
                         return (
                           <div key={`${idx}-${t}`} style={baseStyle}>
                             {isBooked ? (
-                              <Button size="middle" block onClick={() => Modal.confirm({
-                                title: (<span><ExclamationCircleOutlined style={{ color:'#faad14', marginRight:8 }} />Подтвердите отмену</span>),
-                                content: 'Вы уверены, что хотите отменить встречу?',
-                                okText:'Да, отменить', cancelText:'Нет', okButtonProps:{ danger:true },
-                                onOk: () => updateAppointmentStatus(leadAppt.id, 'cancelled')
-                              })}
-                                style={{ background:'#faad14', borderColor:'#faad14', color:'#fff', fontSize:'13px' }}
-                                icon={<CheckCircleOutlined />}>
-                                {t} | отменить
-                              </Button>
+                              isPast ? (
+                                <Button size="middle" block disabled
+                                  style={{ background:'#d9d9d9', borderColor:'#d9d9d9', color:'#fff', opacity:1, fontSize:'13px' }}>
+                                  {t} | прошло
+                                </Button>
+                              ) : (
+                                <Button size="middle" block onClick={() => Modal.confirm({
+                                  title: (<span><ExclamationCircleOutlined style={{ color:'#faad14', marginRight:8 }} />Подтвердите отмену</span>),
+                                  content: 'Вы уверены, что хотите отменить встречу?',
+                                  okText:'Да, отменить', cancelText:'Нет', okButtonProps:{ danger:true },
+                                  onOk: () => updateAppointmentStatus(leadAppt.id, 'cancelled')
+                                })}
+                                  style={{ background:'#faad14', borderColor:'#faad14', color:'#fff', fontSize:'13px' }}
+                                  icon={<CheckCircleOutlined />}>
+                                  {t} | отменить
+                                </Button>
+                              )
                             ) : isPast ? (
                               <Button size="middle" block disabled
                                 style={{ background:'#d9d9d9', borderColor:'#d9d9d9', color:'#fff', opacity:1, fontSize:'13px' }}>
@@ -331,7 +458,10 @@ export function App() {
                                     <Descriptions column={1} bordered size="middle"
                                       labelStyle={{ width: 140, fontWeight: 500 }}
                                       contentStyle={{ fontWeight: 600 }}>
-                                      <Descriptions.Item label="Офис">{office ? `${office.name} • ${office.city}` : officeId}</Descriptions.Item>
+                                      <Descriptions.Item label="Офис">{office ? [office.city, office.address].filter(Boolean).join(' • ') : officeId}</Descriptions.Item>
+                                      {office?.addressNote ? (
+                                        <Descriptions.Item label="Примечание">{office.addressNote}</Descriptions.Item>
+                                      ) : null}
                                       <Descriptions.Item label="Дата">{dateStr}</Descriptions.Item>
                                       <Descriptions.Item label="Время">{`${slot.start} — ${slot.end}`}</Descriptions.Item>
                                     </Descriptions>
@@ -358,6 +488,35 @@ export function App() {
               )
         })()}
       </Content>
+      <Modal open={showCtx} onCancel={()=>setShowCtx(false)} footer={null} title="Bitrix контекст" width={780}>
+        <Descriptions bordered size="small" column={1} labelStyle={{ width: 240 }}>
+          <Descriptions.Item label="Current URL">{String(window.location.href)}</Descriptions.Item>
+          <Descriptions.Item label="Parsed query/hash params">
+            <pre style={{ margin:0, whiteSpace:'pre-wrap' }}>{JSON.stringify(allParams, null, 2)}</pre>
+          </Descriptions.Item>
+          <Descriptions.Item label="Session (AUTH_ID)">{sessionStorage.getItem('bx.AUTH_ID') ? `•••${sessionStorage.getItem('bx.AUTH_ID')?.slice(-6)}` : '—'}</Descriptions.Item>
+          <Descriptions.Item label="Session (DOMAIN)">{sessionStorage.getItem('bx.DOMAIN') || '—'}</Descriptions.Item>
+          <Descriptions.Item label="Session (LEAD_ID)">{sessionStorage.getItem('bx.LEAD_ID') || '—'}</Descriptions.Item>
+          <Descriptions.Item label="placement.info via APP_SID">
+            <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+              <Button size="small" loading={placementLoading} onClick={async()=>{
+                const appSid = allParams.APP_SID || sessionStorage.getItem('bx.AUTH_ID') || ''
+                const dom = allParams.DOMAIN || sessionStorage.getItem('bx.DOMAIN') || ''
+                setPlacementLoading(true)
+                try {
+                  const r = await api.get('/bitrix/lead-id', { params: { AUTH_ID: appSid, DOMAIN: dom } })
+                  setPlacementRes(r.data)
+                } catch (e) {
+                  setPlacementRes({ error: String(e) })
+                } finally { setPlacementLoading(false) }
+              }}>Resolve</Button>
+              <div style={{ width:'100%' }}>
+                <pre style={{ margin:0, whiteSpace:'pre-wrap' }}>{placementRes ? JSON.stringify(placementRes, null, 2) : '—'}</pre>
+              </div>
+            </div>
+          </Descriptions.Item>
+        </Descriptions>
+      </Modal>
     </Layout>
   )
 }

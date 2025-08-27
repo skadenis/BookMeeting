@@ -1,14 +1,18 @@
-FROM node:20-alpine AS deps
-WORKDIR /app
-COPY package.json package-lock.json* .npmrc* ./
-RUN npm ci --no-audit --no-fund
+FROM node:20-alpine
 
-FROM node:20-alpine AS build
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+
+# Копируем package файлы
+COPY package*.json ./
+
+# Устанавливаем зависимости
+RUN npm ci
+
+# Копируем исходный код
 COPY . .
-RUN npm run build
 
-FROM alpine:3.20 AS artifact
-WORKDIR /out
-COPY --from=build /app/dist ./
+# Открываем порт
+EXPOSE 5173
+
+# Запускаем в режиме разработки
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
