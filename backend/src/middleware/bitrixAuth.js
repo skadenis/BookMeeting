@@ -23,11 +23,8 @@ async function bitrixAuthMiddleware(req, res, next) {
         const userId = req.query.user_id ? Number(req.query.user_id) : undefined;
         if (process.env.BITRIX_DEV_MODE === 'true') {
             const devToken = token || process.env.VITE_DEV_BITRIX_TOKEN || 'dev-token';
-            // Логируем что приходит в middleware
-            console.log('🔍 Middleware bitrixAuth (TypeScript):');
-            console.log('  - req.query.user_id:', req.query.user_id);
-            console.log('  - userId после Number():', userId);
-            console.log('  - BITRIX_DEV_MODE:', process.env.BITRIX_DEV_MODE);
+            // В dev режиме логируем минимально
+            console.log('🔍 Dev mode: user_id:', userId || 'not set');
             req.bitrix = {
                 userId: userId || 0, // Используем user_id из query параметра, fallback на 0
                 domain: domain || process.env.VITE_DEV_BITRIX_DOMAIN || 'example.bitrix24.ru',
@@ -36,7 +33,7 @@ async function bitrixAuthMiddleware(req, res, next) {
                 contactId,
                 accessToken: devToken,
             };
-            console.log('  - req.bitrix.userId установлен как:', req.bitrix?.userId);
+
             return next();
         }
         if (!token || !domain) {

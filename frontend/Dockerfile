@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -11,8 +11,20 @@ RUN npm ci
 # Копируем исходный код
 COPY . .
 
-# Открываем порт
-EXPOSE 5173
+# Собираем приложение
+RUN npm run build
 
-# Запускаем в режиме разработки
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+# Продакшен образ
+FROM nginx:alpine
+
+# Копируем собранное приложение
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Копируем nginx конфигурацию
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# Открываем порт
+EXPOSE 80
+
+# Запускаем nginx
+CMD ["nginx", "-g", "daemon off;"]
