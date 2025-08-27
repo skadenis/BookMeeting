@@ -23,7 +23,7 @@ async function start() {
 	try {
 		await sequelize.authenticate();
 		// Auto-migrate schema to add new columns like bitrix_office_id
-		await sequelize.sync({ force: true });
+		await sequelize.sync();
 		await redis.connect();
 		// Do not seed automatically; keep existing data persistent
 	} catch (err) {
