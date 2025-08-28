@@ -26,7 +26,7 @@ const SLOT_TYPES = [
   { value: 'peak', label: 'Пиковый', icon: <ClockCircleOutlined />, color: 'green' }
 ]
 
-const SLOT_DURATION = 30 // фиксированная длительность слота (мин)
+// Длительность слота теперь управляется через состояние
 
 function generateTimeSlots(start, end, duration = 30) {
   const toMin = (t) => { const [h,m] = t.split(':').map(Number); return h*60+m }
@@ -46,6 +46,7 @@ export default function TemplateEditPage() {
   // Базовые настройки
   const [baseStartTime, setBaseStartTime] = useState(dayjs('09:00', 'HH:mm'))
   const [baseEndTime, setBaseEndTime] = useState(dayjs('18:00', 'HH:mm'))
+  const [slotDuration, setSlotDuration] = useState(30)
   const [defaultCapacity, setDefaultCapacity] = useState(1)
   const [templateName, setTemplateName] = useState('')
   const [description, setDescription] = useState('')
@@ -229,7 +230,7 @@ export default function TemplateEditPage() {
     let hasSpecialSlot = false
     // Рассчитываем конец слота для потенциальной корректировки окна дня
     const startMin = dayjs(timeSlot, 'HH:mm').diff(dayjs('00:00', 'HH:mm'), 'minute')
-    const endMin = startMin + SLOT_DURATION
+    const endMin = startMin + slotDuration
     const endSlot = dayjs('00:00', 'HH:mm').add(endMin, 'minute').format('HH:mm')
     if (copy[dayKey].specialSlots && Array.isArray(copy[dayKey].specialSlots)) {
       copy[dayKey].specialSlots.forEach(slot => {
@@ -314,7 +315,7 @@ export default function TemplateEditPage() {
       for (const [dayKey, profile] of Object.entries(weekdays)) {
         if (profile && profile.start && profile.end) {
           // Генерируем слоты на основе профиля дня
-          const slots = generateTimeSlots(profile.start, profile.end, SLOT_DURATION)
+          const slots = generateTimeSlots(profile.start, profile.end, slotDuration)
           const slotsWithCapacity = slots.map(slot => ({
             ...slot,
             capacity: profile.capacity || defaultCapacity
@@ -347,7 +348,7 @@ export default function TemplateEditPage() {
         description,
         baseStartTime: baseStartTime.format('HH:mm'),
         baseEndTime: baseEndTime.format('HH:mm'),
-        slotDuration: SLOT_DURATION,
+        slotDuration: slotDuration,
         defaultCapacity,
         weekdays: processedWeekdays
       }
@@ -391,7 +392,7 @@ export default function TemplateEditPage() {
     const timeSlots = generateTimeSlots(
       baseStartTime.format('HH:mm'), 
       baseEndTime.format('HH:mm'), 
-      SLOT_DURATION
+      slotDuration
     )
     
     if (!timeSlots || timeSlots.length === 0) {
