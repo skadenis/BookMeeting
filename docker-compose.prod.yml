@@ -21,8 +21,10 @@ services:
     ports:
       - "4400:4000"
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     restart: always
 
   frontend:
@@ -44,6 +46,12 @@ services:
       POSTGRES_PASSWORD: meetings
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meetings -d meetings"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: always
 
   redis:

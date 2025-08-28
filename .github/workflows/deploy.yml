@@ -22,21 +22,57 @@ jobs:
           script_stop: true
           script: |
             set -e
+            echo "🚀 Starting deployment..."
+            
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
-            if [ -z "$DEPLOY_PATH" ]; then echo "DEPLOY_PATH secret is required"; exit 1; fi
+            if [ -z "$DEPLOY_PATH" ]; then 
+              echo "❌ DEPLOY_PATH secret is required"
+              exit 1
+            fi
+            
+            echo "📁 Deploy path: $DEPLOY_PATH"
             mkdir -p "$DEPLOY_PATH"
+            
             if [ ! -d "$DEPLOY_PATH/.git" ]; then
+              echo "📥 Cloning repository..."
               git clone --depth=1 https://github.com/${{ github.repository }} "$DEPLOY_PATH"
             else
+              echo "🔄 Updating existing repository..."
               cd "$DEPLOY_PATH"
               git fetch origin main --depth=1
               git reset --hard origin/main
             fi
+            
             cd "$DEPLOY_PATH"
+            echo "📍 Current directory: $(pwd)"
+            echo "📋 Git status:"
+            git log --oneline -3 || true
+            
             # Ensure env file exists (copy once from example if missing)
-            if [ ! -f .env ]; then cp env.example .env || true; fi
-            # Build and restart services
-            docker compose -f docker-compose.prod.yml pull || true
-            docker compose -f docker-compose.prod.yml up -d --build
+            if [ ! -f .env ]; then 
+              echo "📝 Creating .env from example..."
+              cp env.example .env || echo "⚠️ Warning: could not copy env.example"
+            fi
+            
+            echo "🐳 Checking Docker..."
+            docker --version || echo "❌ Docker not available"
+            docker compose version || echo "❌ Docker Compose not available"
+            
+            echo "🔧 Building and starting services..."
+            # Stop existing services first
+            docker compose -f docker-compose.prod.yml down || echo "⚠️ No existing services to stop"
+            
+            # Build and start
+            docker compose -f docker-compose.prod.yml up -d --build || {
+              echo "❌ Docker Compose failed. Checking logs..."
+              docker compose -f docker-compose.prod.yml logs || true
+              exit 1
+            }
+            
+            echo "🧹 Cleaning up Docker..."
             docker system prune -f || true
+            
+            echo "✅ Deployment completed successfully!"
+            echo "📊 Service status:"
+            docker compose -f docker-compose.prod.yml ps || true
 
