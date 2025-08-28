@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react'
-import { Layout, Menu } from 'antd'
-import { BankOutlined, ScheduleOutlined } from '@ant-design/icons'
+import { Layout, Menu, Modal, Form, Input, Button, message } from 'antd'
+import { BankOutlined, ScheduleOutlined, TeamOutlined } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 const { Header, Sider, Content } = Layout
@@ -9,9 +9,65 @@ export default function AdminLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const selectedKey = useMemo(() => {
+    if (location.pathname.includes('/admin/users')) return 'users'
     if (location.pathname.includes('/admin/templates')) return 'templates'
     return 'offices'
   }, [location.pathname])
+
+  const [form] = Form.useForm()
+  const token = typeof window !== 'undefined' ? localStorage.getItem('admin.token') : null
+
+  // Auto-read admin_token from URL and persist
+  React.useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search)
+      const qToken = sp.get('admin_token') || sp.get('adminToken') || sp.get('token')
+      if (qToken) {
+        localStorage.setItem('admin.token', qToken)
+        // Clean URL without token
+        const url = new URL(window.location.href)
+        url.searchParams.delete('admin_token')
+        url.searchParams.delete('adminToken')
+        url.searchParams.delete('token')
+        window.history.replaceState({}, '', url.toString())
+        window.location.reload()
+      }
+    } catch {}
+  }, [])
+
+  const doLogin = async () => {
+    try {
+      const values = await form.validateFields()
+      const r = await fetch((import.meta.env.VITE_API_BASE_URL || '/api') + '/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values)
+      })
+      if (!r.ok) throw new Error('Auth failed')
+      const data = await r.json()
+      localStorage.setItem('admin.token', data.token)
+      message.success('Вход выполнен')
+      window.location.replace('/admin')
+    } catch (e) {}
+  }
+
+  // If not authenticated, show full-page login and do not render admin UI
+  if (!token) {
+    return (
+      <Layout style={{ minHeight: '100vh', display:'flex', alignItems:'center', justifyContent:'center' }}>
+        <div style={{ width: 360, background:'#fff', borderRadius:8, padding:24, boxShadow:'0 4px 24px rgba(0,0,0,0.06)' }}>
+          <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 12 }}>Вход в админку</div>
+          <Form form={form} layout="vertical" initialValues={{ email:'admin@example.com', password:'admin123' }}>
+            <Form.Item name="email" label="Email" rules={[{ required:true, type:'email' }]}>
+              <Input placeholder="admin@example.com" />
+            </Form.Item>
+            <Form.Item name="password" label="Пароль" rules={[{ required:true }]}>
+              <Input.Password placeholder="••••••" />
+            </Form.Item>
+            <Button type="primary" style={{ width:'100%' }} onClick={doLogin}>Войти</Button>
+          </Form>
+        </div>
+      </Layout>
+    )
+  }
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -21,12 +77,14 @@ export default function AdminLayout() {
           items={[
             { key: 'offices', icon: <BankOutlined />, label: 'Офисы' },
             { key: 'templates', icon: <ScheduleOutlined />, label: 'Шаблоны' },
+            { key: 'users', icon: <TeamOutlined />, label: 'Пользователи' },
           ]}
         />
       </Sider>
       <Layout>
         <Header style={{ background: '#fff', padding: '0 16px', display: 'flex', alignItems: 'center' }}>
-          <div style={{ fontWeight: 600 }}>Управление расписанием</div>
+          <div style={{ fontWeight: 600, flex:1 }}>Управление расписанием</div>
+          <Button onClick={()=>{ localStorage.removeItem('admin.token'); window.location.replace('/admin') }}>Выйти</Button>
         </Header>
         <Content style={{ margin: 16 }}>
           <div style={{ background: '#fff', borderRadius: 8, padding: 16 }}>

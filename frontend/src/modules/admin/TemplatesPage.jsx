@@ -2,21 +2,13 @@ import React, { useEffect, useMemo, useState, useRef } from 'react'
 import { Button, Space, Input, DatePicker, TimePicker, Select, message, Card, Tabs, Typography, Divider, Row, Col, Tag, Tooltip, Modal } from 'antd'
 import { PlusOutlined, DeleteOutlined, EditOutlined, ClockCircleOutlined, UserOutlined, CoffeeOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import axios from 'axios'
+import api from '../../api/client'
 import { useNavigate } from 'react-router-dom'
 
 const { Title, Text } = Typography
 const { TextArea } = Input
 
-function useApi() {
-  const api = useMemo(() => axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || '/api' }), [])
-  api.interceptors.request.use((config) => {
-    config.headers['Authorization'] = 'Bearer dev'
-    config.headers['X-Bitrix-Domain'] = 'dev'
-    return config
-  })
-  return api
-}
+function useApi() { return api }
 
 const DOW = [
   { key: '1', label: 'Понедельник', short: 'Пн' },
@@ -197,7 +189,7 @@ export default function TemplatesPage() {
                     style={{ width: '100%' }}
                     options={offices.map(office => ({
                       value: office.id,
-                      label: `${office.name} • ${office.city}`
+                      label: `${office.address} • ${office.city}`
                     }))}
                   />
                   <DatePicker.RangePicker

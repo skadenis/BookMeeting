@@ -1,17 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Table, Button, Space, Modal, Form, Input, TimePicker, Card, message } from 'antd'
 import dayjs from 'dayjs'
-import axios from 'axios'
+import api from '../../api/client'
 
-function useApi() {
-  const api = useMemo(() => axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || '/api' }), [])
-  api.interceptors.request.use((config) => {
-    config.headers['Authorization'] = 'Bearer dev'
-    config.headers['X-Bitrix-Domain'] = 'dev'
-    return config
-  })
-  return api
-}
+function useApi() { return api }
 
 const DOW = [
   { key:'1', label:'Пн' },{ key:'2', label:'Вт' },{ key:'3', label:'Ср' },{ key:'4', label:'Чт' },{ key:'5', label:'Пт' },{ key:'6', label:'Сб' },{ key:'0', label:'Вс' }

@@ -1,4 +1,5 @@
 const { Sequelize, DataTypes, Op } = require('sequelize');
+const bcrypt = require('bcryptjs');
 const dotenv = require('dotenv');
 dotenv.config();
 
@@ -16,7 +17,7 @@ const sequelize = new Sequelize(
 
 const Office = sequelize.define('Office', {
 	id: { type: DataTypes.UUID, primaryKey: true, defaultValue: DataTypes.UUIDV4 },
-	name: { type: DataTypes.STRING(120), allowNull: true },
+
 	city: { type: DataTypes.STRING(120), allowNull: false },
 	address: { type: DataTypes.STRING(120), allowNull: false },
 	addressNote: { type: DataTypes.TEXT, allowNull: true, field: 'address_note' },
@@ -77,6 +78,17 @@ const Template = sequelize.define('Template', {
 	isDefault: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false, field: 'is_default' },
 }, { tableName: 'templates', timestamps: false });
 
+// Users (admins)
+const User = sequelize.define('User', {
+  id: { type: DataTypes.UUID, primaryKey: true, defaultValue: DataTypes.UUIDV4 },
+  email: { type: DataTypes.STRING(140), allowNull: false, unique: true },
+  name: { type: DataTypes.STRING(120), allowNull: false },
+  passwordHash: { type: DataTypes.STRING(120), allowNull: false, field: 'password_hash' },
+  role: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'admin' },
+  createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'), field: 'created_at' },
+  updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'), field: 'updated_at' },
+}, { tableName: 'users' });
+
 // Associations
 Office.hasMany(Schedule, { foreignKey: { name: 'office_id', allowNull: false } });
 Schedule.belongsTo(Office, { foreignKey: { name: 'office_id', allowNull: false } });
@@ -94,4 +106,15 @@ AppointmentHistory.belongsTo(Appointment, { foreignKey: { name: 'appointment_id'
 Office.hasMany(Template, { foreignKey: { name: 'office_id', allowNull: true } });
 Template.belongsTo(Office, { foreignKey: { name: 'office_id', allowNull: true } });
 
-module.exports = { sequelize, Sequelize, DataTypes, Op, models: { Office, Schedule, Slot, Appointment, AppointmentHistory, Template } };
+async function seedDefaultAdminIfEmpty() {
+  const count = await User.count();
+  if (count > 0) return;
+  const email = process.env.ADMIN_EMAIL || 'admin@example.com';
+  const name = process.env.ADMIN_NAME || 'Admin';
+  const password = process.env.ADMIN_PASSWORD || 'admin123';
+  const passwordHash = await bcrypt.hash(password, 10);
+  await User.create({ email, name, passwordHash, role: 'admin' });
+  console.log('Seeded default admin user:', email);
+}
+
+module.exports = { sequelize, Sequelize, DataTypes, Op, models: { Office, Schedule, Slot, Appointment, AppointmentHistory, Template, User }, seedDefaultAdminIfEmpty };

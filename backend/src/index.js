@@ -3,7 +3,7 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
 const http = require('http');
-const { sequelize, models } = require('./lib/db');
+const { sequelize, models, seedDefaultAdminIfEmpty } = require('./lib/db');
 const { bitrixAuthMiddleware } = require('./middleware/bitrixAuth');
 const { redis } = require('./lib/redis');
 const { initWebsocket, broadcastTimeTick } = require('./lib/ws');
@@ -13,6 +13,8 @@ const templatesRouter = require('./routes/templates');
 const appointmentsRouter = require('./routes/appointments');
 const customRouter = require('./routes/custom');
 const apiRouter = require('./routes/index');
+const authRouter = require('./routes/auth');
+const adminUsersRouter = require('./routes/adminUsers');
 // const { seedIfEmpty } = require('./seed');
 
 dotenv.config();
@@ -24,6 +26,7 @@ async function start() {
 		await sequelize.authenticate();
 		// Auto-migrate schema to add new columns like bitrix_office_id
 		await sequelize.sync();
+		await seedDefaultAdminIfEmpty();
 		await redis.connect();
 		// Do not seed automatically; keep existing data persistent
 	} catch (err) {
@@ -34,32 +37,64 @@ async function start() {
 	const app = express();
 
 	app.set('trust proxy', 1);
-	// CORS configuration for production
-	const corsOptions = {
-		origin: function (origin, callback) {
-			// In production, only allow specific origins
-			if (!origin) {
-				// Allow requests with no origin (like mobile apps)
-				return callback(null, true);
-			}
-			
-			const allowedOrigins = process.env.CORS_ORIGIN 
-				? process.env.CORS_ORIGIN.split(',') 
-				: [];
-			
-			if (allowedOrigins.indexOf(origin) !== -1) {
-				callback(null, true);
-			} else {
-				console.log('CORS blocked origin:', origin);
-				callback(new Error('Not allowed by CORS'));
-			}
-		},
-		credentials: true,
-		methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-		allowedHeaders: ['Content-Type', 'Authorization', 'X-Bitrix-Domain', 'X-Requested-With']
-	};
-	
-	app.use(cors(corsOptions));
+	// Universal fast preflight handler (before any other middleware)
+	app.use((req, res, next) => {
+		if (req.method === 'OPTIONS') {
+			const origin = req.headers.origin || '*';
+			res.header('Access-Control-Allow-Origin', origin);
+			res.header('Vary', 'Origin');
+			res.header('Access-Control-Allow-Credentials', 'true');
+			res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+			res.header('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] || 'Content-Type, Authorization, X-Bitrix-Domain, X-App-Id, X-App-Token');
+			return res.sendStatus(204);
+		}
+		return next();
+	});
+
+	// Force-allow local dev origins (8088/5173/5174) on all responses
+	app.use((req, res, next) => {
+		const origin = req.headers.origin || '';
+		if (origin === 'http://localhost:8088' || origin === 'http://localhost:5173' || origin === 'http://localhost:5174') {
+			res.header('Access-Control-Allow-Origin', origin);
+			res.header('Vary', 'Origin');
+			res.header('Access-Control-Allow-Credentials', 'true');
+		}
+		next();
+	});
+	// CORS configuration
+	const isDevCors = process.env.BITRIX_DEV_MODE === 'true' || process.env.NODE_ENV !== 'production';
+	if (isDevCors) {
+		const devCorsOptions = {
+			origin: true,
+			credentials: true,
+			methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+			allowedHeaders: ['Content-Type', 'Authorization', 'X-Bitrix-Domain', 'X-Requested-With', 'X-App-Id', 'X-App-Token'],
+		};
+		app.use(cors(devCorsOptions));
+		app.options('*', cors(devCorsOptions)); // handle preflight
+	} else {
+		const corsOptions = {
+			origin: function (origin, callback) {
+				if (!origin) {
+					return callback(null, true);
+				}
+				const allowedOrigins = process.env.CORS_ORIGIN
+					? process.env.CORS_ORIGIN.split(',')
+					: [];
+				if (allowedOrigins.indexOf(origin) !== -1) {
+					callback(null, true);
+				} else {
+					console.log('CORS blocked origin:', origin);
+					callback(new Error('Not allowed by CORS'));
+				}
+			},
+			credentials: true,
+			methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+			allowedHeaders: ['Content-Type', 'Authorization', 'X-Bitrix-Domain', 'X-Requested-With', 'X-App-Id', 'X-App-Token']
+		};
+		app.use(cors(corsOptions));
+		app.options('*', cors(corsOptions)); // handle preflight
+	}
 	app.use(express.json());
 	app.use(rateLimit({ windowMs: 60_000, max: 300 }));
 
@@ -67,14 +102,14 @@ async function start() {
 	app.get('/api/health', async (req, res) => {
 		try {
 			// Simple health check - no data modification
-			const dbStatus = await sequelize.authenticate();
+			await sequelize.authenticate(); // This throws error if connection fails
 			const redisStatus = await redis.ping();
 			
 			res.json({ 
 				ok: true, 
 				timestamp: new Date().toISOString(),
 				services: {
-					database: dbStatus ? 'healthy' : 'unhealthy',
+					database: 'healthy',
 					redis: redisStatus === 'PONG' ? 'healthy' : 'unhealthy'
 				}
 			});
@@ -88,12 +123,14 @@ async function start() {
 		}
 	});
 
-
 	
+	// Public admin auth routes
+	app.use('/api/auth', authRouter);
+	app.use('/api/admin/users', adminUsersRouter);
+
+	// Protected routes (Bitrix/public token)
 	app.use('/api', bitrixAuthMiddleware);
 	app.use('/api', apiRouter);
-
-
 
 
 	// Global error handler

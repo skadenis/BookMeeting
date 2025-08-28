@@ -8,12 +8,9 @@ export class Office {
 	id!: string;
 
 	@Column({ type: 'varchar', length: 120 })
-	name!: string;
-
-	@Column({ type: 'varchar', length: 120 })
 	city!: string;
 
-	@Column({ type: 'varchar', length: 120 })
+	@Column({ type: 'varchar', length: 200, nullable: false })
 	address!: string;
 
 	@OneToMany(() => Appointment, (appointment) => appointment.office)

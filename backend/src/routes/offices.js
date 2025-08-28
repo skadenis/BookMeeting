@@ -7,7 +7,7 @@ const router = Router();
 
 router.get('/', async (_req, res, next) => {
 	try {
-		const offices = await models.Office.findAll({ order: [['city', 'ASC'], ['address', 'ASC']] });
+		const offices = await models.Office.findAll({ order: [['address', 'ASC']] });
 		res.json({ data: offices });
 	} catch (e) { next(e); }
 });
@@ -21,14 +21,15 @@ router.post('/', [
 	try {
 		const errors = validationResult(req);
 		if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-		const { name, city, address, addressNote, bitrixOfficeId } = req.body;
-		const office = await models.Office.create({ name: name || null, city, address, addressNote, bitrixOfficeId });
+		const { city, address, addressNote, bitrixOfficeId } = req.body;
+		const office = await models.Office.create({ city, address, addressNote, bitrixOfficeId });
 		res.status(201).json({ data: office });
 	} catch (e) { next(e); }
 });
 
 router.put('/:id', [
 	param('id').isString().notEmpty(),
+
 	body('city').optional().isString().notEmpty(),
 	body('address').optional().isString().notEmpty(),
 	body('addressNote').optional().isString(),
@@ -39,8 +40,8 @@ router.put('/:id', [
 		if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 		const office = await models.Office.findByPk(req.params.id);
 		if (!office) return res.status(404).json({ error: 'Not found' });
-		const { name, city, address, addressNote, bitrixOfficeId } = req.body;
-		if (name !== undefined) office.name = name || null;
+		const { city, address, addressNote, bitrixOfficeId } = req.body;
+
 		if (city) office.city = city;
 		if (address) office.address = address;
 		if (addressNote !== undefined) office.addressNote = addressNote;

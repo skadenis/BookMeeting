@@ -2,21 +2,13 @@ import React, { useEffect, useMemo, useState, useRef } from 'react'
 import { Button, Space, Input, DatePicker, TimePicker, Select, message, Card, Typography, Divider, Row, Col, Tag, Tooltip, Modal, Form, Switch } from 'antd'
 import { PlusOutlined, DeleteOutlined, EditOutlined, ClockCircleOutlined, UserOutlined, CoffeeOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import axios from 'axios'
+import api from '../../api/client'
 import { useNavigate, useParams } from 'react-router-dom'
 
 const { Title, Text } = Typography
 const { TextArea } = Input
 
-function useApi() {
-  const api = useMemo(() => axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || '/api' }), [])
-  api.interceptors.request.use((config) => {
-    config.headers['Authorization'] = 'Bearer dev'
-    config.headers['X-Bitrix-Domain'] = 'dev'
-    return config
-  })
-  return api
-}
+function useApi() { return api }
 
 const DOW = [
   { key: '1', label: 'Понедельник', short: 'Пн' },
@@ -33,6 +25,8 @@ const SLOT_TYPES = [
   { value: 'break', label: 'Перерыв', icon: <CoffeeOutlined />, color: 'orange' },
   { value: 'peak', label: 'Пиковый', icon: <ClockCircleOutlined />, color: 'green' }
 ]
+
+const SLOT_DURATION = 30 // фиксированная длительность слота (мин)
 
 function generateTimeSlots(start, end, duration = 30) {
   const toMin = (t) => { const [h,m] = t.split(':').map(Number); return h*60+m }
@@ -52,7 +46,6 @@ export default function TemplateEditPage() {
   // Базовые настройки
   const [baseStartTime, setBaseStartTime] = useState(dayjs('09:00', 'HH:mm'))
   const [baseEndTime, setBaseEndTime] = useState(dayjs('18:00', 'HH:mm'))
-  const [slotDuration, setSlotDuration] = useState(30)
   const [defaultCapacity, setDefaultCapacity] = useState(1)
   const [templateName, setTemplateName] = useState('')
   const [description, setDescription] = useState('')
@@ -65,9 +58,27 @@ export default function TemplateEditPage() {
   // Редактирование слотов
   const [editSlot, setEditSlot] = useState(null)
   const [editCapacity, setEditCapacity] = useState(1)
+  // Bulk selection state
+  const [selectedCells, setSelectedCells] = useState([]) // [{ dayKey, timeSlot }]
+  const [bulkCapacity, setBulkCapacity] = useState(1)
   
   // Загрузка данных
   const [loading, setLoading] = useState(false)
+
+  // Reset bulk selection on ESC
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      const isEsc = e.key === 'Escape' || e.key === 'Esc' || e.code === 'Escape'
+      if (!isEsc) return
+      if (!editSlot) setSelectedCells([])
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      document.removeEventListener('keydown', onKeyDown, true)
+    }
+  }, [editSlot])
 
   useEffect(() => { 
     if (id) {
@@ -218,7 +229,7 @@ export default function TemplateEditPage() {
     let hasSpecialSlot = false
     // Рассчитываем конец слота для потенциальной корректировки окна дня
     const startMin = dayjs(timeSlot, 'HH:mm').diff(dayjs('00:00', 'HH:mm'), 'minute')
-    const endMin = startMin + slotDuration
+    const endMin = startMin + SLOT_DURATION
     const endSlot = dayjs('00:00', 'HH:mm').add(endMin, 'minute').format('HH:mm')
     if (copy[dayKey].specialSlots && Array.isArray(copy[dayKey].specialSlots)) {
       copy[dayKey].specialSlots.forEach(slot => {
@@ -303,7 +314,7 @@ export default function TemplateEditPage() {
       for (const [dayKey, profile] of Object.entries(weekdays)) {
         if (profile && profile.start && profile.end) {
           // Генерируем слоты на основе профиля дня
-          const slots = generateTimeSlots(profile.start, profile.end, slotDuration)
+          const slots = generateTimeSlots(profile.start, profile.end, SLOT_DURATION)
           const slotsWithCapacity = slots.map(slot => ({
             ...slot,
             capacity: profile.capacity || defaultCapacity
@@ -336,7 +347,7 @@ export default function TemplateEditPage() {
         description,
         baseStartTime: baseStartTime.format('HH:mm'),
         baseEndTime: baseEndTime.format('HH:mm'),
-        slotDuration,
+        slotDuration: SLOT_DURATION,
         defaultCapacity,
         weekdays: processedWeekdays
       }
@@ -357,6 +368,21 @@ export default function TemplateEditPage() {
     }
   }
 
+  const isCellSelected = (dayKey, timeSlot) => {
+    return selectedCells.some(c => c.dayKey === dayKey && c.timeSlot === timeSlot)
+  }
+
+  const toggleSelectCell = (dayKey, timeSlot, additive) => {
+    setSelectedCells((prev) => {
+      const exists = prev.some(c => c.dayKey === dayKey && c.timeSlot === timeSlot)
+      if (additive) {
+        return exists ? prev.filter(c => !(c.dayKey === dayKey && c.timeSlot === timeSlot)) : [...prev, { dayKey, timeSlot }]
+      }
+      // not additive: replace with single selection
+      return exists ? [] : [{ dayKey, timeSlot }]
+    })
+  }
+
   const renderChessboard = () => {
     if (!baseStartTime || !baseEndTime) {
       return <div>Заполните время начала и окончания</div>
@@ -365,7 +391,7 @@ export default function TemplateEditPage() {
     const timeSlots = generateTimeSlots(
       baseStartTime.format('HH:mm'), 
       baseEndTime.format('HH:mm'), 
-      slotDuration
+      SLOT_DURATION
     )
     
     if (!timeSlots || timeSlots.length === 0) {
@@ -496,6 +522,12 @@ export default function TemplateEditPage() {
                       style={{ padding: '8px', background: '#fafafa', borderRight: '1px solid #d9d9d9', borderBottom: '1px solid #d9d9d9', color: '#999', textAlign: 'center', cursor: 'pointer' }}
                       title={'Добавить слот в это время'}
                       onClick={() => {
+                        const additive = (window.event && (window.event.metaKey || window.event.ctrlKey))
+                        if (additive) {
+                          toggleSelectCell(d.key, t.start, true)
+                          return
+                        }
+                        setSelectedCells([])
                         setEditSlot({ dayKey: d.key, timeSlot: t.start, currentCapacity: 0, isSpecialSlot: false })
                         setEditCapacity(defaultCapacity)
                       }}
@@ -537,9 +569,16 @@ export default function TemplateEditPage() {
                       cursor: 'pointer',
                       borderRight: '1px solid #d9d9d9',
                       borderBottom: '1px solid #d9d9d9',
-                      fontWeight: 600
+                      fontWeight: 600,
+                      boxShadow: isCellSelected(d.key, t.start) ? 'inset 0 0 0 2px #1677ff' : 'none'
                     }}
                     onClick={() => {
+                      const additive = (window.event && (window.event.metaKey || window.event.ctrlKey))
+                      if (additive) {
+                        toggleSelectCell(d.key, t.start, true)
+                        return
+                      }
+                      setSelectedCells([])
                       setEditSlot({ dayKey: d.key, timeSlot: t.start, currentCapacity: capacity, isSpecialSlot: false })
                       setEditCapacity(capacity)
                     }}
@@ -626,20 +665,6 @@ export default function TemplateEditPage() {
               </Row>
               
               <Row gutter={16}>
-                <Col span={12}>
-                  <Text strong>Длительность слота (минуты):</Text>
-                  <Select
-                    value={slotDuration}
-                    onChange={setSlotDuration}
-                    style={{ width: '100%', marginTop: '8px' }}
-                    options={[
-                      { value: 15, label: '15 минут' },
-                      { value: 30, label: '30 минут' },
-                      { value: 45, label: '45 минут' },
-                      { value: 60, label: '1 час' }
-                    ]}
-                  />
-                </Col>
                 <Col span={12}>
                   <Text strong>Вместимость по умолчанию:</Text>
                   <Input
@@ -730,6 +755,24 @@ export default function TemplateEditPage() {
           {id ? 'Обновить' : 'Создать'}
         </Button>
       </div>
+
+      {selectedCells.length > 0 && (
+        <div style={{ position:'sticky', bottom:16, zIndex:3, display:'flex', gap:12, alignItems:'center', background:'#fff', padding:'8px 12px', border:'1px solid #e6f4ff', boxShadow:'0 8px 24px rgba(0,0,0,0.08)', borderRadius:8 }}>
+          <div style={{ fontWeight:600 }}>Выбрано: {selectedCells.length}</div>
+          <div style={{ color:'#555' }}>Вместимость:</div>
+          <Input type="number" min={0} style={{ width:160 }} placeholder="например, 2 (0 — перерыв)" value={bulkCapacity} onChange={(e)=>setBulkCapacity(Math.max(0, Number(e.target.value)||0))} />
+          <Button type="primary" onClick={() => {
+            try {
+              selectedCells.forEach(c => updateSlotCapacity(c.dayKey, c.timeSlot, bulkCapacity))
+              message.success('Изменения применены')
+              setSelectedCells([])
+            } catch {
+              message.error('Не удалось применить изменения')
+            }
+          }}>Применить</Button>
+          <Button onClick={()=>setSelectedCells([])}>Сбросить</Button>
+        </div>
+      )}
 
       {/* Модалка для редактирования вместимости слота или дня */}
       <Modal

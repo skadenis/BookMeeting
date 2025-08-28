@@ -99,7 +99,7 @@ router.post('/', [
 				const dateParts = String(appointment.date || '').split('-'); // YYYY-MM-DD
 				const dateRu = (dateParts.length === 3) ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : '';
 
-				const url = `https://bitrix24.newhc.by/rest/15/qseod599og9fc16a/crm.lead.update`;
+				const url = `${process.env.BITRIX_REST_URL}/crm.lead.update`;
 				const requestData = {
 					id: Number(appointment.bitrix_lead_id),
 					fields: {
@@ -178,7 +178,7 @@ router.put('/:id', [
 				const dateParts = String(appointment.date || '').split('-'); // YYYY-MM-DD
 				const dateRu = (dateParts.length === 3) ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : '';
 
-				const url = `https://bitrix24.newhc.by/rest/15/qseod599og9fc16a/crm.lead.update`;
+				const url = `${process.env.BITRIX_REST_URL}/crm.lead.update`;
 				const requestData = {
 					id: Number(appointment.bitrix_lead_id),
 					fields: {

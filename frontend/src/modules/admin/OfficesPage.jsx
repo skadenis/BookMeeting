@@ -1,16 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Table, Button, Space, Form, Input, message, Modal, Typography } from 'antd'
-import axios from 'axios'
+import api from '../../api/client'
 
-function useApi() {
-  const api = useMemo(() => axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || '/api' }), [])
-  api.interceptors.request.use((config) => {
-    config.headers['Authorization'] = 'Bearer dev'
-    config.headers['X-Bitrix-Domain'] = 'dev'
-    return config
-  })
-  return api
-}
+function useApi() { return api }
 
 export default function OfficesPage() {
   const api = useApi()
@@ -21,15 +13,18 @@ export default function OfficesPage() {
 
   const load = async () => {
     setLoading(true)
-    try { const r = await api.get('/offices'); setData(r.data.data) } finally { setLoading(false) }
+    try { 
+      const r = await api.get('/offices')
+      setData(r.data.data) 
+    } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
 
   const onCreate = async (values) => {
     await api.post('/offices', {
-      name: values.name,
       city: values.city,
       address: values.address,
+      addressNote: values.addressNote,
       bitrixOfficeId: values.bitrixOfficeId ? Number(String(values.bitrixOfficeId).replace(/\D/g, '')) : undefined,
     });
     message.success('Офис создан');
@@ -38,9 +33,9 @@ export default function OfficesPage() {
   }
   const onSave = async (record) => {
     await api.put(`/offices/${record.id}`, {
-      name: record.name,
       city: record.city,
       address: record.address,
+      addressNote: record.addressNote,
       bitrixOfficeId: record.bitrixOfficeId ? Number(String(record.bitrixOfficeId).replace(/\D/g, '')) : undefined,
     });
     message.success('Сохранено'); load()
@@ -89,15 +84,15 @@ export default function OfficesPage() {
         open={deleteModal.open}
         onCancel={()=>setDeleteModal({ open:false, office:null, confirm:'' })}
         onOk={async()=>{ if (deleteModal.office) { await onDelete(deleteModal.office); setDeleteModal({ open:false, office:null, confirm:'' }) } }}
-        okButtonProps={{ danger:true, disabled:!(deleteModal.office && deleteModal.confirm.trim() === deleteModal.office.name) }}
+        okButtonProps={{ danger:true, disabled:!(deleteModal.office && deleteModal.confirm.trim() === `${deleteModal.office.city} • ${deleteModal.office.address}`) }}
         title="Удалить офис"
       >
         {deleteModal.office && (
           <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-            <Typography.Text>Это действие необратимо. Для подтверждения введите название офиса точно как ниже:</Typography.Text>
-            <Typography.Text code>{deleteModal.office.name}</Typography.Text>
+            <Typography.Text>Это действие необратимо. Для подтверждения введите адрес офиса точно как ниже:</Typography.Text>
+            <Typography.Text code>{deleteModal.office.city} • {deleteModal.office.address}</Typography.Text>
             <Input
-              placeholder="Введите точное название офиса"
+              placeholder="Введите точный адрес офиса"
               value={deleteModal.confirm}
               onChange={(e)=>setDeleteModal({ ...deleteModal, confirm: e.target.value })}
             />

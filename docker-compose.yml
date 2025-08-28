@@ -1,5 +1,5 @@
 services:
-  # База данных PostgreSQL
+  # База данных PostgreSQL (только для этого проекта)
   postgres:
     image: postgres:15-alpine
     environment:
@@ -8,9 +8,7 @@ services:
       POSTGRES_PASSWORD: meetings
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # В продакшене не открываем порт наружу
-    # ports:
-    #   - "5432:5432"
+    # Не открываем наружу (конфликт с 5432/5433)
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U meetings -d meetings"]
       interval: 10s
@@ -20,9 +18,7 @@ services:
   # Redis для кеширования
   redis:
     image: redis:7-alpine
-    # В продакшене не открываем порт наружу
-    # ports:
-    #   - "6379:6379"
+    # Не открываем наружу (конфликт с 6380)
     volumes:
       - redis_data:/data
 
@@ -39,14 +35,11 @@ services:
       DB_PASSWORD: meetings
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      BITRIX_DEV_MODE: "false"
-      CORS_ORIGIN: "${CORS_ORIGIN}"
+      BITRIX_DEV_MODE: "true"
+      BITRIX_REST_URL: "https://bitrix24.newhc.by/rest/15/qseod599og9fc16a"
+      CORS_ORIGIN: "http://localhost:8088,http://localhost:5173,http://localhost:5174"
     ports:
-      - "4000:4000"
-    # В продакшене убираем hot reload
-    # volumes:
-    #   - ./backend/src:/app/src
-    #   - /app/node_modules
+      - "4400:4000"   # внешний 4400 -> внутренний 4000
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,12 +49,17 @@ services:
 
   # Frontend React (Nginx)
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api
     ports:
-      - "80:80"
+      - "8088:80"     # внешний 8088 -> внутренний 80
     depends_on:
       - backend
 
 volumes:
   postgres_data:
+    name: bookmeeting_pgdata
   redis_data:
+    name: bookmeeting_redis_data

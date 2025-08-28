@@ -22,8 +22,8 @@ docker-compose logs -f
 
 ## 🌐 Доступные сервисы
 
-- **Frontend**: http://localhost:5173
-- **Backend API**: http://localhost:4000
+- **Frontend**: http://localhost:8088
+- **Backend API**: http://localhost:4400
 - **PostgreSQL**: localhost:5432
 - **Redis**: localhost:6379
 
@@ -40,7 +40,29 @@ BookMeeting/
 
 ## 🔧 Разработка
 
-Все изменения в коде автоматически перезагружаются благодаря volume mounts в Docker.
+По умолчанию Docker собирает продакшен-образы. Изменения в коде попадут в контейнеры после пересборки:
+
+```bash
+./start.sh
+```
+
+Для горячей перезагрузки (hot reload) запускайте сервисы локально:
+
+- Frontend (Vite):
+  ```bash
+  cd frontend
+  npm install
+  npm run dev
+  ```
+  Откроется на http://localhost:5173
+
+- Backend (nodemon):
+  ```bash
+  cd backend
+  npm install
+  npm run dev
+  ```
+  API на http://localhost:4400
 
 ## 🗄️ База данных
 

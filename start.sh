@@ -10,8 +10,8 @@ docker-compose up --build -d
 
 echo "✅ Проект запущен!"
 echo ""
-echo "🌐 Frontend: http://localhost:5173"
-echo "🔧 Backend API: http://localhost:4000"
+echo "🌐 Frontend: http://localhost:8088"
+echo "🔧 Backend API: http://localhost:4400"
 echo "🗄️  PostgreSQL: localhost:5432"
 echo "🔴 Redis: localhost:6379"
 echo ""

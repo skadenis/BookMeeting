@@ -2,17 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { Card, List, Tag, Button, Space, Typography, Modal, Form, Input, message } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
-import axios from 'axios'
+import api from '../../api/client'
 
-function useApi() {
-  const api = useMemo(() => axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || '/api' }), [])
-  api.interceptors.request.use((config) => {
-    config.headers['Authorization'] = 'Bearer dev'
-    config.headers['X-Bitrix-Domain'] = 'dev'
-    return config
-  })
-  return api
-}
+function useApi() { return api }
 
 function toISODate(date) { return new Date(date).toISOString().slice(0,10) }
 
@@ -68,6 +60,7 @@ export default function Dashboard() {
           </Space>
         </Card>
       )}
+
       <List
         loading={loading}
         grid={{ gutter: 12, column: 2 }}
@@ -75,7 +68,9 @@ export default function Dashboard() {
         renderItem={(o) => (
           <List.Item key={o.id}>
             <Card
-              title={<span>{o.name} <span style={{ color:'#999', fontWeight:400 }}>• {o.city}</span></span>}
+              title={(o.city && o.address)
+                ? <span>{o.city} <span style={{ color:'#999', fontWeight:400 }}> • {o.address}</span></span>
+                : <span>{o.city || o.address || ''}</span>}
               extra={<Button type="link" onClick={() => navigate(`/admin/offices/${o.id}`)}>Открыть</Button>}
             >
               <Space direction="vertical" size={6}>
@@ -114,10 +109,10 @@ export default function Dashboard() {
       >
         <Form form={form} layout="vertical">
           <Form.Item name="city" label="Город" rules={[{ required: true, message: 'Укажите город' }]}>
-            <Input />
+            <Input placeholder="например: Минск" />
           </Form.Item>
           <Form.Item name="address" label="Адрес" rules={[{ required: true, message: 'Укажите адрес' }]}>
-            <Input />
+            <Input placeholder="например: ул. Ленина 15, пом. 4Н" />
           </Form.Item>
           <Form.Item name="addressNote" label="Примечание">
             <Input.TextArea autoSize={{ minRows: 3, maxRows: 6 }} />

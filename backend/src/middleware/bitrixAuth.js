@@ -4,6 +4,30 @@ exports.bitrixAuthMiddleware = bitrixAuthMiddleware;
 // In production, validate token via Bitrix REST: oauth.token introspection or simple API call
 async function bitrixAuthMiddleware(req, res, next) {
     try {
+        // Shared app tokens for iframe embedding (public area)
+        const appTokenHeader = req.header('X-App-Token');
+        const appIdHeader = req.header('X-App-Id');
+        const tokenPairsEnv = (process.env.PUBLIC_TOKEN_PAIRS || '').split(',').map(s => s.trim()).filter(Boolean);
+        // Validate pair: id:secret (single-token flow disabled)
+        let pairOk = false;
+        if (appIdHeader && appTokenHeader && tokenPairsEnv.length > 0) {
+            for (const pair of tokenPairsEnv) {
+                const [pid, psec] = pair.split(':');
+                if (pid && psec && pid === appIdHeader && psec === appTokenHeader) { pairOk = true; break; }
+            }
+        }
+        if (pairOk) {
+            req.bitrix = {
+                userId: 0,
+                domain: 'public',
+                leadId: req.query.lead_id ? Number(req.query.lead_id) : undefined,
+                dealId: req.query.deal_id ? Number(req.query.deal_id) : undefined,
+                contactId: req.query.contact_id ? Number(req.query.contact_id) : undefined,
+                accessToken: 'public-token'
+            };
+            return next();
+        }
+
         const authHeader = req.header('Authorization');
         let token = authHeader?.startsWith('Bearer ')
             ? authHeader.substring('Bearer '.length)

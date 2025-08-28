@@ -1,17 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { DatePicker, TimePicker, Button, Space, Select, message, Card, Input } from 'antd'
 import dayjs from 'dayjs'
-import axios from 'axios'
+import api from '../../api/client'
 
-function useApi() {
-  const api = useMemo(() => axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || '/api' }), [])
-  api.interceptors.request.use((config) => {
-    config.headers['Authorization'] = 'Bearer dev'
-    config.headers['X-Bitrix-Domain'] = 'dev'
-    return config
-  })
-  return api
-}
+function useApi() { return api }
 
 function halfHourSlots(start, end) {
   const toMin = (t) => { const [h,m] = t.split(':').map(Number); return h*60+m }
@@ -58,7 +50,7 @@ export default function OverridesPage() {
       <h3 style={{ marginTop:0 }}>Исключения (день)</h3>
       <Space wrap>
         <Select value={officeId} onChange={setOfficeId} placeholder="Офис" style={{ width: 320 }}
-          options={offices.map(o=>({ value:o.id, label:`${o.name} • ${o.city}` }))}
+                      options={offices.map(o=>({ value:o.id, label:`${o.address} - ${o.city}` }))}
         />
         <DatePicker value={date} onChange={setDate} />
         <TimePicker.RangePicker value={period} onChange={setPeriod} format="HH:mm" minuteStep={30} />

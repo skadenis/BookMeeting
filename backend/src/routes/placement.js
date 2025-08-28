@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const axios = require('axios');
+const { models } = require('../lib/db');
 
 const router = Router();
 
@@ -35,5 +36,55 @@ router.get('/lead-id', async (req, res) => {
 });
 
 module.exports = router;
+
+// Additional helpers for Bitrix lead operations
+router.get('/lead', async (req, res) => {
+  try {
+    const id = Number(req.query.id || req.query.lead_id || req.query.LEAD_ID);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ ok: false, error: 'Missing lead id' });
+    }
+
+    const url = `${process.env.BITRIX_REST_URL}/crm.lead.get`;
+    const response = await axios.post(url, { id });
+    const lead = response?.data?.result || null;
+    return res.json({ ok: true, lead, raw: response?.data });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.response?.data || e.message });
+  }
+});
+
+router.post('/lead/update-office', async (req, res) => {
+  try {
+    const leadId = Number(req.body.lead_id || req.body.id);
+    const officeId = req.body.office_id;
+    let officeBitrixId = req.body.office_bitrix_id;
+
+    if (!Number.isFinite(leadId) || leadId <= 0) {
+      return res.status(400).json({ ok: false, error: 'Invalid lead_id' });
+    }
+
+    if (!officeBitrixId && officeId) {
+      const office = await models.Office.findByPk(officeId);
+      officeBitrixId = office ? office.bitrixOfficeId : null;
+    }
+
+    if (!officeBitrixId) {
+      return res.status(400).json({ ok: false, error: 'office_bitrix_id not provided or office not found' });
+    }
+
+    const url = `${process.env.BITRIX_REST_URL}/crm.lead.update`;
+    const payload = {
+      id: Number(leadId),
+      fields: {
+        UF_CRM_1675255265: Number(officeBitrixId),
+      },
+    };
+    const response = await axios.post(url, payload);
+    return res.json({ ok: true, result: response?.data });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.response?.data || e.message });
+  }
+});
 
 

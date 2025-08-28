@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import axios from 'axios'
+import api from '../api/client'
 import dayjs from 'dayjs'
 import 'dayjs/locale/ru'
-import { Layout, Row, Col, Card, Button, Select, Tag, Space, Modal, Typography, Divider, Tooltip, Descriptions, message } from 'antd'
+import { Layout, Row, Col, Card, Button, Select, Tag, Space, Modal, Typography, Divider, Tooltip, Descriptions, message, Spin } from 'antd'
 import { CalendarOutlined, EnvironmentOutlined, ClockCircleOutlined, ExclamationCircleOutlined, CheckCircleOutlined } from '@ant-design/icons'
 
 const { Header, Content } = Layout
@@ -107,54 +107,118 @@ const fullDayLabels = ['Воскресенье','Понедельник','Вто
 
 export function App() {
   const { token, domain, leadId } = useBitrixContext()
+  const [publicOk, setPublicOk] = useState(false)
+  // Read app public token from query and require it
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search)
+      const t = sp.get('app_token')
+      const id = sp.get('app_id')
+      if (t) sessionStorage.setItem('app.publicToken', t)
+      if (id) sessionStorage.setItem('app.publicId', id)
+      if (t || id) {
+        const url = new URL(window.location.href)
+        url.searchParams.delete('app_token')
+        url.searchParams.delete('app_id')
+        window.history.replaceState({}, '', url.toString())
+      }
+      {
+        // Require both id and token
+        const tok = sessionStorage.getItem('app.publicToken') || import.meta.env.VITE_PUBLIC_APP_TOKEN
+        const pid = sessionStorage.getItem('app.publicId') || import.meta.env.VITE_PUBLIC_APP_ID
+        setPublicOk(!!tok && !!pid)
+      }
+    } catch { setPublicOk(!!import.meta.env.VITE_PUBLIC_APP_TOKEN && !!import.meta.env.VITE_PUBLIC_APP_ID) }
+  }, [])
   console.log('App rendered with leadId:', leadId)
-  const api = useMemo(() => {
-    const instance = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || '/api' })
-    instance.interceptors.request.use((config) => {
-      if (token) config.headers.Authorization = `Bearer ${token}`
-      if (domain) config.headers['X-Bitrix-Domain'] = domain
-      return config
-    })
-    return instance
-  }, [token, domain])
+  const apiInstance = useMemo(() => api, [token, domain])
 
   const [offices, setOffices] = useState([])
   const [officeId, setOfficeId] = useState('')
+  const [leadOfficeBitrixId, setLeadOfficeBitrixId] = useState(null)
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()))
   const [loading, setLoading] = useState(false)
+  const [officesLoading, setOfficesLoading] = useState(true)
+  const [leadLoading, setLeadLoading] = useState(true)
 
   // Data for week view
   const [allSlotsWeek, setAllSlotsWeek] = useState([[],[],[],[],[],[],[]])
   const [availableWeek, setAvailableWeek] = useState([[],[],[],[],[],[],[]])
   const [leadAppt, setLeadAppt] = useState(null)
-  const [showCtx, setShowCtx] = useState(false)
-  const [placementRes, setPlacementRes] = useState(null)
-  const [placementLoading, setPlacementLoading] = useState(false)
+  
+  const [autoSelectAttempted, setAutoSelectAttempted] = useState(false)
 
-  const parseAllParams = () => {
-    const obj = {}
-    try {
-      const href = String(window.location.href || '')
-      const re = /[?#&]([^=&#]+)=([^&#]*)/g
-      let m
-      while ((m = re.exec(href))) {
-        const key = decodeURIComponent(m[1])
-        const val = decodeURIComponent(m[2])
-        obj[key] = val
-      }
-    } catch {}
-    return obj
-  }
-  const allParams = useMemo(() => parseAllParams(), [])
+  
 
   useEffect(() => {
-    api.get('/offices').then(r => setOffices(r.data.data)).catch(console.error)
-  }, [api])
+    setOfficesLoading(true)
+    apiInstance.get('/offices')
+      .then(r => setOffices(r.data.data))
+      .catch(console.error)
+      .finally(() => setOfficesLoading(false))
+  }, [apiInstance])
+
+  // Auto-select office from Bitrix lead field UF_CRM_1675255265
+  useEffect(() => {
+    async function fetchLeadAndAutoselect() {
+      try {
+        if (!leadId) return
+        setLeadLoading(true)
+        const r = await apiInstance.get('/bitrix/lead', { params: { id: leadId } })
+        const bxIdRaw = r?.data?.lead?.UF_CRM_1675255265
+        const bxId = Number(bxIdRaw)
+        const validBxId = Number.isFinite(bxId) && bxId > 0 ? bxId : null
+        setLeadOfficeBitrixId(validBxId)
+        if (validBxId && offices?.length && !officeId) {
+          const matched = offices.find(o => Number(o.bitrixOfficeId) === validBxId)
+          if (matched) setOfficeId(matched.id)
+        }
+      } catch (e) { /* silent */ }
+      finally { setLeadLoading(false) }
+    }
+    fetchLeadAndAutoselect()
+  }, [api, leadId, offices, officeId])
+
+  // Final guard: attempt auto-select once both lead and offices are known,
+  // and only then allow showing the office modal if nothing selected.
+  useEffect(() => {
+    const bootstrapping = officesLoading || leadLoading
+    if (bootstrapping) return
+    if (autoSelectAttempted) return
+    if (officeId) { setAutoSelectAttempted(true); return }
+    // If there is no office id in lead at all, we consider attempt done
+    if (!(Number.isFinite(Number(leadOfficeBitrixId)) && Number(leadOfficeBitrixId) > 0)) {
+      setAutoSelectAttempted(true)
+      return
+    }
+    // Try to match once offices are loaded
+    if (offices && offices.length > 0) {
+      const matched = offices.find(o => Number(o.bitrixOfficeId) === Number(leadOfficeBitrixId))
+      if (matched) setOfficeId(matched.id)
+      setAutoSelectAttempted(true)
+    }
+  }, [officesLoading, leadLoading, officeId, leadOfficeBitrixId, offices, autoSelectAttempted])
+
+  // When operator chooses office, push it to Bitrix lead immediately (only office field)
+  useEffect(() => {
+    async function syncLeadOffice() {
+      try {
+        if (!leadId || !officeId) return
+        const selected = offices.find(o => String(o.id) === String(officeId))
+        const bxId = Number(selected?.bitrixOfficeId)
+        if (!Number.isFinite(bxId) || bxId <= 0) return
+        if (Number(leadOfficeBitrixId || 0) === bxId) return
+        await apiInstance.post('/bitrix/lead/update-office', { lead_id: leadId, office_id: officeId })
+        setLeadOfficeBitrixId(bxId)
+      } catch (e) { /* silent */ }
+    }
+    syncLeadOffice()
+  }, [api, leadId, officeId, offices, leadOfficeBitrixId])
 
   async function loadLeadAppt() {
     if (!leadId) { setLeadAppt(null); return }
     try {
-      const r = await api.get('/appointments', { params: { lead_id: leadId } })
+      const r = await apiInstance.get('/appointments', { params: { lead_id: leadId } })
       const items = (r.data && r.data.data) || []
       console.log('Loaded appointments for lead', leadId, ':', items)
       setLeadAppt(items[0] || null)
@@ -170,8 +234,8 @@ export function App() {
     try {
       const days = [...Array(7)].map((_,i) => toLocalISO(addDays(weekStart,i)))
       const [allSlots, available] = await Promise.all([
-        Promise.all(days.map(d => api.get('/slots/all', { params: { office_id: officeId, date: d } }).then(r=>r.data.data)) ),
-        Promise.all(days.map(d => api.get('/slots', { params: { office_id: officeId, date: d } }).then(r=>r.data.data)) ),
+        Promise.all(days.map(d => apiInstance.get('/slots/all', { params: { office_id: officeId, date: d } }).then(r=>r.data.data)) ),
+        Promise.all(days.map(d => apiInstance.get('/slots', { params: { office_id: officeId, date: d } }).then(r=>r.data.data)) ),
       ])
       // Ensure ordering by time for stable visual
       const byTime = (a,b) => a.start.localeCompare(b.start)
@@ -180,14 +244,14 @@ export function App() {
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { loadWeek() }, [api, officeId, weekStart])
-  useEffect(() => { loadLeadAppt() }, [api, leadId])
+  useEffect(() => { loadWeek() }, [apiInstance, officeId, weekStart])
+  useEffect(() => { loadLeadAppt() }, [apiInstance, leadId])
 
   // Websocket live updates
   useEffect(() => {
     let ws
     try {
-      const base = (import.meta.env.VITE_API_BASE_URL || '/api')
+      const base = '/api'
       // Convert base to absolute ws URL if needed
       let url
       if (base.startsWith('http')) {
@@ -289,7 +353,7 @@ export function App() {
     if (!officeId) return
     const date = toLocalISO(addDays(weekStart, dayIdx))
     try {
-      const response = await api.post('/appointments', {
+      const response = await apiInstance.post('/appointments', {
         office_id: officeId,
         date,
         time_slot: `${slot.start}-${slot.end}`,
@@ -305,7 +369,7 @@ export function App() {
   }
 
   const updateAppointmentStatus = async (id, status) => {
-    await api.put(`/appointments/${id}`, { status })
+    await apiInstance.put(`/appointments/${id}`, { status })
     await loadWeek()
     await loadLeadAppt()
   }
@@ -324,27 +388,56 @@ export function App() {
     } catch { return false }
   }
 
+  const bootstrapping = officesLoading || leadLoading
+
+  if (!publicOk) {
+    return (
+      <Layout style={{ minHeight: '100vh', display:'flex', alignItems:'center', justifyContent:'center' }}>
+        <div style={{ textAlign:'center', color:'#666', fontSize:16 }}>Нет доступа.</div>
+      </Layout>
+    )
+  }
+
+  if (bootstrapping) {
+    return (
+      <Layout style={{ minHeight: '100vh', display:'flex', alignItems:'center', justifyContent:'center' }}>
+        <div style={{ textAlign:'center' }}>
+          <Spin size="large" tip="Загружаем данные лида и офисы..." />
+          <div style={{ marginTop: 12, color:'#666' }}>Пожалуйста, подождите</div>
+        </div>
+      </Layout>
+    )
+  }
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Header style={{ position:'sticky', top:0, zIndex:100, background: '#fff', padding: '0 16px', borderBottom:'1px solid #f0f0f0' }}>
         <div style={{ display:'flex', gap:12, alignItems:'center', flexWrap:'wrap' }}>
           <div style={{ fontWeight: 600 }}>Запись на встречу{leadId ? ` • Лид #${leadId}` : ''}</div>
           <Select value={officeId} onChange={setOfficeId} placeholder="Выберите офис" style={{ minWidth: 260 }}
-            options={offices.filter(o => Number(o.bitrixOfficeId) > 0).map(o => ({ value:o.id, label:[o.city, o.address].filter(Boolean).join(' • ') }))}
+            options={offices.filter(o => Number(o.bitrixOfficeId) > 0).map(o => ({ value:o.id, label: ([o.city, o.address].filter(Boolean).join(', ') || 'Адрес не указан') }))}
           />
           <Space>
             <Button onClick={prevWeek}>←</Button>
             <Button onClick={goToday}>Сегодня</Button>
             <Button onClick={nextWeek}>→</Button>
-            <Button size="small" onClick={()=> setShowCtx(true)}>Контекст</Button>
           </Space>
           <div style={{ color:'#666' }}>{toLocalISO(weekStart)} — {toLocalISO(addDays(weekStart,6))}</div>
         </div>
       </Header>
-      <Modal open={!officeId} footer={null} closable={false} centered>
-        <div style={{ fontSize:16, fontWeight:600, marginBottom:8 }}>Выберите офис</div>
-        <Select autoFocus value={officeId || undefined} onChange={setOfficeId} placeholder="Офис" style={{ width:'100%' }}
-          options={offices.filter(o => Number(o.bitrixOfficeId) > 0).map(o => ({ value:o.id, label:[o.city, o.address].filter(Boolean).join(' • ') }))}
+      <Modal open={!officeId && !bootstrapping && autoSelectAttempted} footer={null} closable={false} centered maskClosable={false} title={null}>
+        <div style={{ fontSize:16, fontWeight:600, marginBottom:8 }}>Выбор офиса</div>
+        <Typography.Paragraph type="secondary" style={{ marginTop:0 }}>
+          Мы не смогли определить офис из данных лида автоматически. Выбор офиса нужен,
+          чтобы показать доступные слоты и правильно записать клиента по адресу.
+        </Typography.Paragraph>
+        <Select
+          autoFocus
+          value={officeId || undefined}
+          onChange={setOfficeId}
+          placeholder="Выберите офис"
+          style={{ width:'100%' }}
+          options={offices.filter(o => Number(o.bitrixOfficeId) > 0).map(o => ({ value:o.id, label:[o.city, o.address].filter(Boolean).join(', ') }))}
         />
       </Modal>
       <Content style={{ margin: 16 }}>
@@ -355,7 +448,7 @@ export function App() {
               <Typography.Title level={4} style={{ margin:0 }}>
                 <EnvironmentOutlined style={{ color:'#1677ff', marginRight:8 }} />
                 <a onClick={jumpToLeadOffice} style={{ color:'#1677ff' }}>
-                  {[leadAppt.Office?.city || leadAppt.office?.city, leadAppt.Office?.address || leadAppt.office?.address].filter(Boolean).join(' • ') || 'Адрес не указан'}
+                  {[leadAppt.Office?.city || leadAppt.office?.city, leadAppt.Office?.address || leadAppt.office?.address].filter(Boolean).join(', ') || 'Адрес не указан'}
                 </a>
               </Typography.Title>
               <Space size={16} wrap style={{ marginTop: 8 }}>
@@ -458,7 +551,7 @@ export function App() {
                                     <Descriptions column={1} bordered size="middle"
                                       labelStyle={{ width: 140, fontWeight: 500 }}
                                       contentStyle={{ fontWeight: 600 }}>
-                                      <Descriptions.Item label="Офис">{office ? [office.city, office.address].filter(Boolean).join(' • ') : officeId}</Descriptions.Item>
+                                      <Descriptions.Item label="Офис">{office ? [office.city, office.address].filter(Boolean).join(', ') : officeId}</Descriptions.Item>
                                       {office?.addressNote ? (
                                         <Descriptions.Item label="Примечание">{office.addressNote}</Descriptions.Item>
                                       ) : null}
@@ -488,35 +581,7 @@ export function App() {
               )
         })()}
       </Content>
-      <Modal open={showCtx} onCancel={()=>setShowCtx(false)} footer={null} title="Bitrix контекст" width={780}>
-        <Descriptions bordered size="small" column={1} labelStyle={{ width: 240 }}>
-          <Descriptions.Item label="Current URL">{String(window.location.href)}</Descriptions.Item>
-          <Descriptions.Item label="Parsed query/hash params">
-            <pre style={{ margin:0, whiteSpace:'pre-wrap' }}>{JSON.stringify(allParams, null, 2)}</pre>
-          </Descriptions.Item>
-          <Descriptions.Item label="Session (AUTH_ID)">{sessionStorage.getItem('bx.AUTH_ID') ? `•••${sessionStorage.getItem('bx.AUTH_ID')?.slice(-6)}` : '—'}</Descriptions.Item>
-          <Descriptions.Item label="Session (DOMAIN)">{sessionStorage.getItem('bx.DOMAIN') || '—'}</Descriptions.Item>
-          <Descriptions.Item label="Session (LEAD_ID)">{sessionStorage.getItem('bx.LEAD_ID') || '—'}</Descriptions.Item>
-          <Descriptions.Item label="placement.info via APP_SID">
-            <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
-              <Button size="small" loading={placementLoading} onClick={async()=>{
-                const appSid = allParams.APP_SID || sessionStorage.getItem('bx.AUTH_ID') || ''
-                const dom = allParams.DOMAIN || sessionStorage.getItem('bx.DOMAIN') || ''
-                setPlacementLoading(true)
-                try {
-                  const r = await api.get('/bitrix/lead-id', { params: { AUTH_ID: appSid, DOMAIN: dom } })
-                  setPlacementRes(r.data)
-                } catch (e) {
-                  setPlacementRes({ error: String(e) })
-                } finally { setPlacementLoading(false) }
-              }}>Resolve</Button>
-              <div style={{ width:'100%' }}>
-                <pre style={{ margin:0, whiteSpace:'pre-wrap' }}>{placementRes ? JSON.stringify(placementRes, null, 2) : '—'}</pre>
-              </div>
-            </div>
-          </Descriptions.Item>
-        </Descriptions>
-      </Modal>
+      
     </Layout>
   )
 }

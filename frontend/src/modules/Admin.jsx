@@ -36,7 +36,6 @@ export function Admin() {
   const [officeId, setOfficeId] = useState('')
 
   // Create office form
-  const [name, setName] = useState('')
   const [city, setCity] = useState('')
   const [address, setAddress] = useState('')
 
@@ -62,15 +61,15 @@ export function Admin() {
   }
 
   const createOffice = async () => {
-    if (!name || !city || !address) return
-    await api.post('/offices', { name, city, address })
+    if (!city || !address) return
+    await api.post('/offices', { city, address })
     await refreshOffices()
-    setName(''); setCity(''); setAddress('')
+    setCity(''); setAddress('')
   }
 
   const startEditOffice = (o) => setOfficeId(o.id)
   const saveOfficeEdit = async (o) => {
-    await api.put(`/offices/${o.id}`, { name: o.name, city: o.city, address: o.address })
+    await api.put(`/offices/${o.id}`, { city: o.city, address: o.address })
     await refreshOffices()
   }
   const deleteOffice = async (id) => {
@@ -149,20 +148,24 @@ export function Admin() {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <select value={officeId} onChange={e=>setOfficeId(e.target.value)}>
             <option value="">— офис —</option>
-            {offices.map(o => <option key={o.id} value={o.id}>{o.name} • {o.city}</option>)}
+            {offices.map(o => <option key={o.id} value={o.id}>{o.address} - {o.city}</option>)}
           </select>
           <span style={{ color:'#999' }}>или создайте новый:</span>
-          <input placeholder="Название" value={name} onChange={e=>setName(e.target.value)} />
           <input placeholder="Город" value={city} onChange={e=>setCity(e.target.value)} />
           <input placeholder="Адрес" value={address} onChange={e=>setAddress(e.target.value)} />
           <button onClick={createOffice}>Создать</button>
         </div>
         <div style={{ marginTop: 8 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 2fr auto auto', gap:8, alignItems:'center', padding:'6px 0', borderBottom:'2px solid #ddd', fontWeight:'bold' }}>
+            <div>Город</div>
+            <div>Адрес</div>
+            <div></div>
+            <div></div>
+          </div>
           {offices.map(o => (
-            <div key={o.id} style={{ display:'grid', gridTemplateColumns:'1fr 1fr 2fr auto auto', gap:8, alignItems:'center', padding:'6px 0', borderBottom:'1px dashed #eee' }}>
-              <input value={o.name} onChange={e=>{ o.name=e.target.value; setOffices([...offices]) }} />
-              <input value={o.city} onChange={e=>{ o.city=e.target.value; setOffices([...offices]) }} />
-              <input value={o.address} onChange={e=>{ o.address=e.target.value; setOffices([...offices]) }} />
+            <div key={o.id} style={{ display:'grid', gridTemplateColumns:'1fr 2fr auto auto', gap:8, alignItems:'center', padding:'6px 0', borderBottom:'1px dashed #eee' }}>
+                      <input value={o.city} onChange={e=>{ o.city=e.target.value; setOffices([...offices]) }} />
+        <input value={o.address} onChange={e=>{ o.address=e.target.value; setOffices([...offices]) }} />
               <button onClick={()=>saveOfficeEdit(o)}>Сохранить</button>
               <button onClick={()=>deleteOffice(o.id)} style={{ background:'#fee', color:'#900' }}>Удалить</button>
             </div>

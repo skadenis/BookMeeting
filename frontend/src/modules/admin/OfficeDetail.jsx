@@ -4,19 +4,9 @@ import { MoreOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import 'dayjs/locale/ru'
-import axios from 'axios'
+import api from '../../api/client'
 
-function useApi() {
-  const api = useMemo(() => axios.create({
-    baseURL: import.meta.env.VITE_API_BASE_URL || '/api'
-  }), [])
-  api.interceptors.request.use((config) => {
-    config.headers['Authorization'] = 'Bearer dev'
-    config.headers['X-Bitrix-Domain'] = 'dev'
-    return config
-  })
-  return api
-}
+function useApi() { return api }
 
 function toLocalISO(date) { return dayjs(date).format('YYYY-MM-DD') }
 
@@ -29,7 +19,7 @@ export default function OfficeDetail() {
   // Debug: log available variables
   console.log('🎯 OfficeDetail component loaded:', { id, api: !!api })
   const [office, setOffice] = useState(null)
-  const [editOffice, setEditOffice] = useState({ name: '', city: '', address: '', bitrixOfficeId: '' })
+  const [editOffice, setEditOffice] = useState({ city: '', address: '', bitrixOfficeId: '' })
   const [loading, setLoading] = useState(true)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState('')
@@ -100,7 +90,7 @@ export default function OfficeDetail() {
         if (!o) { message.error('Офис не найден'); navigate('/admin'); return }
         if (!mounted) return
         setOffice(o)
-        setEditOffice({ name: o.name || '', city: o.city || '', address: o.address || '', bitrixOfficeId: o.bitrixOfficeId ? String(o.bitrixOfficeId) : '' })
+        setEditOffice({ city: o.city || '', address: o.address || '', bitrixOfficeId: o.bitrixOfficeId ? String(o.bitrixOfficeId) : '' })
         // load templates for quick apply
         const t = await api.get('/templates')
         if (!mounted) return
@@ -129,7 +119,7 @@ export default function OfficeDetail() {
   useEffect(() => {
     let ws
     try {
-      const base = (import.meta.env.VITE_API_BASE_URL || '/api')
+      const base = '/api'
       let url
       if (base.startsWith('http')) {
         const u = new URL(base.replace(/\/$/, ''))
@@ -657,13 +647,13 @@ export default function OfficeDetail() {
             message.error('Не удалось удалить офис')
           }
         }}
-        okButtonProps={{ danger: true, disabled: (deleteConfirm.trim() !== (office?.name||'')) }}
+        okButtonProps={{ danger: true, disabled: (deleteConfirm.trim() !== (`${office?.city||''} • ${office?.address||''}`)) }}
         title="Удалить офис"
       >
         <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-          <Typography.Text>Это действие необратимо. Для подтверждения введите название офиса:</Typography.Text>
-          <Typography.Text code>{office?.name}</Typography.Text>
-          <Input placeholder="Точное название офиса" value={deleteConfirm} onChange={(e)=>setDeleteConfirm(e.target.value)} />
+          <Typography.Text>Это действие необратимо. Для подтверждения введите адрес офиса:</Typography.Text>
+          <Typography.Text code>{office?.city} • {office?.address}</Typography.Text>
+          <Input placeholder="Точный адрес офиса" value={deleteConfirm} onChange={(e)=>setDeleteConfirm(e.target.value)} />
         </div>
       </Modal>
     </div>
