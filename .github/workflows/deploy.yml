@@ -60,18 +60,32 @@ jobs:
               }
             else
               echo "🔄 Updating existing repository..."
+              echo "🔍 Current git status before update:"
               cd "$DEPLOY_PATH" || {
                 echo "❌ Cannot cd to $DEPLOY_PATH"
                 exit 1
               }
+              echo "📍 In deploy directory: $(pwd)"
+              git status || echo "⚠️ Git status failed"
+              git remote -v || echo "⚠️ Git remote failed"
+              
+              echo "📥 Fetching latest changes..."
               git fetch origin main --depth=1 || {
                 echo "❌ Git fetch failed"
+                echo "🔍 Git error details:"
+                git status || true
                 exit 1
               }
+              
+              echo "🔄 Resetting to latest main..."
               git reset --hard origin/main || {
                 echo "❌ Git reset failed"
+                echo "🔍 Git error details:"
+                git status || true
                 exit 1
               }
+              
+              echo "✅ Git update completed"
             fi
             
             cd "$DEPLOY_PATH" || {
@@ -82,6 +96,7 @@ jobs:
             echo "📍 Current directory: $(pwd)"
             echo "📋 Git status:"
             git log --oneline -3 || echo "⚠️ Git log failed"
+            git status || echo "⚠️ Git status failed"
             
             # Ensure env file exists (copy once from example if missing)
             if [ ! -f .env ]; then 
