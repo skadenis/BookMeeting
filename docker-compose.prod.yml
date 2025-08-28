@@ -12,8 +12,12 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       BITRIX_DEV_MODE: "false"
-      BITRIX_REST_URL: ${BITRIX_REST_URL}
+      BITRIX_REST_URL: ${BITRIX_REST_URL:-https://bitrix24.newhc.by/rest/15/qseod599og9fc16a}
       CORS_ORIGIN: "https://book-meeting.centrcred.by"
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@centrcred.by}
+      ADMIN_NAME: ${ADMIN_NAME:-Admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-change-me-in-production}
     ports:
       - "4400:4000"
     depends_on:
