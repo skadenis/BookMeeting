@@ -18,6 +18,9 @@ services:
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-change-me-in-production}
+      PUBLIC_TOKEN_PAIRS: ${PUBLIC_TOKEN_PAIRS:-widget1:secretA,widget2:secretB}
+      RATE_LIMIT_WINDOW_MS: 60000
+      RATE_LIMIT_MAX: 300
     ports:
       - "4400:4000"
     depends_on:

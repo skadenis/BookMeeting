@@ -8,14 +8,19 @@ async function bitrixAuthMiddleware(req, res, next) {
         const appTokenHeader = req.header('X-App-Token');
         const appIdHeader = req.header('X-App-Id');
         const tokenPairsEnv = (process.env.PUBLIC_TOKEN_PAIRS || '').split(',').map(s => s.trim()).filter(Boolean);
+        
         // Validate pair: id:secret (single-token flow disabled)
         let pairOk = false;
         if (appIdHeader && appTokenHeader && tokenPairsEnv.length > 0) {
             for (const pair of tokenPairsEnv) {
                 const [pid, psec] = pair.split(':');
-                if (pid && psec && pid === appIdHeader && psec === appTokenHeader) { pairOk = true; break; }
+                if (pid && psec && pid === appIdHeader && psec === appTokenHeader) { 
+                    pairOk = true; 
+                    break; 
+                }
             }
         }
+        
         if (pairOk) {
             req.bitrix = {
                 userId: 0,
@@ -45,6 +50,7 @@ async function bitrixAuthMiddleware(req, res, next) {
         const dealId = req.query.deal_id ? Number(req.query.deal_id) : undefined;
         const contactId = req.query.contact_id ? Number(req.query.contact_id) : undefined;
         const userId = req.query.user_id ? Number(req.query.user_id) : undefined;
+        
         if (process.env.BITRIX_DEV_MODE === 'true') {
             const devToken = token || process.env.VITE_DEV_BITRIX_TOKEN || 'dev-token';
             // В dev режиме логируем минимально
@@ -60,21 +66,79 @@ async function bitrixAuthMiddleware(req, res, next) {
 
             return next();
         }
-        if (!token || !domain) {
-            return res.status(401).json({ error: 'Unauthorized' });
+        
+        // PRODUCTION MODE - более гибкая проверка
+        console.log('🔍 Middleware bitrixAuth (JavaScript) - PRODUCTION MODE:');
+        console.log('  - URL:', req.url);
+        console.log('  - Method:', req.method);
+        console.log('  - Headers:', {
+            authorization: req.headers.authorization ? 'present' : 'missing',
+            'x-bitrix-domain': req.headers['x-bitrix-domain'],
+            'x-app-id': req.headers['x-app-id'],
+            'x-app-token': req.headers['x-app-token'] ? 'present' : 'missing'
+        });
+        console.log('  - Query params:', req.query);
+
+        // В продакшене для публичных эндпоинтов разрешаем запросы без строгой авторизации
+        // Публичные эндпоинты: /offices, /slots (GET), /templates (GET)
+        const isPublicEndpoint = (
+            (req.method === 'GET' && req.url.startsWith('/offices')) ||
+            (req.method === 'GET' && req.url.startsWith('/slots')) ||
+            (req.method === 'GET' && req.url.startsWith('/templates'))
+        );
+
+        if (isPublicEndpoint && (!token && !domain)) {
+            console.log('  - INFO: Public endpoint accessed without auth - allowing');
+            req.bitrix = {
+                userId: 0,
+                domain: 'public-access',
+                leadId,
+                dealId,
+                contactId,
+                accessToken: 'public-access'
+            };
+            return next();
         }
+
+        // Для остальных эндпоинтов требуем авторизацию
+        if (!token && !domain) {
+            // Проверяем, есть ли публичные токены в заголовках
+            if (appIdHeader && appTokenHeader && tokenPairsEnv.length > 0) {
+                // Это должно было сработать выше, но на всякий случай
+                console.log('  - Using public app tokens');
+                req.bitrix = {
+                    userId: 0,
+                    domain: 'public',
+                    leadId,
+                    dealId,
+                    contactId,
+                    accessToken: 'public-token'
+                };
+                return next();
+            }
+            
+            console.log('  - ERROR: No token, domain, or public tokens provided');
+            return res.status(401).json({ 
+                error: 'Unauthorized - missing authentication',
+                details: 'Required: Authorization token or X-App-Id/X-App-Token pair'
+            });
+        }
+        
         // TODO: call Bitrix to validate token; here we trust but set context
         req.bitrix = {
-            userId: 0,
-            domain,
+            userId: userId || 0,
+            domain: domain || 'unknown',
             leadId,
             dealId,
             contactId,
-            accessToken: token,
+            accessToken: token || 'no-token',
         };
+        
+        console.log('  - SUCCESS: Authentication passed, req.bitrix set');
         return next();
     }
     catch (e) {
+        console.error('❌ Middleware bitrixAuth error:', e);
         return next(e);
     }
 }

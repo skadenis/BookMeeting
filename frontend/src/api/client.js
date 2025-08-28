@@ -38,12 +38,16 @@ export const apiClient = axios.create({ baseURL })
 
 apiClient.interceptors.request.use((config) => {
 	const url = String(config.url || '')
+	
 	// Admin endpoints use admin JWT
 	if (url.startsWith('/admin') || url.startsWith('/auth')) {
 		const adminToken = localStorage.getItem('admin.token')
-		if (adminToken) config.headers.Authorization = `Bearer ${adminToken}`
+		if (adminToken) {
+			config.headers.Authorization = `Bearer ${adminToken}`
+		}
 		return config
 	}
+	
 	// Public endpoints (Bitrix/iframe)
 	const token = getAuthToken()
 	const domain = getDomain()

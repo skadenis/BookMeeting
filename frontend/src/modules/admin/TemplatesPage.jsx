@@ -54,7 +54,7 @@ export default function TemplatesPage() {
   const loadTemplates = async () => {
     try {
       setLoading(true)
-      const response = await api.get('/templates')
+      const response = await api.get('/admin/templates')
       setTemplates(response.data.data || [])
     } catch (error) {
       message.error('Ошибка загрузки шаблонов')
@@ -65,7 +65,7 @@ export default function TemplatesPage() {
 
   const loadOffices = async () => {
     try {
-      const response = await api.get('/offices')
+      const response = await api.get('/admin/offices')
       setOffices(response.data.data || [])
     } catch (error) {
       message.error('Ошибка загрузки офисов')
@@ -74,7 +74,7 @@ export default function TemplatesPage() {
 
   const deleteTemplate = async (id) => {
     try {
-      await api.delete(`/templates/${id}`)
+      await api.delete(`/admin/templates/${id}`)
       message.success('Шаблон удален')
       loadTemplates()
     } catch (error) {
@@ -89,7 +89,7 @@ export default function TemplatesPage() {
     }
 
     try {
-      await api.post(`/templates/${templateId}/apply`, {
+      await api.post(`/admin/templates/${templateId}/apply`, {
         office_id: selectedOffice,
         start_date: dateRange[0].format('YYYY-MM-DD'),
         end_date: dateRange[1].format('YYYY-MM-DD')

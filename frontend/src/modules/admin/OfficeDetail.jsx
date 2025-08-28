@@ -85,14 +85,14 @@ export default function OfficeDetail() {
     const load = async () => {
       setLoading(true)
       try {
-        const off = await api.get('/offices')
+        const off = await api.get('/admin/offices')
         const o = (off?.data?.data || []).find(x => String(x.id) === String(id))
         if (!o) { message.error('Офис не найден'); navigate('/admin'); return }
         if (!mounted) return
         setOffice(o)
         setEditOffice({ city: o.city || '', address: o.address || '', bitrixOfficeId: o.bitrixOfficeId ? String(o.bitrixOfficeId) : '' })
         // load templates for quick apply
-        const t = await api.get('/templates')
+        const t = await api.get('/admin/templates')
         if (!mounted) return
         setTemplates(t?.data?.data || [])
       } finally { setLoading(false) }
@@ -107,7 +107,7 @@ export default function OfficeDetail() {
 
   const loadPreview = async () => {
     const days = [...Array(7)].map((_,i) => toLocalISO(dayjs(previewStart).add(i,'day')))
-    const lists = await Promise.all(days.map(d => api.get('/slots/all', { params: { office_id: id, date: d } }).then(r=>r?.data?.data||[])))
+    const lists = await Promise.all(days.map(d => api.get('/admin/slots/all', { params: { office_id: id, date: d } }).then(r=>r?.data?.data||[])))
     setPreviewDays(lists)
   }
 
@@ -165,7 +165,7 @@ export default function OfficeDetail() {
     if (!applyRange?.[0] || !applyRange?.[1]) return message.error('Укажите диапазон дат')
     const start = applyRange[0].format('YYYY-MM-DD')
     const end = applyRange[1].format('YYYY-MM-DD')
-    await api.post(`/templates/${selectedTplId}/apply`, { office_id: id, start_date: start, end_date: end })
+    await api.post(`/admin/templates/${selectedTplId}/apply`, { office_id: id, start_date: start, end_date: end })
     message.success('Шаблон применен')
     await loadPreview()
   }
@@ -217,7 +217,7 @@ export default function OfficeDetail() {
                     </div>
                     <div style={{ marginTop:12, display:'flex', justifyContent:'flex-start', gap:12, flexWrap:'wrap' }}>
                       <Button type="primary" size="large" onClick={async()=>{
-                        await api.put(`/offices/${id}`, { 
+                        await api.put(`/admin/offices/${id}`, { 
                           city: editOffice.city, 
                           address: editOffice.address,
                           addressNote: editOffice.addressNote || undefined,
@@ -317,7 +317,7 @@ export default function OfficeDetail() {
                                   console.log('🔴 CLOSE DAY BUTTON CLICKED:', { id, dateISO })
                                   try {
                                     console.log('📡 Sending POST to /slots/close-day')
-                                    await api.post('/slots/close-day', {
+                                    await api.post('/admin/slots/close-day', {
                                       office_id: id,
                                       date: dateISO
                                     })
@@ -481,7 +481,7 @@ export default function OfficeDetail() {
                   console.log('🔴 SAVE CAPACITY BUTTON CLICKED:', { editSlot, editCapacity, id })
                   try {
                     console.log('📡 Sending capacity update:', `/slots/all?office_id=${id}&date=${editSlot.date}&update_slot_id=${editSlot.id}&new_capacity=${editCapacity}`)
-                    await api.get(`/slots/all?office_id=${id}&date=${editSlot.date}&update_slot_id=${editSlot.id}&new_capacity=${editCapacity}`)
+                    await api.get(`/admin/slots/all?office_id=${id}&date=${editSlot.date}&update_slot_id=${editSlot.id}&new_capacity=${editCapacity}`)
                     console.log('✅ Capacity update successful')
                     message.success('Вместимость обновлена')
                     setEditSlot(null)
@@ -523,7 +523,7 @@ export default function OfficeDetail() {
                 <Button type="primary" onClick={async () => {
                   if (!modalTplId) return message.warning('Выберите шаблон')
                   try {
-                    await api.post('/slots/open-day', { office_id: id, date: dayEditModal.date, template_id: modalTplId })
+                                            await api.post('/admin/slots/open-day', { office_id: id, date: dayEditModal.date, template_id: modalTplId })
                     message.success('День открыт по шаблону')
                     setDayEditModal(null)
                     await loadPreview()
@@ -551,7 +551,7 @@ export default function OfficeDetail() {
                     <Button size="small" onClick={async () => {
                       if (!closeAfter) return message.warning('Укажите время')
                       try {
-                        await api.post('/slots/close-early', { office_id: id, date: dayEditModal.date, close_after: closeAfter, template_id: modalTplId })
+                        await api.post('/admin/slots/close-early', { office_id: id, date: dayEditModal.date, close_after: closeAfter, template_id: modalTplId })
                         message.success('Закрыто с указанного времени')
                         setDayEditModal(null)
                         setCloseAfter('')
@@ -575,7 +575,7 @@ export default function OfficeDetail() {
                     <Button size="small" onClick={async () => {
                       if (!openFrom) return message.warning('Укажите время')
                       try {
-                        await api.post('/slots/open-late', { office_id: id, date: dayEditModal.date, open_from: openFrom, template_id: modalTplId })
+                        await api.post('/admin/slots/open-late', { office_id: id, date: dayEditModal.date, open_from: openFrom, template_id: modalTplId })
                         message.success('Открыто с указанного времени')
                         setDayEditModal(null)
                         setOpenFrom('')
@@ -616,7 +616,7 @@ export default function OfficeDetail() {
                 <Tooltip title="Пересоздаёт слоты по шаблону и применяет окно. Недостающие интервалы будут дозаполнены.">
                   <Button type="primary" onClick={async () => {
                     try {
-                      await api.post('/slots/set-window', { office_id: id, date: dayEditModal.date, template_id: modalTplId, open_from: openFrom||undefined, close_after: closeAfter||undefined })
+                      await api.post('/admin/slots/set-window', { office_id: id, date: dayEditModal.date, template_id: modalTplId, open_from: openFrom||undefined, close_after: closeAfter||undefined })
                       message.success('Окно применено')
                       setDayEditModal(null)
                       await loadPreview()
@@ -639,7 +639,7 @@ export default function OfficeDetail() {
         onCancel={()=>setDeleteOpen(false)}
         onOk={async ()=>{
           try {
-            await api.delete(`/offices/${id}`)
+            await api.delete(`/admin/offices/${id}`)
             message.success('Офис удалён')
             setDeleteOpen(false)
             navigate('/admin')

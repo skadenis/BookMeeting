@@ -5,6 +5,7 @@ const dotenv = require('dotenv');
 const http = require('http');
 const { sequelize, models, seedDefaultAdminIfEmpty } = require('./lib/db');
 const { bitrixAuthMiddleware } = require('./middleware/bitrixAuth');
+const { adminAuthMiddleware } = require('./middleware/adminAuth');
 const { redis } = require('./lib/redis');
 const { initWebsocket, broadcastTimeTick } = require('./lib/ws');
 const officesRouter = require('./routes/offices');
@@ -126,9 +127,17 @@ async function start() {
 	
 	// Public admin auth routes
 	app.use('/api/auth', authRouter);
+	
+	// Admin routes (protected by adminAuthMiddleware)
 	app.use('/api/admin/users', adminUsersRouter);
+	
+	// Admin-specific routes that need admin auth
+	app.use('/api/admin/offices', adminAuthMiddleware, officesRouter);
+	app.use('/api/admin/slots', adminAuthMiddleware, slotsRouter);
+	app.use('/api/admin/templates', adminAuthMiddleware, templatesRouter);
+	app.use('/api/admin/appointments', adminAuthMiddleware, appointmentsRouter);
 
-	// Protected routes (Bitrix/public token)
+	// Public routes (protected by bitrixAuthMiddleware)
 	app.use('/api', bitrixAuthMiddleware);
 	app.use('/api', apiRouter);
 

@@ -20,11 +20,11 @@ export default function Dashboard() {
   const load = async () => {
     setLoading(true)
     try {
-      const r = await api.get('/offices')
+      const r = await api.get('/admin/offices')
       const list = r?.data?.data || []
       setOffices(list)
       const today = toISODate(new Date())
-      const slots = await Promise.all(list.map(o => api.get('/slots/all', { params: { office_id: o.id, date: today } }).then(rr => rr?.data?.data || []).catch(()=>[])))
+      const slots = await Promise.all(list.map(o => api.get('/admin/slots/all', { params: { office_id: o.id, date: today } }).then(rr => rr?.data?.data || []).catch(()=>[])))
       const map = {}
       list.forEach((o, idx) => { map[o.id] = slots[idx] || [] })
       setTodayMap(map)
@@ -93,7 +93,7 @@ export default function Dashboard() {
         onOk={async()=>{
           try {
             const values = await form.validateFields()
-            await api.post('/offices', {
+            await api.post('/admin/offices', {
               city: values.city,
               address: values.address,
               addressNote: values.addressNote || undefined,

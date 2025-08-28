@@ -142,7 +142,7 @@ export default function TemplateEditPage() {
       console.log('🔍 Loading template with ID:', id)
       console.log('🔍 API base URL:', import.meta.env.VITE_API_BASE_URL || '/api')
       
-      const response = await api.get(`/templates/${id}`)
+      const response = await api.get(`/admin/templates/${id}`)
       console.log('✅ Template loaded successfully:', response.data)
       
       const template = response.data.data
@@ -353,10 +353,10 @@ export default function TemplateEditPage() {
       }
 
       if (id) {
-        await api.put(`/templates/${id}`, templateData)
+        await api.put(`/admin/templates/${id}`, templateData)
         message.success('Шаблон обновлен')
       } else {
-        await api.post('/templates', templateData)
+        await api.post('/admin/templates', templateData)
         message.success('Шаблон создан')
       }
 
