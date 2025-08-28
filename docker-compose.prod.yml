@@ -14,8 +14,8 @@ services:
       BITRIX_DEV_MODE: "false"
       BITRIX_REST_URL: ${BITRIX_REST_URL}
       CORS_ORIGIN: "https://book-meeting.centrcred.by"
-    expose:
-      - "4000"
+    ports:
+      - "4400:4000"
     depends_on:
       - postgres
       - redis
@@ -26,8 +26,8 @@ services:
       context: ./frontend
       args:
         VITE_API_BASE_URL: /api
-    expose:
-      - "80"
+    ports:
+      - "8088:80"
     depends_on:
       - backend
     restart: always
