@@ -24,6 +24,12 @@ jobs:
             set -e
             echo "🚀 Starting deployment..."
             
+            echo "🔍 Environment check:"
+            echo "   User: $(whoami)"
+            echo "   Home: $HOME"
+            echo "   PWD: $(pwd)"
+            echo "   PATH: $PATH"
+            
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
             if [ -z "$DEPLOY_PATH" ]; then 
               echo "❌ DEPLOY_PATH secret is required"
@@ -31,22 +37,51 @@ jobs:
             fi
             
             echo "📁 Deploy path: $DEPLOY_PATH"
-            mkdir -p "$DEPLOY_PATH"
+            echo "🔍 Checking if directory exists..."
+            ls -la "$(dirname "$DEPLOY_PATH")" || echo "⚠️ Cannot list parent directory"
+            
+            echo "📂 Creating deploy directory..."
+            mkdir -p "$DEPLOY_PATH" || {
+              echo "❌ Failed to create directory $DEPLOY_PATH"
+              echo "🔍 Current user: $(whoami)"
+              echo "🔍 Current directory: $(pwd)"
+              echo "🔍 Disk space: $(df -h .)"
+              exit 1
+            }
+            
+            echo "✅ Directory created/verified"
+            ls -la "$DEPLOY_PATH" || echo "⚠️ Cannot list deploy directory"
             
             if [ ! -d "$DEPLOY_PATH/.git" ]; then
               echo "📥 Cloning repository..."
-              git clone --depth=1 https://github.com/${{ github.repository }} "$DEPLOY_PATH"
+              git clone --depth=1 https://github.com/${{ github.repository }} "$DEPLOY_PATH" || {
+                echo "❌ Git clone failed"
+                exit 1
+              }
             else
               echo "🔄 Updating existing repository..."
-              cd "$DEPLOY_PATH"
-              git fetch origin main --depth=1
-              git reset --hard origin/main
+              cd "$DEPLOY_PATH" || {
+                echo "❌ Cannot cd to $DEPLOY_PATH"
+                exit 1
+              }
+              git fetch origin main --depth=1 || {
+                echo "❌ Git fetch failed"
+                exit 1
+              }
+              git reset --hard origin/main || {
+                echo "❌ Git reset failed"
+                exit 1
+              }
             fi
             
-            cd "$DEPLOY_PATH"
+            cd "$DEPLOY_PATH" || {
+              echo "❌ Cannot cd to $DEPLOY_PATH after git operations"
+              exit 1
+            }
+            
             echo "📍 Current directory: $(pwd)"
             echo "📋 Git status:"
-            git log --oneline -3 || true
+            git log --oneline -3 || echo "⚠️ Git log failed"
             
             # Ensure env file exists (copy once from example if missing)
             if [ ! -f .env ]; then 
