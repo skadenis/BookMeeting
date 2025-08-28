@@ -63,6 +63,11 @@ jobs:
               exit 1
             fi
             
+            echo "🔍 Checking git directory..."
+            echo "   .git exists: $([ -d "$DEPLOY_PATH/.git" ] && echo "yes" || echo "no")"
+            echo "   .git readable: $([ -r "$DEPLOY_PATH/.git" ] && echo "yes" || echo "no")"
+            echo "   .git executable: $([ -x "$DEPLOY_PATH/.git" ] && echo "yes" || echo "no")"
+            
             if [ ! -d "$DEPLOY_PATH/.git" ]; then
               echo "📥 Cloning repository..."
               git clone --depth=1 https://github.com/${{ github.repository }} "$DEPLOY_PATH" || {
