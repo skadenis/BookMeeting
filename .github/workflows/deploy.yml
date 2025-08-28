@@ -1,0 +1,42 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -e
+            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+            if [ -z "$DEPLOY_PATH" ]; then echo "DEPLOY_PATH secret is required"; exit 1; fi
+            mkdir -p "$DEPLOY_PATH"
+            if [ ! -d "$DEPLOY_PATH/.git" ]; then
+              git clone --depth=1 https://github.com/${{ github.repository }} "$DEPLOY_PATH"
+            else
+              cd "$DEPLOY_PATH"
+              git fetch origin main --depth=1
+              git reset --hard origin/main
+            fi
+            cd "$DEPLOY_PATH"
+            # Ensure env file exists (copy once from example if missing)
+            if [ ! -f .env ]; then cp env.example .env || true; fi
+            # Build and restart services
+            docker compose -f docker-compose.prod.yml pull || true
+            docker compose -f docker-compose.prod.yml up -d --build
+            docker system prune -f || true
+

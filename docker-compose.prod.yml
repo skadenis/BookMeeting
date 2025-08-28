@@ -1,0 +1,54 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: meetings
+      DB_USERNAME: meetings
+      DB_PASSWORD: meetings
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      BITRIX_DEV_MODE: "false"
+      BITRIX_REST_URL: ${BITRIX_REST_URL}
+      CORS_ORIGIN: "https://book-meeting.centrcred.by"
+    expose:
+      - "4000"
+    depends_on:
+      - postgres
+      - redis
+    restart: always
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api
+    expose:
+      - "80"
+    depends_on:
+      - backend
+    restart: always
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: meetings
+      POSTGRES_USER: meetings
+      POSTGRES_PASSWORD: meetings
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: always
+
+volumes:
+  postgres_data:
+  redis_data:
+
