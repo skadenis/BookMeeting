@@ -2,7 +2,7 @@ const express = require('express')
 const { body, validationResult } = require('express-validator')
 const bcrypt = require('bcryptjs')
 const { models } = require('../lib/db')
-const { signAdminJwt } = require('../middleware/adminAuth')
+const { signAdminJwt, adminAuthMiddleware } = require('../middleware/adminAuth')
 
 const router = express.Router()
 
@@ -26,4 +26,12 @@ router.post('/login',
 
 module.exports = router
 
-
+// Current admin user info
+router.get('/me', adminAuthMiddleware, async (req, res) => {
+  try {
+    const { id, email, role, name } = req.admin || {}
+    return res.json({ user: { id, email, role, name } })
+  } catch (e) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+})

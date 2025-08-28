@@ -15,7 +15,7 @@ export default function AdminLayout() {
   }, [location.pathname])
 
   const [form] = Form.useForm()
-  const token = typeof window !== 'undefined' ? localStorage.getItem('admin.token') : null
+  const [token, setToken] = React.useState(typeof window !== 'undefined' ? localStorage.getItem('admin.token') : null)
 
   // Auto-read admin_token from URL and persist
   React.useEffect(() => {
@@ -49,17 +49,38 @@ export default function AdminLayout() {
     } catch (e) {}
   }
 
+  // Validate token on load; clear invalid token (avoids false-positive access)
+  React.useEffect(() => {
+    let cancelled = false
+    async function validate() {
+      try {
+        const t = localStorage.getItem('admin.token')
+        if (!t) return
+        const r = await fetch((import.meta.env.VITE_API_BASE_URL || '/api') + '/auth/me', {
+          headers: { Authorization: `Bearer ${t}` }
+        })
+        if (!r.ok) throw new Error('invalid')
+        if (!cancelled) setToken(t)
+      } catch {
+        localStorage.removeItem('admin.token')
+        if (!cancelled) setToken(null)
+      }
+    }
+    validate()
+    return () => { cancelled = true }
+  }, [])
+
   // If not authenticated, show full-page login and do not render admin UI
   if (!token) {
     return (
       <Layout style={{ minHeight: '100vh', display:'flex', alignItems:'center', justifyContent:'center' }}>
         <div style={{ width: 360, background:'#fff', borderRadius:8, padding:24, boxShadow:'0 4px 24px rgba(0,0,0,0.06)' }}>
           <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 12 }}>Вход в админку</div>
-          <Form form={form} layout="vertical" initialValues={{ email:'admin@example.com', password:'admin123' }}>
-            <Form.Item name="email" label="Email" rules={[{ required:true, type:'email' }]}>
-              <Input placeholder="admin@example.com" />
+          <Form form={form} layout="vertical">
+            <Form.Item name="email" label="Email" rules={[{ required:true, type:'email' }]}> 
+              <Input placeholder="Введите email" />
             </Form.Item>
-            <Form.Item name="password" label="Пароль" rules={[{ required:true }]}>
+            <Form.Item name="password" label="Пароль" rules={[{ required:true }]}> 
               <Input.Password placeholder="••••••" />
             </Form.Item>
             <Button type="primary" style={{ width:'100%' }} onClick={doLogin}>Войти</Button>
