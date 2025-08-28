@@ -50,7 +50,18 @@ jobs:
             }
             
             echo "✅ Directory created/verified"
-            ls -la "$DEPLOY_PATH" || echo "⚠️ Cannot list deploy directory"
+            echo "🔍 Listing deploy directory contents:"
+            if ls -la "$DEPLOY_PATH"; then
+              echo "✅ Directory listing successful"
+            else
+              echo "❌ Directory listing failed with exit code: $?"
+              echo "🔍 Trying to debug directory access..."
+              echo "   Directory exists: $([ -d "$DEPLOY_PATH" ] && echo "yes" || echo "no")"
+              echo "   Directory readable: $([ -r "$DEPLOY_PATH" ] && echo "yes" || echo "no")"
+              echo "   Directory executable: $([ -x "$DEPLOY_PATH" ] && echo "yes" || echo "no")"
+              echo "   Current permissions: $(ls -ld "$DEPLOY_PATH" 2>/dev/null || echo "cannot check")"
+              exit 1
+            fi
             
             if [ ! -d "$DEPLOY_PATH/.git" ]; then
               echo "📥 Cloning repository..."
