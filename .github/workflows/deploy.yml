@@ -70,13 +70,20 @@ jobs:
             echo "   .git executable: $([ -x "$DEPLOY_PATH/.git" ] && echo "yes" || echo "no")"
             
             echo "🔍 About to enter git condition check..."
-            if [ ! -d "$DEPLOY_PATH/.git" ]; then
-              echo "📥 Cloning repository..."
-              git clone --depth=1 https://github.com/${{ github.repository }} "$DEPLOY_PATH" || {
-                echo "❌ Git clone failed"
-                exit 1
-              }
+            echo "🔍 Testing git directory condition..."
+            
+            # Test the condition separately
+            if [ -d "$DEPLOY_PATH/.git" ]; then
+              echo "✅ Git directory exists, will update"
+              GIT_EXISTS=true
             else
+              echo "❌ Git directory does not exist, will clone"
+              GIT_EXISTS=false
+            fi
+            
+            echo "🔍 Condition test result: GIT_EXISTS=$GIT_EXISTS"
+            
+            if [ "$GIT_EXISTS" = "true" ]; then
               echo "🔄 Updating existing repository..."
               echo "🔍 Current git status before update:"
               cd "$DEPLOY_PATH" || {
@@ -104,6 +111,12 @@ jobs:
               }
               
               echo "✅ Git update completed"
+            else
+              echo "📥 Cloning repository..."
+              git clone --depth=1 https://github.com/${{ github.repository }} "$DEPLOY_PATH" || {
+                echo "❌ Git clone failed"
+                exit 1
+              }
             fi
             
             echo "🔍 About to cd to deploy path..."
