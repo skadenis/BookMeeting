@@ -15,12 +15,22 @@ router.get('/', [
   query('status').optional().isIn(['pending', 'confirmed', 'cancelled', 'rescheduled']),
   query('office_id').optional().isUUID(),
   query('search').optional().isString(),
+  query('page').optional().isInt({ min: 1 }),
+  query('pageSize').optional().isInt({ min: 1, max: 100 }),
 ], async (req, res, next) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { start_date, end_date, status, office_id, search } = req.query;
+    const {
+      start_date,
+      end_date,
+      status,
+      office_id,
+      search,
+      page = 1,
+      pageSize = 20
+    } = req.query;
     
     // Базовые условия
     const where = {};
@@ -69,11 +79,15 @@ router.get('/', [
       }
     }
 
-    // Получаем встречи с включением офиса
+    // Получаем общее количество записей
+    const totalCount = await models.Appointment.count({ where });
+
+    // Получаем встречи с включением офиса и пагинацией
+    const offset = (page - 1) * pageSize;
     const appointments = await models.Appointment.findAll({
       where,
       include: [
-        { 
+        {
           model: models.Office,
           attributes: ['id', 'city', 'address', 'addressNote']
         }
@@ -81,13 +95,18 @@ router.get('/', [
       order: [
         ['date', 'ASC'],
         ['timeSlot', 'ASC']
-      ]
+      ],
+      limit: parseInt(pageSize),
+      offset: offset
     });
 
-    res.json({ 
+    res.json({
       data: appointments,
       meta: {
-        total: appointments.length,
+        total: totalCount,
+        page: parseInt(page),
+        pageSize: parseInt(pageSize),
+        totalPages: Math.ceil(totalCount / pageSize),
         filters: { start_date, end_date, status, office_id, search }
       }
     });

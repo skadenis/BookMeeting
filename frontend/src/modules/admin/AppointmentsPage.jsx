@@ -52,6 +52,14 @@ export default function AppointmentsPage() {
   const [appointments, setAppointments] = useState([])
   const [loading, setLoading] = useState(false)
   const [offices, setOffices] = useState([])
+  const [pagination, setPagination] = useState({
+    current: 1,
+    pageSize: 20,
+    total: 0,
+    showSizeChanger: true,
+    showQuickJumper: true,
+    showTotal: (total, range) => `${range[0]}-${range[1]} из ${total} встреч`
+  })
   const [filters, setFilters] = useState({
     dateRange: [dayjs().startOf('week'), dayjs().endOf('week')],
     status: '',
@@ -61,33 +69,44 @@ export default function AppointmentsPage() {
 
   useEffect(() => {
     loadAppointments()
+    loadStatistics()
     loadOffices()
   }, [filters])
 
-  const loadAppointments = async () => {
+  const loadAppointments = async (page = pagination.current, pageSize = pagination.pageSize) => {
     setLoading(true)
     try {
-      const params = {}
-      
+      const params = {
+        page,
+        pageSize
+      }
+
       if (filters.dateRange && filters.dateRange.length === 2) {
         params.start_date = filters.dateRange[0].format('YYYY-MM-DD')
         params.end_date = filters.dateRange[1].format('YYYY-MM-DD')
       }
-      
+
       if (filters.status) {
         params.status = filters.status
       }
-      
+
       if (filters.office) {
         params.office_id = filters.office
       }
-      
+
       if (filters.search) {
         params.search = filters.search
       }
 
       const response = await api.get('/admin/appointments', { params })
+
       setAppointments(response.data.data || [])
+      setPagination(prev => ({
+        ...prev,
+        current: page,
+        pageSize,
+        total: response.data.meta?.total || 0
+      }))
     } catch (error) {
       console.error('Ошибка загрузки встреч:', error)
       message.error('Не удалось загрузить встречи')
@@ -110,23 +129,46 @@ export default function AppointmentsPage() {
       await api.put(`/admin/appointments/${id}`, { status })
       message.success('Статус встречи обновлен')
       loadAppointments()
+      loadStatistics()
     } catch (error) {
       message.error('Не удалось обновить статус встречи')
     }
   }
 
-  const getStatistics = () => {
-    const total = appointments.length
-    const pending = appointments.filter(a => a.status === 'pending').length
-    const confirmed = appointments.filter(a => a.status === 'confirmed').length
-    const cancelled = appointments.filter(a => a.status === 'cancelled').length
-    const rescheduled = appointments.filter(a => a.status === 'rescheduled').length
+  const [statistics, setStatistics] = useState({
+    total: 0,
+    pending: 0,
+    confirmed: 0,
+    cancelled: 0,
+    rescheduled: 0
+  })
 
-    return { total, pending, confirmed, cancelled, rescheduled }
+  const loadStatistics = async () => {
+    try {
+      const params = {}
+
+      if (filters.dateRange && filters.dateRange.length === 2) {
+        params.start_date = filters.dateRange[0].format('YYYY-MM-DD')
+        params.end_date = filters.dateRange[1].format('YYYY-MM-DD')
+      }
+
+      const response = await api.get('/admin/appointments/stats/overview', { params })
+      setStatistics(response.data.data || {
+        total: 0,
+        pending: 0,
+        confirmed: 0,
+        cancelled: 0,
+        rescheduled: 0
+      })
+    } catch (error) {
+      console.error('Ошибка загрузки статистики:', error)
+      // В случае ошибки оставляем предыдущую статистику
+    }
   }
 
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }))
+    setPagination(prev => ({ ...prev, current: 1 })) // Сбрасываем на первую страницу при изменении фильтров
   }
 
   const resetFilters = () => {
@@ -136,6 +178,16 @@ export default function AppointmentsPage() {
       office: '',
       search: ''
     })
+    setPagination(prev => ({ ...prev, current: 1 }))
+  }
+
+  const handleTableChange = (paginationInfo, filters, sorter) => {
+    setPagination(prev => ({
+      ...prev,
+      current: paginationInfo.current,
+      pageSize: paginationInfo.pageSize
+    }))
+    loadAppointments(paginationInfo.current, paginationInfo.pageSize)
   }
 
   const columns = [
@@ -172,12 +224,20 @@ export default function AppointmentsPage() {
       dataIndex: 'office',
       key: 'office',
       render: (office) => (
-        <div>
-          <div style={{ fontWeight: 600 }}>
-            {office?.city || 'Город не указан'}
-          </div>
-          <div style={{ fontSize: '12px', color: '#666' }}>
-            {office?.address || 'Адрес не указан'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <EnvironmentOutlined style={{ color: '#1677ff' }} />
+          <div>
+            <div style={{ fontWeight: 600, fontSize: '14px' }}>
+              {office?.city ? `${office.city}` : 'Город не указан'}
+            </div>
+            <div style={{ fontSize: '12px', color: '#666', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {office?.address ? office.address : 'Адрес не указан'}
+              {office?.addressNote && (
+                <div style={{ fontSize: '11px', color: '#999', marginTop: '2px' }}>
+                  {office.addressNote}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )
@@ -259,8 +319,6 @@ export default function AppointmentsPage() {
     })
   }
 
-  const stats = getStatistics()
-
   return (
     <div>
       <div style={{ marginBottom: '24px' }}>
@@ -273,45 +331,45 @@ export default function AppointmentsPage() {
         <Row gutter={16} style={{ marginBottom: '24px' }}>
           <Col span={4}>
             <Card size="small">
-              <Statistic 
-                title="Всего встреч" 
-                value={stats.total} 
+              <Statistic
+                title="Всего встреч"
+                value={statistics.total}
                 valueStyle={{ color: '#1677ff' }}
               />
             </Card>
           </Col>
           <Col span={4}>
             <Card size="small">
-              <Statistic 
-                title="Ожидают подтверждения" 
-                value={stats.pending} 
+              <Statistic
+                title="Ожидают подтверждения"
+                value={statistics.pending}
                 valueStyle={{ color: '#faad14' }}
               />
             </Card>
           </Col>
           <Col span={4}>
             <Card size="small">
-              <Statistic 
-                title="Подтверждены" 
-                value={stats.confirmed} 
+              <Statistic
+                title="Подтверждены"
+                value={statistics.confirmed}
                 valueStyle={{ color: '#52c41a' }}
               />
             </Card>
           </Col>
           <Col span={4}>
             <Card size="small">
-              <Statistic 
-                title="Отменены" 
-                value={stats.cancelled} 
+              <Statistic
+                title="Отменены"
+                value={statistics.cancelled}
                 valueStyle={{ color: '#ff4d4f' }}
               />
             </Card>
           </Col>
           <Col span={4}>
             <Card size="small">
-              <Statistic 
-                title="Перенесены" 
-                value={stats.rescheduled} 
+              <Statistic
+                title="Перенесены"
+                value={statistics.rescheduled}
                 valueStyle={{ color: '#722ed1' }}
               />
             </Card>
@@ -320,23 +378,24 @@ export default function AppointmentsPage() {
 
         {/* Фильтры */}
         <Card size="small" style={{ marginBottom: '16px' }}>
-          <Space wrap style={{ width: '100%' }}>
-            <div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'end' }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
               <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Период</div>
               <RangePicker
                 value={filters.dateRange}
                 onChange={(dates) => handleFilterChange('dateRange', dates)}
                 format="DD.MM.YYYY"
+                style={{ width: 240 }}
               />
             </div>
-            
-            <div>
+
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
               <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Статус</div>
               <Select
                 placeholder="Все статусы"
                 value={filters.status}
                 onChange={(value) => handleFilterChange('status', value)}
-                style={{ width: 150 }}
+                style={{ width: 180 }}
                 allowClear
               >
                 <Select.Option value="pending">Ожидает подтверждения</Select.Option>
@@ -345,15 +404,19 @@ export default function AppointmentsPage() {
                 <Select.Option value="rescheduled">Перенесена</Select.Option>
               </Select>
             </div>
-            
-            <div>
+
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
               <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Офис</div>
               <Select
                 placeholder="Все офисы"
                 value={filters.office}
                 onChange={(value) => handleFilterChange('office', value)}
-                style={{ width: 200 }}
+                style={{ width: 220 }}
                 allowClear
+                showSearch
+                filterOption={(input, option) =>
+                  (option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+                }
               >
                 {offices.map(office => (
                   <Select.Option key={office.id} value={office.id}>
@@ -362,25 +425,26 @@ export default function AppointmentsPage() {
                 ))}
               </Select>
             </div>
-            
-            <div>
+
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
               <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Поиск</div>
               <Search
                 placeholder="Поиск по лиду, сделке..."
                 value={filters.search}
                 onChange={(e) => handleFilterChange('search', e.target.value)}
-                style={{ width: 200 }}
+                style={{ width: 220 }}
                 allowClear
               />
             </div>
-            
-            <Button 
-              icon={<ReloadOutlined />} 
+
+            <Button
+              icon={<ReloadOutlined />}
               onClick={resetFilters}
+              style={{ alignSelf: 'flex-end' }}
             >
               Сбросить
             </Button>
-          </Space>
+          </div>
         </Card>
       </div>
 
@@ -391,12 +455,8 @@ export default function AppointmentsPage() {
           dataSource={appointments}
           rowKey="id"
           loading={loading}
-          pagination={{
-            pageSize: 20,
-            showSizeChanger: true,
-            showQuickJumper: true,
-            showTotal: (total, range) => `${range[0]}-${range[1]} из ${total} встреч`
-          }}
+          pagination={pagination}
+          onChange={handleTableChange}
           scroll={{ x: 1000 }}
         />
       </Card>
