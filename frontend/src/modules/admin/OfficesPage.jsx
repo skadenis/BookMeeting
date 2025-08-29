@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Table, Button, Space, Form, Input, message, Modal, Typography } from 'antd'
+import { Table, Button, Space, Form, Input, message, Modal } from 'antd'
+import { EnvironmentOutlined } from '@ant-design/icons'
 import api from '../../api/client'
+import PageHeader from './components/PageHeader'
+import PageTable from './components/PageTable'
 
 function useApi() { return api }
 
@@ -46,38 +49,97 @@ export default function OfficesPage() {
 
   return (
     <div>
-      <h3 style={{ marginTop: 0 }}>Офисы</h3>
-      <Form form={form} layout="inline" onFinish={onCreate} style={{ marginBottom: 12, rowGap: 8 }}>
+      <PageHeader
+        title="Офисы"
+        icon={<EnvironmentOutlined />}
+        onRefresh={load}
+        loading={loading}
+      />
+
+      <Form form={form} layout="inline" onFinish={onCreate} style={{ marginBottom: 16 }}>
         <Form.Item name="city" rules={[{ required:true, message:'Укажите город' }]}>
-          <Input placeholder="Город" />
+          <Input placeholder="Город" style={{ width: 150 }} />
         </Form.Item>
         <Form.Item name="address" rules={[{ required:true, message:'Укажите адрес' }]}>
-          <Input placeholder="Адрес" />
+          <Input placeholder="Адрес" style={{ width: 250 }} />
         </Form.Item>
         <Form.Item name="addressNote">
-          <Input placeholder="Примечание (как проехать и т.д.)" />
+          <Input placeholder="Примечание (как проехать и т.д.)" style={{ width: 200 }} />
         </Form.Item>
         <Form.Item name="bitrixOfficeId">
-          <Input placeholder="Bitrix Office ID (необязательно)" inputMode="numeric" />
+          <Input placeholder="Bitrix Office ID" inputMode="numeric" style={{ width: 150 }} />
         </Form.Item>
         <Form.Item>
           <Button type="primary" htmlType="submit">Создать</Button>
         </Form.Item>
       </Form>
 
-      <Table rowKey="id" dataSource={data} loading={loading} pagination={false}
+      <PageTable
+        dataSource={data}
+        loading={loading}
+        pagination={false}
         columns={[
-          { title:'Город', dataIndex:'city', render:(v,record)=> <Input value={record.city} onChange={e=>{ record.city=e.target.value; setData([...data]) }} /> },
-          { title:'Адрес', dataIndex:'address', render:(v,record)=> <Input value={record.address} onChange={e=>{ record.address=e.target.value; setData([...data]) }} /> },
-          { title:'Примечание', dataIndex:'addressNote', render:(v,record)=> <Input value={record.addressNote||''} onChange={e=>{ record.addressNote=e.target.value; setData([...data]) }} /> },
-          { title:'Bitrix Office ID', dataIndex:'bitrixOfficeId', render:(v,record)=> <Input value={record.bitrixOfficeId ?? ''} onChange={e=>{ record.bitrixOfficeId = e.target.value.replace(/[^0-9]/g,''); setData([...data]) }} /> },
-          { title:'Действия', render:(_,record)=> (
-            <Space>
-              <Button onClick={()=>onSave(record)} type="primary">Сохранить</Button>
-              <Button danger onClick={()=> setDeleteModal({ open:true, office:record, confirm:'' })}>Удалить</Button>
-            </Space>
-          ) },
+          {
+            title: 'Город',
+            dataIndex: 'city',
+            render: (v, record) => (
+              <Input
+                value={record.city}
+                onChange={e => { record.city = e.target.value; setData([...data]) }}
+                style={{ width: 150 }}
+              />
+            ),
+            width: 170
+          },
+          {
+            title: 'Адрес',
+            dataIndex: 'address',
+            render: (v, record) => (
+              <Input
+                value={record.address}
+                onChange={e => { record.address = e.target.value; setData([...data]) }}
+                style={{ width: 250 }}
+              />
+            ),
+            width: 270
+          },
+          {
+            title: 'Примечание',
+            dataIndex: 'addressNote',
+            render: (v, record) => (
+              <Input
+                value={record.addressNote || ''}
+                onChange={e => { record.addressNote = e.target.value; setData([...data]) }}
+                style={{ width: 200 }}
+              />
+            ),
+            width: 220
+          },
+          {
+            title: 'Bitrix Office ID',
+            dataIndex: 'bitrixOfficeId',
+            render: (v, record) => (
+              <Input
+                value={record.bitrixOfficeId ?? ''}
+                onChange={e => { record.bitrixOfficeId = e.target.value.replace(/[^0-9]/g, ''); setData([...data]) }}
+                style={{ width: 120 }}
+              />
+            ),
+            width: 140
+          },
+          {
+            title: 'Действия',
+            render: (_, record) => (
+              <Space>
+                <Button onClick={() => onSave(record)} type="primary">Сохранить</Button>
+                <Button danger onClick={() => setDeleteModal({ open: true, office: record, confirm: '' })}>Удалить</Button>
+              </Space>
+            ),
+            width: 200,
+            fixed: 'right'
+          },
         ]}
+        scroll={{ x: 1000 }}
       />
 
       <Modal

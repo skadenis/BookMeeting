@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Card, List, Tag, Button, Space, Typography, Modal, Form, Input, message } from 'antd'
+import { Card, List, Tag, Button, Space, Modal, Form, Input, message } from 'antd'
 import { useNavigate } from 'react-router-dom'
+import { HomeOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../../api/client'
+import PageHeader from './components/PageHeader'
 
 function useApi() { return api }
 
@@ -48,10 +50,17 @@ export default function Dashboard() {
 
   return (
     <div>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-        <Typography.Title level={3} style={{ marginTop: 0 }}>Офисы</Typography.Title>
-        <Button type="primary" onClick={()=>{ form.resetFields(); setCreateOpen(true) }}>Добавить офис</Button>
-      </div>
+      <PageHeader
+        title="Офисы"
+        icon={<HomeOutlined />}
+        extra={
+          <Button type="primary" onClick={()=>{ form.resetFields(); setCreateOpen(true) }}>
+            Добавить офис
+          </Button>
+        }
+        onRefresh={load}
+        loading={loading}
+      />
       {offices.some(o => !Number(o.bitrixOfficeId)) && (
         <Card style={{ marginBottom: 12, borderColor:'#fff1f0', background:'#fff2f0' }}>
           <Space direction="vertical" size={4}>

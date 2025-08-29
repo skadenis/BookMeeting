@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Tabs, Card, Space, Button, DatePicker, Typography, message, Skeleton, Select, Input, Modal, Form, TimePicker, Divider, Tag, Tooltip, Dropdown } from 'antd'
-import { MoreOutlined, DeleteOutlined } from '@ant-design/icons'
+import { MoreOutlined, DeleteOutlined, EnvironmentOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import 'dayjs/locale/ru'
 import api from '../../api/client'
+import PageHeader from './components/PageHeader'
 
 function useApi() { return api }
 
@@ -172,7 +173,12 @@ export default function OfficeDetail() {
 
   return (
     <div>
-      <Typography.Title level={3} style={{ marginTop:0 }}>{office?.city} <span style={{ color:'#999', fontWeight:400 }}>• {office?.address}</span></Typography.Title>
+      <PageHeader
+        title={`${office?.city || 'Офис'} • ${office?.address || 'Адрес не указан'}`}
+        icon={<EnvironmentOutlined />}
+        onRefresh={loadOffice}
+        loading={loading}
+      />
       <Tabs
         defaultActiveKey="calendar"
         items={[

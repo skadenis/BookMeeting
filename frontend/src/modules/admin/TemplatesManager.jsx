@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Table, Button, Space, Modal, Form, Input, TimePicker, Card, message } from 'antd'
+import { FileTextOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../../api/client'
+import PageHeader from './components/PageHeader'
+import PageTable from './components/PageTable'
 
 function useApi() { return api }
 
@@ -78,22 +81,42 @@ export default function TemplatesManager() {
 
   return (
     <div>
-      <h3 style={{ marginTop: 0 }}>Шаблоны расписания</h3>
-      <Space style={{ marginBottom: 12 }}>
-        <Button type="primary" onClick={openCreate}>Добавить шаблон</Button>
-        <Button onClick={load}>Обновить</Button>
-      </Space>
-      <Table rowKey="id" dataSource={data} loading={loading} pagination={false}
+      <PageHeader
+        title="Шаблоны расписания"
+        icon={<FileTextOutlined />}
+        extra={
+          <Button type="primary" onClick={openCreate}>
+            Добавить шаблон
+          </Button>
+        }
+        onRefresh={load}
+        loading={loading}
+      />
+
+      <PageTable
+        dataSource={data}
+        loading={loading}
+        pagination={false}
         columns={[
-          { title: 'Название', dataIndex: 'name' },
-          { title: 'Дней заполнено', render:(_,r)=> Object.values(r.weekdays||{}).filter(a=>a&&a.length).length },
-          { title: 'Действия', render:(_,r)=> (
-            <Space>
-              <Button onClick={()=>openEdit(r)}>Редактировать</Button>
-              <Button danger onClick={()=>remove(r)}>Удалить</Button>
-            </Space>
-          ) },
+          { title: 'Название', dataIndex: 'name', width: 300 },
+          {
+            title: 'Дней заполнено',
+            render: (_, r) => Object.values(r.weekdays || {}).filter(a => a && a.length).length,
+            width: 150
+          },
+          {
+            title: 'Действия',
+            render: (_, r) => (
+              <Space>
+                <Button onClick={() => openEdit(r)}>Редактировать</Button>
+                <Button danger onClick={() => remove(r)}>Удалить</Button>
+              </Space>
+            ),
+            width: 200,
+            fixed: 'right'
+          },
         ]}
+        scroll={{ x: 650 }}
       />
 
       <Modal open={editorOpen} onCancel={()=>setEditorOpen(false)} onOk={save} okText={editing ? 'Сохранить' : 'Создать'} width={920} title={editing ? 'Редактирование шаблона' : 'Новый шаблон'}>

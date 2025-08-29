@@ -1,32 +1,28 @@
 import React, { useEffect, useState } from 'react'
-import { 
-  Card, 
-  Table, 
-  DatePicker, 
-  Space, 
-  Button, 
-  Tag, 
-  Statistic, 
-  Row, 
-  Col, 
-  Select, 
+import {
+  DatePicker,
+  Button,
+  Tag,
+  Select,
   Input,
   message,
   Tooltip,
-  Modal
+  Modal,
+  Space
 } from 'antd'
-import { 
-  CalendarOutlined, 
-  ClockCircleOutlined, 
-  EnvironmentOutlined, 
-  UserOutlined,
-  FilterOutlined,
-  ReloadOutlined,
+import {
+  CalendarOutlined,
+  ClockCircleOutlined,
+  EnvironmentOutlined,
   EyeOutlined,
-  EditOutlined
+  ReloadOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../../api/client'
+import PageHeader from './components/PageHeader'
+import { FilterSection } from './components/PageSection'
+import PageTable from './components/PageTable'
+import StatsSection from './components/StatsSection'
 
 const { RangePicker } = DatePicker
 const { Search } = Input
@@ -319,147 +315,121 @@ export default function AppointmentsPage() {
     })
   }
 
+  const statsData = [
+    {
+      title: 'Всего встреч',
+      value: statistics.total,
+      color: '#1677ff'
+    },
+    {
+      title: 'Ожидают подтверждения',
+      value: statistics.pending,
+      color: '#faad14'
+    },
+    {
+      title: 'Подтверждены',
+      value: statistics.confirmed,
+      color: '#52c41a'
+    },
+    {
+      title: 'Отменены',
+      value: statistics.cancelled,
+      color: '#ff4d4f'
+    },
+    {
+      title: 'Перенесены',
+      value: statistics.rescheduled,
+      color: '#722ed1'
+    }
+  ]
+
   return (
     <div>
-      <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ margin: 0, marginBottom: '16px' }}>
-          <CalendarOutlined style={{ marginRight: '8px' }} />
-          Управление встречами
-        </h2>
-        
-        {/* Статистика */}
-        <Row gutter={16} style={{ marginBottom: '24px' }}>
-          <Col span={4}>
-            <Card size="small">
-              <Statistic
-                title="Всего встреч"
-                value={statistics.total}
-                valueStyle={{ color: '#1677ff' }}
-              />
-            </Card>
-          </Col>
-          <Col span={4}>
-            <Card size="small">
-              <Statistic
-                title="Ожидают подтверждения"
-                value={statistics.pending}
-                valueStyle={{ color: '#faad14' }}
-              />
-            </Card>
-          </Col>
-          <Col span={4}>
-            <Card size="small">
-              <Statistic
-                title="Подтверждены"
-                value={statistics.confirmed}
-                valueStyle={{ color: '#52c41a' }}
-              />
-            </Card>
-          </Col>
-          <Col span={4}>
-            <Card size="small">
-              <Statistic
-                title="Отменены"
-                value={statistics.cancelled}
-                valueStyle={{ color: '#ff4d4f' }}
-              />
-            </Card>
-          </Col>
-          <Col span={4}>
-            <Card size="small">
-              <Statistic
-                title="Перенесены"
-                value={statistics.rescheduled}
-                valueStyle={{ color: '#722ed1' }}
-              />
-            </Card>
-          </Col>
-        </Row>
+      <PageHeader
+        title="Управление встречами"
+        icon={<CalendarOutlined />}
+        onRefresh={loadAppointments}
+        loading={loading}
+      />
 
-        {/* Фильтры */}
-        <Card size="small" style={{ marginBottom: '16px' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'end' }}>
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Период</div>
-              <RangePicker
-                value={filters.dateRange}
-                onChange={(dates) => handleFilterChange('dateRange', dates)}
-                format="DD.MM.YYYY"
-                style={{ width: 240 }}
-              />
-            </div>
+      <StatsSection stats={statsData} />
 
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Статус</div>
-              <Select
-                placeholder="Все статусы"
-                value={filters.status}
-                onChange={(value) => handleFilterChange('status', value)}
-                style={{ width: 180 }}
-                allowClear
-              >
-                <Select.Option value="pending">Ожидает подтверждения</Select.Option>
-                <Select.Option value="confirmed">Подтверждена</Select.Option>
-                <Select.Option value="cancelled">Отменена</Select.Option>
-                <Select.Option value="rescheduled">Перенесена</Select.Option>
-              </Select>
-            </div>
+      <FilterSection title="Фильтры">
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Период</div>
+          <RangePicker
+            value={filters.dateRange}
+            onChange={(dates) => handleFilterChange('dateRange', dates)}
+            format="DD.MM.YYYY"
+            style={{ width: 240 }}
+          />
+        </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Офис</div>
-              <Select
-                placeholder="Все офисы"
-                value={filters.office}
-                onChange={(value) => handleFilterChange('office', value)}
-                style={{ width: 220 }}
-                allowClear
-                showSearch
-                filterOption={(input, option) =>
-                  (option?.children ?? '').toLowerCase().includes(input.toLowerCase())
-                }
-              >
-                {offices.map(office => (
-                  <Select.Option key={office.id} value={office.id}>
-                    {office.city} - {office.address}
-                  </Select.Option>
-                ))}
-              </Select>
-            </div>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Статус</div>
+          <Select
+            placeholder="Все статусы"
+            value={filters.status}
+            onChange={(value) => handleFilterChange('status', value)}
+            style={{ width: 180 }}
+            allowClear
+          >
+            <Select.Option value="pending">Ожидает подтверждения</Select.Option>
+            <Select.Option value="confirmed">Подтверждена</Select.Option>
+            <Select.Option value="cancelled">Отменена</Select.Option>
+            <Select.Option value="rescheduled">Перенесена</Select.Option>
+          </Select>
+        </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Поиск</div>
-              <Search
-                placeholder="Поиск по лиду, сделке..."
-                value={filters.search}
-                onChange={(e) => handleFilterChange('search', e.target.value)}
-                style={{ width: 220 }}
-                allowClear
-              />
-            </div>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Офис</div>
+          <Select
+            placeholder="Все офисы"
+            value={filters.office}
+            onChange={(value) => handleFilterChange('office', value)}
+            style={{ width: 220 }}
+            allowClear
+            showSearch
+            filterOption={(input, option) =>
+              (option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+            }
+          >
+            {offices.map(office => (
+              <Select.Option key={office.id} value={office.id}>
+                {office.city} - {office.address}
+              </Select.Option>
+            ))}
+          </Select>
+        </div>
 
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={resetFilters}
-              style={{ alignSelf: 'flex-end' }}
-            >
-              Сбросить
-            </Button>
-          </div>
-        </Card>
-      </div>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Поиск</div>
+          <Search
+            placeholder="Поиск по лиду, сделке..."
+            value={filters.search}
+            onChange={(e) => handleFilterChange('search', e.target.value)}
+            style={{ width: 220 }}
+            allowClear
+          />
+        </div>
 
-      {/* Таблица встреч */}
-      <Card>
-        <Table
-          columns={columns}
-          dataSource={appointments}
-          rowKey="id"
-          loading={loading}
-          pagination={pagination}
-          onChange={handleTableChange}
-          scroll={{ x: 1000 }}
-        />
-      </Card>
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={resetFilters}
+          style={{ alignSelf: 'flex-end' }}
+        >
+          Сбросить
+        </Button>
+      </FilterSection>
+
+      <PageTable
+        columns={columns}
+        dataSource={appointments}
+        loading={loading}
+        pagination={pagination}
+        onChange={handleTableChange}
+        scroll={{ x: 1000 }}
+      />
     </div>
   )
 }

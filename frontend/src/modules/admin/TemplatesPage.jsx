@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react'
 import { Button, Space, Input, DatePicker, TimePicker, Select, message, Card, Tabs, Typography, Divider, Row, Col, Tag, Tooltip, Modal } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, ClockCircleOutlined, UserOutlined, CoffeeOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, EditOutlined, ClockCircleOutlined, UserOutlined, CoffeeOutlined, FileTextOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../../api/client'
 import { useNavigate } from 'react-router-dom'
+import PageHeader from './components/PageHeader'
 
 const { Title, Text } = Typography
 const { TextArea } = Input
@@ -129,13 +130,18 @@ export default function TemplatesPage() {
   }
 
   return (
-    <div style={{ padding: '24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-        <Title level={3} style={{ margin: 0 }}>Шаблоны расписания</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
-          Создать шаблон
-        </Button>
-      </div>
+    <div>
+      <PageHeader
+        title="Шаблоны расписания"
+        icon={<FileTextOutlined />}
+        extra={
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
+            Добавить шаблон
+          </Button>
+        }
+        onRefresh={loadTemplates}
+        loading={loading}
+      />
 
       {/* Список шаблонов */}
       <Row gutter={[16, 16]}>

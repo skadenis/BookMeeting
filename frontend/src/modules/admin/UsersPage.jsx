@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { Table, Button, Space, Form, Input, Modal, message, Tag, Select } from 'antd'
+import { UserOutlined } from '@ant-design/icons'
 import api from '../../api/client'
+import PageHeader from './components/PageHeader'
+import PageTable from './components/PageTable'
 
 export default function UsersPage() {
   const [users, setUsers] = useState([])
@@ -48,37 +51,77 @@ export default function UsersPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h3 style={{ marginTop: 0 }}>Пользователи</h3>
-        <Button type="primary" onClick={() => setCreateOpen(true)}>Добавить пользователя</Button>
-      </div>
+      <PageHeader
+        title="Пользователи"
+        icon={<UserOutlined />}
+        extra={
+          <Button type="primary" onClick={() => setCreateOpen(true)}>
+            Добавить пользователя
+          </Button>
+        }
+        onRefresh={load}
+        loading={loading}
+      />
 
-      <Table rowKey="id" dataSource={users} loading={loading} pagination={false}
+      <PageTable
+        dataSource={users}
+        loading={loading}
+        pagination={false}
+        scroll={{ x: 1000 }}
         columns={[
-          { title: 'Email', dataIndex: 'email' },
-          { title: 'Имя', dataIndex: 'name', render: (v, r) => (
-            <Input value={r.name} onChange={e => { r.name = e.target.value; setUsers([...users]) }} />
-          ) },
-          { title: 'Роль', dataIndex: 'role', render: (v, r) => (
-            <Select value={r.role} onChange={val => { r.role = val; setUsers([...users]) }}
-              options={[
-                { value: 'admin', label: 'admin' },
-                { value: 'editor', label: 'editor' },
-                { value: 'viewer', label: 'viewer' },
-              ]}
-              style={{ width: 140 }}
-            />
-          ) },
-          { title: 'Новый пароль', render: (_, r) => (
-            <Input.Password placeholder="Оставьте пустым, чтобы не менять"
-              value={r._password || ''} onChange={e => { r._password = e.target.value; setUsers([...users]) }} />
-          ) },
-          { title: 'Действия', render: (_, r) => (
-            <Space>
-              <Button type="primary" onClick={() => onSave(r)}>Сохранить</Button>
-              <Button danger onClick={() => onDelete(r)}>Удалить</Button>
-            </Space>
-          ) },
+          { title: 'Email', dataIndex: 'email', width: 200 },
+          {
+            title: 'Имя',
+            dataIndex: 'name',
+            render: (v, r) => (
+              <Input
+                value={r.name}
+                onChange={e => { r.name = e.target.value; setUsers([...users]) }}
+                style={{ width: 200 }}
+              />
+            ),
+            width: 220
+          },
+          {
+            title: 'Роль',
+            dataIndex: 'role',
+            render: (v, r) => (
+              <Select
+                value={r.role}
+                onChange={val => { r.role = val; setUsers([...users]) }}
+                options={[
+                  { value: 'admin', label: 'admin' },
+                  { value: 'editor', label: 'editor' },
+                  { value: 'viewer', label: 'viewer' },
+                ]}
+                style={{ width: 140 }}
+              />
+            ),
+            width: 160
+          },
+          {
+            title: 'Новый пароль',
+            render: (_, r) => (
+              <Input.Password
+                placeholder="Оставьте пустым, чтобы не менять"
+                value={r._password || ''}
+                onChange={e => { r._password = e.target.value; setUsers([...users]) }}
+                style={{ width: 200 }}
+              />
+            ),
+            width: 220
+          },
+          {
+            title: 'Действия',
+            render: (_, r) => (
+              <Space>
+                <Button type="primary" onClick={() => onSave(r)}>Сохранить</Button>
+                <Button danger onClick={() => onDelete(r)}>Удалить</Button>
+              </Space>
+            ),
+            width: 200,
+            fixed: 'right'
+          },
         ]}
       />
 

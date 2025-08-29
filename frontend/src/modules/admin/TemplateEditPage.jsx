@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react'
 import { Button, Space, Input, DatePicker, TimePicker, Select, message, Card, Typography, Divider, Row, Col, Tag, Tooltip, Modal, Form, Switch } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, ClockCircleOutlined, UserOutlined, CoffeeOutlined, ArrowLeftOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, EditOutlined, ClockCircleOutlined, UserOutlined, CoffeeOutlined, ArrowLeftOutlined, FileTextOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../../api/client'
 import { useNavigate, useParams } from 'react-router-dom'
+import PageHeader from './components/PageHeader'
 
 const { Title, Text } = Typography
 const { TextArea } = Input
@@ -626,18 +627,22 @@ export default function TemplateEditPage() {
   return (
     <div style={{ padding: '24px' }}>
       {/* Заголовок и кнопка назад */}
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '24px' }}>
-        <Button 
-          icon={<ArrowLeftOutlined />} 
-          onClick={() => navigate('/admin/templates')}
-          style={{ marginRight: '16px' }}
-        >
-          Назад к списку
-        </Button>
-        <Title level={3} style={{ margin: 0 }}>
-          {id ? 'Редактирование шаблона' : 'Создание шаблона'}
-        </Title>
-      </div>
+      <PageHeader
+        title={`${id ? 'Редактирование' : 'Создание'} шаблона: ${template?.name || 'Новый шаблон'}`}
+        icon={<FileTextOutlined />}
+        extra={
+          <Space>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/admin/templates')}>
+              К шаблонам
+            </Button>
+            <Button type="primary" onClick={saveTemplate}>
+              Сохранить
+            </Button>
+          </Space>
+        }
+        onRefresh={loadTemplate}
+        loading={loading}
+      />
 
       {/* Основной контент */}
       <Row gutter={24}>

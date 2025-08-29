@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { DatePicker, TimePicker, Button, Space, Select, message, Card, Input } from 'antd'
+import { CalendarOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../../api/client'
+import PageHeader from './components/PageHeader'
 
 function useApi() { return api }
 
@@ -47,8 +49,12 @@ export default function OverridesPage() {
 
   return (
     <div>
-      <h3 style={{ marginTop:0 }}>Исключения (день)</h3>
-      <Space wrap>
+      <PageHeader
+        title="Исключения (день)"
+        icon={<CalendarOutlined />}
+      />
+
+      <Space wrap style={{ width: '100%', marginBottom: '16px' }}>
         <Select value={officeId} onChange={setOfficeId} placeholder="Офис" style={{ width: 320 }}
                       options={offices.map(o=>({ value:o.id, label:`${o.address} - ${o.city}` }))}
         />
