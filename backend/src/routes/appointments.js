@@ -8,6 +8,56 @@ const { broadcastSlotsUpdated, broadcastAppointmentUpdated } = require('../lib/w
 
 const router = Router();
 
+// Вспомогательная функция для проверки и изменения стадии лида в Битриксе
+async function ensureLeadStage(leadId, targetStageId, currentStageId = null) {
+	try {
+		// Если текущая стадия не передана, получаем её из Битрикса
+		if (!currentStageId) {
+			const getLeadUrl = `${process.env.BITRIX_REST_URL}/crm.lead.get`;
+			const getLeadResponse = await axios.post(getLeadUrl, { id: Number(leadId) });
+			currentStageId = getLeadResponse.data.result.STATUS_ID;
+		}
+
+		console.log(`🔍 Проверяю стадию лида ${leadId}: текущая = ${currentStageId}, целевая = ${targetStageId}`);
+
+		// Если лид уже в целевой стадии, ничего не делаем
+		if (String(currentStageId) === String(targetStageId)) {
+			console.log(`✅ Лид ${leadId} уже в целевой стадии ${targetStageId}`);
+			return;
+		}
+
+		// Если лид в стадии "2" и мы хотим назначить встречу, переводим в "IN_PROCESS"
+		if (String(currentStageId) === '2' && String(targetStageId) === '2') {
+			console.log(`🔄 Перевожу лид ${leadId} из стадии "2" в "IN_PROCESS" перед назначением встречи`);
+			
+			const updateStageUrl = `${process.env.BITRIX_REST_URL}/crm.lead.update`;
+			await axios.post(updateStageUrl, {
+				id: Number(leadId),
+				fields: { STATUS_ID: 'IN_PROCESS' }
+			});
+			
+			console.log(`✅ Лид ${leadId} переведен в стадию "IN_PROCESS"`);
+		}
+
+		// Если лид в стадии "2" и мы хотим подтвердить встречу, переводим в "IN_PROCESS"
+		if (String(currentStageId) === '2' && String(targetStageId) === '37') {
+			console.log(`🔄 Перевожу лид ${leadId} из стадии "2" в "IN_PROCESS" перед подтверждением встречи`);
+			
+			const updateStageUrl = `${process.env.BITRIX_REST_URL}/crm.lead.update`;
+			await axios.post(updateStageUrl, {
+				id: Number(leadId),
+				fields: { STATUS_ID: 'IN_PROCESS' }
+			});
+			
+			console.log(`✅ Лид ${leadId} переведен в стадию "IN_PROCESS"`);
+		}
+
+	} catch (e) {
+		console.error(`❌ Ошибка при проверке/изменении стадии лида ${leadId}:`, e?.response?.data || e?.message || e);
+		throw e;
+	}
+}
+
 router.get('/', [query('lead_id').optional().isInt()], async (req, res, next) => {
 	try {
 		const where = {};
@@ -89,6 +139,9 @@ router.post('/', [
 			console.log('  - req.bitrix.userId:', req.bitrix?.userId);
 			
 			if (appointment.bitrix_lead_id) {
+				// Проверяем и изменяем стадию лида при необходимости
+				await ensureLeadStage(appointment.bitrix_lead_id, '2');
+
 				// Resolve office Bitrix ID
 				let officeBitrixId = null;
 				if (office.bitrixOfficeId) {
@@ -165,6 +218,9 @@ router.put('/:id', [
 			console.log('  - req.bitrix.userId:', req.bitrix?.userId);
 			
 			if (status === 'confirmed' && appointment.bitrix_lead_id) {
+				// Проверяем и изменяем стадию лида при необходимости
+				await ensureLeadStage(appointment.bitrix_lead_id, '37');
+
 				// Resolve office Bitrix ID
 				let officeBitrixId = null;
 				if (appointment.Office && appointment.Office.bitrixOfficeId) {
