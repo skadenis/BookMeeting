@@ -217,17 +217,17 @@ export default function AppointmentsPage() {
     },
     {
       title: 'Офис',
-      dataIndex: 'office',
+      dataIndex: 'Office',
       key: 'office',
       render: (office) => (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <EnvironmentOutlined style={{ color: '#1677ff' }} />
           <div>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>
-              {office?.city ? `${office.city}` : 'Город не указан'}
+              {office?.city || 'Город не указан'}
             </div>
             <div style={{ fontSize: '12px', color: '#666', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {office?.address ? office.address : 'Адрес не указан'}
+              {office?.address || 'Адрес не указан'}
               {office?.addressNote && (
                 <div style={{ fontSize: '11px', color: '#999', marginTop: '2px' }}>
                   {office.addressNote}
@@ -303,7 +303,7 @@ export default function AppointmentsPage() {
               <p><strong>Статус:</strong> <Tag color={STATUS_COLORS[appointment.status]}>{STATUS_LABELS[appointment.status]}</Tag></p>
             </Col>
             <Col span={12}>
-              <p><strong>Офис:</strong> {appointment.office?.city}, {appointment.office?.address}</p>
+              <p><strong>Офис:</strong> {appointment.Office?.city}, {appointment.Office?.address}</p>
               <p><strong>Создано:</strong> {dayjs(appointment.createdAt).format('DD.MM.YYYY HH:mm')}</p>
               {appointment.bitrix_lead_id && (
                 <p><strong>ID лида в Битрикс:</strong> {appointment.bitrix_lead_id}</p>
