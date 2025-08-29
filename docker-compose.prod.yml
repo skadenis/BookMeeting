@@ -1,6 +1,9 @@
 services:
   backend:
     build: ./backend
+    container_name: bookmeeting-backend
+    networks:
+      - app-network
     environment:
       NODE_ENV: production
       PORT: 4000
@@ -35,6 +38,9 @@ services:
       context: ./frontend
       args:
         VITE_API_BASE_URL: /api
+    container_name: bookmeeting-frontend
+    networks:
+      - app-network
     ports:
       - "8088:80"
     depends_on:
@@ -43,6 +49,9 @@ services:
 
   postgres:
     image: postgres:15-alpine
+    container_name: bookmeeting-postgres
+    networks:
+      - app-network
     environment:
       POSTGRES_DB: meetings
       POSTGRES_USER: meetings
@@ -59,9 +68,16 @@ services:
 
   redis:
     image: redis:7-alpine
+    container_name: bookmeeting-redis
+    networks:
+      - app-network
     volumes:
       - redis_data:/data
     restart: always
+
+networks:
+  app-network:
+    driver: bridge
 
 volumes:
   postgres_data:

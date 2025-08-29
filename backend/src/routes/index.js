@@ -6,6 +6,7 @@ const templatesRouter = require('./templates');
 const appointmentsRouter = require('./appointments');
 const authRouter = require('./auth');
 const adminUsersRouter = require('./adminUsers');
+const adminAppointmentsRouter = require('./adminAppointments');
 const bitrixRouter = require('./placement');
 
 const router = Router();
@@ -17,6 +18,7 @@ router.use('/templates', templatesRouter);
 router.use('/appointments', appointmentsRouter);
 router.use('/auth', authRouter);
 router.use('/admin/users', adminUsersRouter);
+router.use('/admin/appointments', adminAppointmentsRouter);
 router.use('/bitrix', bitrixRouter);
 
 module.exports = router;

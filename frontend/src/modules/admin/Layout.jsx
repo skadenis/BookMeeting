@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react'
 import { Layout, Menu, Modal, Form, Input, Button, message } from 'antd'
-import { BankOutlined, ScheduleOutlined, TeamOutlined } from '@ant-design/icons'
+import { BankOutlined, ScheduleOutlined, TeamOutlined, CalendarOutlined } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 const { Header, Sider, Content } = Layout
@@ -11,6 +11,7 @@ export default function AdminLayout() {
   const selectedKey = useMemo(() => {
     if (location.pathname.includes('/admin/users')) return 'users'
     if (location.pathname.includes('/admin/templates')) return 'templates'
+    if (location.pathname.includes('/admin/appointments')) return 'appointments'
     return 'offices'
   }, [location.pathname])
 
@@ -98,6 +99,7 @@ export default function AdminLayout() {
           items={[
             { key: 'offices', icon: <BankOutlined />, label: 'Офисы' },
             { key: 'templates', icon: <ScheduleOutlined />, label: 'Шаблоны' },
+            { key: 'appointments', icon: <CalendarOutlined />, label: 'Встречи' },
             { key: 'users', icon: <TeamOutlined />, label: 'Пользователи' },
           ]}
         />
