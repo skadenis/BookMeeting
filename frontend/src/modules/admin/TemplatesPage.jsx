@@ -42,9 +42,8 @@ export default function TemplatesPage() {
   const [offices, setOffices] = useState([])
   const [loading, setLoading] = useState(false)
   
-  // Применение к офису
-  const [selectedOffice, setSelectedOffice] = useState('')
-  const [dateRange, setDateRange] = useState([dayjs(), dayjs().add(6, 'day')])
+  // Применение к офису - теперь для каждого шаблона отдельно
+  const [templateSettings, setTemplateSettings] = useState({})
 
   useEffect(() => { 
     loadTemplates()
@@ -56,6 +55,16 @@ export default function TemplatesPage() {
       setLoading(true)
       const response = await api.get('/admin/templates')
       setTemplates(response.data.data || [])
+      
+      // Инициализируем настройки для каждого шаблона
+      const settings = {}
+      response.data.data?.forEach(template => {
+        settings[template.id] = {
+          selectedOffice: '',
+          dateRange: [dayjs(), dayjs().add(6, 'day')]
+        }
+      })
+      setTemplateSettings(settings)
     } catch (error) {
       message.error('Ошибка загрузки шаблонов')
     } finally {
@@ -83,21 +92,32 @@ export default function TemplatesPage() {
   }
 
   const applyTemplate = async (templateId) => {
-    if (!selectedOffice) {
+    const settings = templateSettings[templateId]
+    if (!settings?.selectedOffice) {
       message.error('Выберите офис')
       return
     }
 
     try {
       await api.post(`/admin/templates/${templateId}/apply`, {
-        office_id: selectedOffice,
-        start_date: dateRange[0].format('YYYY-MM-DD'),
-        end_date: dateRange[1].format('YYYY-MM-DD')
+        office_id: settings.selectedOffice,
+        start_date: settings.dateRange[0].format('YYYY-MM-DD'),
+        end_date: settings.dateRange[1].format('YYYY-MM-DD')
       })
       message.success('Шаблон применен к офису')
     } catch (error) {
       message.error('Ошибка применения шаблона')
     }
+  }
+
+  const updateTemplateSettings = (templateId, field, value) => {
+    setTemplateSettings(prev => ({
+      ...prev,
+      [templateId]: {
+        ...prev[templateId],
+        [field]: value
+      }
+    }))
   }
 
   const openCreateModal = () => {
@@ -184,8 +204,8 @@ export default function TemplatesPage() {
                 <Space direction="vertical" style={{ width: '100%' }}>
                   <Select
                     placeholder="Выберите офис"
-                    value={selectedOffice}
-                    onChange={setSelectedOffice}
+                    value={templateSettings[template.id]?.selectedOffice}
+                    onChange={(value) => updateTemplateSettings(template.id, 'selectedOffice', value)}
                     style={{ width: '100%' }}
                     options={offices.map(office => ({
                       value: office.id,
@@ -193,15 +213,15 @@ export default function TemplatesPage() {
                     }))}
                   />
                   <DatePicker.RangePicker
-                    value={dateRange}
-                    onChange={setDateRange}
+                    value={templateSettings[template.id]?.dateRange}
+                    onChange={(dates) => updateTemplateSettings(template.id, 'dateRange', dates)}
                     style={{ width: '100%' }}
                   />
                   <Button 
                     type="primary" 
                     size="small" 
                     onClick={() => applyTemplate(template.id)}
-                    disabled={!selectedOffice}
+                    disabled={!templateSettings[template.id]?.selectedOffice}
                     style={{ width: '100%' }}
                   >
                     Применить шаблон
