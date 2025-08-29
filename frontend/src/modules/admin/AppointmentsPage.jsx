@@ -80,6 +80,13 @@ export default function AppointmentsPage() {
     loadOffices()
   }, [filters])
 
+  // Функция для обновления данных (вызывается кнопкой "Обновить")
+  const handleRefresh = () => {
+    loadAppointments()
+    loadStatistics()
+    loadOffices()
+  }
+
   const loadAppointments = async (page = pagination.current, pageSize = pagination.pageSize) => {
     setLoading(true)
     try {
@@ -368,22 +375,30 @@ export default function AppointmentsPage() {
     }
   }
 
-  const statsData = [
+  // Основные показатели для быстрого просмотра
+  const keyStatsData = [
     {
-      title: 'Всего встреч',
+      title: 'Записано',
+      value: statistics.pending,
+      color: '#faad14',
+      suffix: 'ожидают подтверждения'
+    },
+    {
+      title: 'Подтверждено',
+      value: statistics.confirmed,
+      color: '#52c41a',
+      suffix: 'активных встреч'
+    }
+  ]
+
+  // Полная статистика для детального просмотра
+  const fullStatsData = [
+    {
+      title: 'Всего',
       value: statistics.total,
       color: '#1677ff'
     },
-    {
-      title: 'Ожидают подтверждения',
-      value: statistics.pending,
-      color: '#faad14'
-    },
-    {
-      title: 'Подтверждены',
-      value: statistics.confirmed,
-      color: '#52c41a'
-    },
+    ...keyStatsData,
     {
       title: 'Отменены',
       value: statistics.cancelled,
@@ -396,93 +411,116 @@ export default function AppointmentsPage() {
     }
   ]
 
+  const [showDetailedStats, setShowDetailedStats] = useState(false)
+  const [showTable, setShowTable] = useState(false)
+
   return (
     <div>
       <PageHeader
         title="Управление встречами"
         icon={<CalendarOutlined />}
-        onRefresh={loadAppointments}
+        extra={
+          <Space>
+            <Button
+              type="text"
+              onClick={() => setShowDetailedStats(!showDetailedStats)}
+            >
+              {showDetailedStats ? 'Показать основное' : 'Показать детали'}
+            </Button>
+            <Button
+              type="text"
+              onClick={() => setShowTable(!showTable)}
+            >
+              {showTable ? 'Скрыть таблицу' : 'Показать таблицу'}
+            </Button>
+          </Space>
+        }
+        onRefresh={handleRefresh}
         loading={loading}
       />
 
-      <StatsSection stats={statsData} />
+      <StatsSection stats={showDetailedStats ? fullStatsData : keyStatsData} />
 
-      <FilterSection title="Фильтры">
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Период</div>
-          <RangePicker
-            value={filters.dateRange}
-            onChange={(dates) => handleFilterChange('dateRange', dates)}
-            format="DD.MM.YYYY"
-            style={{ width: 240 }}
+      {showTable && (
+        <>
+          <FilterSection title="Фильтры">
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Период</div>
+              <RangePicker
+                value={filters.dateRange}
+                onChange={(dates) => handleFilterChange('dateRange', dates)}
+                format="DD.MM.YYYY"
+                style={{ width: 240 }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Статус</div>
+              <Select
+                placeholder="Все статусы"
+                value={filters.status}
+                onChange={(value) => handleFilterChange('status', value)}
+                style={{ width: 180 }}
+                allowClear
+              >
+                <Select.Option value="pending">Ожидает подтверждения</Select.Option>
+                <Select.Option value="confirmed">Подтверждена</Select.Option>
+                <Select.Option value="cancelled">Отменена</Select.Option>
+                <Select.Option value="rescheduled">Перенесена</Select.Option>
+              </Select>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Офис</div>
+              <Select
+                placeholder="Все офисы"
+                value={filters.office}
+                onChange={(value) => handleFilterChange('office', value)}
+                style={{ width: 220 }}
+                allowClear
+                showSearch
+                filterOption={(input, option) =>
+                  (option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+              >
+                {offices.map(office => (
+                  <Select.Option key={office.id} value={office.id}>
+                    {office.city} - {office.address}
+                  </Select.Option>
+                ))}
+              </Select>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Поиск</div>
+              <Search
+                placeholder="Поиск по лиду, сделке..."
+                value={filters.search}
+                onChange={(e) => handleFilterChange('search', e.target.value)}
+                style={{ width: 220 }}
+                allowClear
+              />
+            </div>
+
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={resetFilters}
+              style={{ alignSelf: 'flex-end' }}
+            >
+              Сбросить
+            </Button>
+          </FilterSection>
+
+          <PageTable
+            columns={columns}
+            dataSource={appointments}
+            loading={loading}
+            pagination={pagination}
+            onChange={handleTableChange}
+            scroll={{ x: 1000 }}
           />
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Статус</div>
-          <Select
-            placeholder="Все статусы"
-            value={filters.status}
-            onChange={(value) => handleFilterChange('status', value)}
-            style={{ width: 180 }}
-            allowClear
-          >
-            <Select.Option value="pending">Ожидает подтверждения</Select.Option>
-            <Select.Option value="confirmed">Подтверждена</Select.Option>
-            <Select.Option value="cancelled">Отменена</Select.Option>
-            <Select.Option value="rescheduled">Перенесена</Select.Option>
-          </Select>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Офис</div>
-          <Select
-            placeholder="Все офисы"
-            value={filters.office}
-            onChange={(value) => handleFilterChange('office', value)}
-            style={{ width: 220 }}
-            allowClear
-            showSearch
-            filterOption={(input, option) =>
-              (option?.children ?? '').toLowerCase().includes(input.toLowerCase())
-            }
-          >
-            {offices.map(office => (
-              <Select.Option key={office.id} value={office.id}>
-                {office.city} - {office.address}
-              </Select.Option>
-            ))}
-          </Select>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Поиск</div>
-          <Search
-            placeholder="Поиск по лиду, сделке..."
-            value={filters.search}
-            onChange={(e) => handleFilterChange('search', e.target.value)}
-            style={{ width: 220 }}
-            allowClear
-          />
-        </div>
-
-        <Button
-          icon={<ReloadOutlined />}
-          onClick={resetFilters}
-          style={{ alignSelf: 'flex-end' }}
-        >
-          Сбросить
-        </Button>
-      </FilterSection>
-
-      <PageTable
-        columns={columns}
-        dataSource={appointments}
-        loading={loading}
-        pagination={pagination}
-        onChange={handleTableChange}
-        scroll={{ x: 1000 }}
-      />
+        </>
+      )}
 
       {/* Модальное окно просмотра деталей встречи */}
       <Modal
