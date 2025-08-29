@@ -114,29 +114,6 @@ export default function TemplateEditPage() {
     }
   }, [baseStartTime, baseEndTime, defaultCapacity])
 
-  // Обновляем дни недели при изменении базовых настроек
-  useEffect(() => {
-    console.log('🔍 useEffect for settings change triggered')
-    
-    if (!isFirstRender.current) {
-      const newWeekdays = {}
-      
-      DOW.forEach(d => {
-        newWeekdays[d.key] = {
-          start: baseStartTime.format('HH:mm'),
-          end: baseEndTime.format('HH:mm'),
-          capacity: defaultCapacity,
-          specialSlots: []
-        }
-        
-      })
-      
-      console.log('🔍 Updating weekdays:', newWeekdays)
-      
-      setWeekdays(newWeekdays)
-    }
-  }, [baseStartTime, baseEndTime, defaultCapacity])
-
   const loadTemplate = async () => {
     setLoading(true)
     try {
@@ -731,6 +708,14 @@ export default function TemplateEditPage() {
                         minuteStep={30}
                         disabled={!working}
                       />
+                      <Button 
+                        size="small" 
+                        onClick={() => resetDayToDefault(d.key)}
+                        disabled={!working}
+                        style={{ marginLeft: 8 }}
+                      >
+                        Сбросить к базовым
+                      </Button>
                     </div>
                   </div>
                 )
