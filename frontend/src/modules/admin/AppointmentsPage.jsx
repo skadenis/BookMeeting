@@ -391,7 +391,13 @@ export default function AppointmentsPage() {
 
       const syncData = response.data.data
       setBitrixLeads(syncData.allLeads || [])
-      setMissingAppointments(syncData.missingAppointments || [])
+
+      // Объединяем новые и обновляемые встречи для отображения
+      const allChanges = [
+        ...(syncData.toCreate || []).map(group => ({ ...group, actionType: 'create' })),
+        ...(syncData.toUpdate || []).map(group => ({ ...group, actionType: 'update' }))
+      ]
+      setMissingAppointments(allChanges)
 
       setSyncModalVisible(true)
     } catch (error) {
@@ -404,12 +410,16 @@ export default function AppointmentsPage() {
 
   const handleImportSelected = async () => {
     if (selectedLeads.length === 0) {
-      message.warning('Выберите встречи для импорта')
+      message.warning('Выберите встречи для синхронизации')
       return
     }
 
     try {
       setSyncLoading(true)
+
+      // Разделяем выбранные лиды на новые и существующие
+      const toCreate = []
+      const toUpdate = []
 
       // Получаем офисы для сопоставления
       const officesResponse = await api.get('/admin/offices')
@@ -419,37 +429,61 @@ export default function AppointmentsPage() {
         return acc
       }, {})
 
-      // Создаем встречи
-      const appointmentsToCreate = []
-
       for (const leadId of selectedLeads) {
         const lead = bitrixLeads.find(l => l.ID === leadId)
         if (lead) {
           const officeId = officeMap[lead.UF_CRM_1675255265]
-          if (officeId) {
-            appointmentsToCreate.push({
+
+          // Ищем, есть ли уже такая встреча в нашей системе
+          const existingAppointment = missingAppointments
+            .flatMap(group => group.leads)
+            .find(app => app.bitrix_lead_id === leadId && app.id)
+
+          if (existingAppointment) {
+            // Обновляем существующую встречу
+            toUpdate.push({
+              id: existingAppointment.id,
+              date: dayjs(lead.UF_CRM_1655460588).format('YYYY-MM-DD'),
+              timeSlot: lead.UF_CRM_1657019494,
+              status: lead.STATUS_ID === '37' ? 'confirmed' : 'pending'
+            })
+          } else if (officeId) {
+            // Создаем новую встречу
+            toCreate.push({
               bitrix_lead_id: lead.ID,
               office_id: officeId,
               date: dayjs(lead.UF_CRM_1655460588).format('YYYY-MM-DD'),
               timeSlot: lead.UF_CRM_1657019494,
-              status: 'pending'
+              status: lead.STATUS_ID === '37' ? 'confirmed' : 'pending'
             })
           }
         }
       }
 
-      // Отправляем на сервер
-      await api.post('/admin/appointments/bulk', { appointments: appointmentsToCreate })
+      // Выполняем операции
+      let createdCount = 0
+      let updatedCount = 0
 
-      message.success(`Импортировано ${appointmentsToCreate.length} встреч`)
+      if (toCreate.length > 0) {
+        await api.post('/admin/appointments/bulk', { appointments: toCreate })
+        createdCount = toCreate.length
+      }
+
+      if (toUpdate.length > 0) {
+        await api.put('/admin/appointments/bulk', { appointments: toUpdate })
+        updatedCount = toUpdate.length
+      }
+
+      const totalProcessed = createdCount + updatedCount
+      message.success(`Синхронизировано ${totalProcessed} встреч (${createdCount} создано, ${updatedCount} обновлено)`)
       setSyncModalVisible(false)
       setSelectedLeads([])
       loadAppointments()
       loadStatistics()
 
     } catch (error) {
-      console.error('Ошибка при импорте:', error)
-      message.error('Не удалось импортировать встречи')
+      console.error('Ошибка при синхронизации:', error)
+      message.error('Не удалось синхронизировать встречи')
     } finally {
       setSyncLoading(false)
     }
@@ -774,8 +808,12 @@ export default function AppointmentsPage() {
           <div>
             <div style={{ marginBottom: '16px' }}>
               <WarningOutlined style={{ color: '#faad14', marginRight: '8px' }} />
-              Найдено <strong>{missingAppointments.reduce((sum, group) => sum + group.count, 0)}</strong> встреч,
-              отсутствующих в системе
+              Найдено <strong>{missingAppointments.reduce((sum, group) => sum + group.count, 0)}</strong> изменений:
+              <br />
+              <small style={{ color: '#666' }}>
+                Новых встреч: {missingAppointments.filter(g => g.actionType === 'create').reduce((sum, group) => sum + group.count, 0)} |
+                Обновлений: {missingAppointments.filter(g => g.actionType === 'update').reduce((sum, group) => sum + group.count, 0)}
+              </small>
             </div>
 
             <Divider />

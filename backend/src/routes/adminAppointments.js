@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { query, param, body, validationResult } = require('express-validator');
 const { models, Op, Sequelize } = require('../lib/db');
 const { adminAuthMiddleware } = require('../middleware/adminAuth');
+const dayjs = require('dayjs');
 
 const router = Router();
 
@@ -282,13 +283,13 @@ router.get('/sync/bitrix24', async (req, res, next) => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          "SELECT": ["ID", "UF_CRM_1675255265", "UF_CRM_1725445029", "UF_CRM_1725483092", "UF_CRM_1655460588", "UF_CRM_1657019494"],
-          "FILTER": {
-            "STATUS_ID": 2
-          },
-          "start": start
-        })
+                  body: JSON.stringify({
+            "SELECT": ["ID", "UF_CRM_1675255265", "UF_CRM_1725445029", "UF_CRM_1725483092", "UF_CRM_1655460588", "UF_CRM_1657019494", "STATUS_ID"],
+            "FILTER": {
+              "STATUS_ID": [2, 37] // 2 - встреча назначена, 37 - встреча подтверждена
+            },
+            "start": start
+          })
       })
 
       if (!response.ok) {
@@ -312,16 +313,68 @@ router.get('/sync/bitrix24', async (req, res, next) => {
 
     // Получаем все существующие встречи из нашей системы
     const existingAppointments = await models.Appointment.findAll({
-      attributes: ['bitrix_lead_id']
+      attributes: ['id', 'bitrix_lead_id', 'status', 'date', 'timeSlot']
     })
-    const existingLeadIds = new Set(existingAppointments.map(app => app.bitrix_lead_id))
 
-    // Находим отсутствующие встречи
-    const missing = allLeads.filter(lead => !existingLeadIds.has(lead.ID))
+    // Создаем мап статусов Bitrix24 -> наша система
+    const statusMapping = {
+      '2': 'pending',      // встреча назначена
+      '37': 'confirmed'    // встреча подтверждена
+    }
+
+    // Анализируем каждый лид из Bitrix24
+    const toCreate = []    // Новые встречи для создания
+    const toUpdate = []    // Существующие встречи для обновления
+    const existingLeadMap = new Map()
+
+    // Создаем мап существующих лидов для быстрого поиска
+    existingAppointments.forEach(app => {
+      if (app.bitrix_lead_id) {
+        existingLeadMap.set(app.bitrix_lead_id, app)
+      }
+    })
+
+    // Обрабатываем каждый лид из Bitrix24
+    allLeads.forEach(lead => {
+      const existingAppointment = existingLeadMap.get(lead.ID)
+      const bitrixStatus = statusMapping[lead.STATUS_ID] || 'pending'
+
+      if (!existingAppointment) {
+        // Лида нет в нашей системе - нужно создать
+        toCreate.push({
+          bitrix_lead_id: lead.ID,
+          office_id: lead.UF_CRM_1675255265,
+          date: dayjs(lead.UF_CRM_1655460588).format('YYYY-MM-DD'),
+          timeSlot: lead.UF_CRM_1657019494,
+          status: bitrixStatus
+        })
+      } else {
+        // Лид есть в нашей системе - проверяем статус и данные
+        const needsUpdate = (
+          existingAppointment.status !== bitrixStatus ||
+          existingAppointment.date !== dayjs(lead.UF_CRM_1655460588).format('YYYY-MM-DD') ||
+          existingAppointment.timeSlot !== lead.UF_CRM_1657019494
+        )
+
+        if (needsUpdate) {
+          toUpdate.push({
+            id: existingAppointment.id,
+            bitrix_lead_id: lead.ID,
+            office_id: lead.UF_CRM_1675255265,
+            date: dayjs(lead.UF_CRM_1655460588).format('YYYY-MM-DD'),
+            timeSlot: lead.UF_CRM_1657019494,
+            status: bitrixStatus,
+            currentStatus: existingAppointment.status,
+            currentDate: existingAppointment.date,
+            currentTime: existingAppointment.timeSlot
+          })
+        }
+      }
+    })
 
     // Группируем по офисам для удобства отображения
-    const groupedMissing = missing.reduce((acc, lead) => {
-      const officeId = lead.UF_CRM_1675255265
+    const groupedToCreate = toCreate.reduce((acc, lead) => {
+      const officeId = lead.office_id
       if (!acc[officeId]) {
         acc[officeId] = []
       }
@@ -329,18 +382,37 @@ router.get('/sync/bitrix24', async (req, res, next) => {
       return acc
     }, {})
 
-    const missingList = Object.entries(groupedMissing).map(([officeId, leads]) => ({
+    const groupedToUpdate = toUpdate.reduce((acc, lead) => {
+      const officeId = lead.office_id
+      if (!acc[officeId]) {
+        acc[officeId] = []
+      }
+      acc[officeId].push(lead)
+      return acc
+    }, {})
+
+    const createList = Object.entries(groupedToCreate).map(([officeId, leads]) => ({
       officeId,
       leads,
-      count: leads.length
+      count: leads.length,
+      type: 'create'
+    }))
+
+    const updateList = Object.entries(groupedToUpdate).map(([officeId, leads]) => ({
+      officeId,
+      leads,
+      count: leads.length,
+      type: 'update'
     }))
 
     res.json({
       data: {
         totalBitrixLeads: allLeads.length,
-        missingAppointments: missingList,
-        missingCount: missing.length,
-        allLeads: allLeads // Отправляем все лиды для возможности импорта
+        toCreate: createList,
+        toUpdate: updateList,
+        createCount: toCreate.length,
+        updateCount: toUpdate.length,
+        allLeads: allLeads
       }
     })
 
@@ -379,6 +451,43 @@ router.post('/bulk', [
     res.json({
       data: createdAppointments,
       message: `Создано ${createdAppointments.length} встреч`
+    });
+
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Bulk обновление встреч для синхронизации из Bitrix24
+router.put('/bulk', [
+  body('appointments').isArray({ min: 1 }),
+  body('appointments.*.id').isUUID(),
+  body('appointments.*.date').optional().isISO8601(),
+  body('appointments.*.timeSlot').optional().isString(),
+  body('appointments.*.status').optional().isIn(['pending', 'confirmed', 'cancelled', 'rescheduled']),
+], async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+    const { appointments } = req.body;
+    const updatedAppointments = [];
+
+    // Обновляем встречи по одной
+    for (const apt of appointments) {
+      const appointment = await models.Appointment.findByPk(apt.id);
+      if (appointment) {
+        if (apt.date !== undefined) appointment.date = apt.date;
+        if (apt.timeSlot !== undefined) appointment.timeSlot = apt.timeSlot;
+        if (apt.status !== undefined) appointment.status = apt.status;
+        await appointment.save();
+        updatedAppointments.push(appointment);
+      }
+    }
+
+    res.json({
+      data: updatedAppointments,
+      message: `Обновлено ${updatedAppointments.length} встреч`
     });
 
   } catch (e) {
