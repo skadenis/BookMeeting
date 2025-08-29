@@ -274,32 +274,39 @@ router.get('/stats/overview', async (req, res, next) => {
 // Синхронизация с Bitrix24
 router.get('/sync/bitrix24', async (req, res, next) => {
   try {
+    console.log('Starting Bitrix24 sync...')
     const allLeads = []
     let start = 0
+    let pageCount = 0
 
     while (true) {
+      console.log(`Fetching page ${pageCount + 1}, start: ${start}`)
       const response = await fetch('https://bitrix24.newhc.by/rest/15/qseod599og9fc16a/crm.lead.list', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-                  body: JSON.stringify({
-            "SELECT": ["ID", "UF_CRM_1675255265", "UF_CRM_1725445029", "UF_CRM_1725483092", "UF_CRM_1655460588", "UF_CRM_1657019494", "STATUS_ID"],
-            "FILTER": {
-              "STATUS_ID": [2, 37] // 2 - встреча назначена, 37 - встреча подтверждена
-            },
-            "start": start
-          })
+        body: JSON.stringify({
+          "SELECT": ["ID", "UF_CRM_1675255265", "UF_CRM_1725445029", "UF_CRM_1725483092", "UF_CRM_1655460588", "UF_CRM_1657019494", "STATUS_ID"],
+          "FILTER": {
+            "STATUS_ID": [2, 37] // 2 - встреча назначена, 37 - встреча подтверждена
+          },
+          "start": start
+        })
       })
 
       if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Bitrix24 API error:', response.status, errorText)
         throw new Error(`Bitrix24 API error: ${response.status} ${response.statusText}`)
       }
 
       const data = await response.json()
+      console.log(`Received ${data.result ? data.result.length : 0} leads from Bitrix24`)
 
       if (data.result && data.result.length > 0) {
         allLeads.push(...data.result)
+        pageCount++
 
         if (data.next) {
           start = data.next
@@ -309,12 +316,22 @@ router.get('/sync/bitrix24', async (req, res, next) => {
       } else {
         break
       }
+
+      // Защита от бесконечного цикла
+      if (pageCount > 100) {
+        console.warn('Too many pages, stopping sync')
+        break
+      }
     }
 
+    console.log(`Total leads fetched: ${allLeads.length}`)
+
     // Получаем все существующие встречи из нашей системы
+    console.log('Fetching existing appointments from database...')
     const existingAppointments = await models.Appointment.findAll({
       attributes: ['id', 'bitrix_lead_id', 'status', 'date', 'timeSlot']
     })
+    console.log(`Found ${existingAppointments.length} existing appointments`)
 
     // Создаем мап статусов Bitrix24 -> наша система
     const statusMapping = {
@@ -334,60 +351,77 @@ router.get('/sync/bitrix24', async (req, res, next) => {
       }
     })
 
+    console.log('Analyzing leads...')
     // Обрабатываем каждый лид из Bitrix24
     allLeads.forEach(lead => {
-      const existingAppointment = existingLeadMap.get(lead.ID)
-      const bitrixStatus = statusMapping[lead.STATUS_ID] || 'pending'
+      try {
+        const existingAppointment = existingLeadMap.get(lead.ID)
+        const bitrixStatus = statusMapping[lead.STATUS_ID] || 'pending'
 
-      if (!existingAppointment) {
-        // Лида нет в нашей системе - нужно создать
-        toCreate.push({
-          bitrix_lead_id: lead.ID,
-          office_id: lead.UF_CRM_1675255265,
-          date: dayjs(lead.UF_CRM_1655460588).format('YYYY-MM-DD'),
-          timeSlot: lead.UF_CRM_1657019494,
-          status: bitrixStatus
-        })
-      } else {
-        // Лид есть в нашей системе - проверяем статус и данные
-        const needsUpdate = (
-          existingAppointment.status !== bitrixStatus ||
-          existingAppointment.date !== dayjs(lead.UF_CRM_1655460588).format('YYYY-MM-DD') ||
-          existingAppointment.timeSlot !== lead.UF_CRM_1657019494
-        )
-
-        if (needsUpdate) {
-          toUpdate.push({
-            id: existingAppointment.id,
+        if (!existingAppointment) {
+          // Лида нет в нашей системе - нужно создать
+          toCreate.push({
             bitrix_lead_id: lead.ID,
             office_id: lead.UF_CRM_1675255265,
             date: dayjs(lead.UF_CRM_1655460588).format('YYYY-MM-DD'),
             timeSlot: lead.UF_CRM_1657019494,
-            status: bitrixStatus,
-            currentStatus: existingAppointment.status,
-            currentDate: existingAppointment.date,
-            currentTime: existingAppointment.timeSlot
+            status: bitrixStatus
           })
+        } else {
+          // Лид есть в нашей системе - проверяем статус и данные
+          const leadDate = dayjs(lead.UF_CRM_1655460588).format('YYYY-MM-DD')
+          const needsUpdate = (
+            existingAppointment.status !== bitrixStatus ||
+            existingAppointment.date !== leadDate ||
+            existingAppointment.timeSlot !== lead.UF_CRM_1657019494
+          )
+
+          if (needsUpdate) {
+            toUpdate.push({
+              id: existingAppointment.id,
+              bitrix_lead_id: lead.ID,
+              office_id: lead.UF_CRM_1675255265,
+              date: leadDate,
+              timeSlot: lead.UF_CRM_1657019494,
+              status: bitrixStatus,
+              currentStatus: existingAppointment.status,
+              currentDate: existingAppointment.date,
+              currentTime: existingAppointment.timeSlot
+            })
+          }
         }
+      } catch (error) {
+        console.error('Error processing lead:', lead.ID, error)
       }
     })
 
+    console.log(`Analysis complete: ${toCreate.length} to create, ${toUpdate.length} to update`)
+
     // Группируем по офисам для удобства отображения
+    console.log('Grouping appointments by office...')
     const groupedToCreate = toCreate.reduce((acc, lead) => {
-      const officeId = lead.office_id
-      if (!acc[officeId]) {
-        acc[officeId] = []
+      try {
+        const officeId = lead.office_id || 'unknown'
+        if (!acc[officeId]) {
+          acc[officeId] = []
+        }
+        acc[officeId].push(lead)
+      } catch (error) {
+        console.error('Error grouping lead for creation:', lead, error)
       }
-      acc[officeId].push(lead)
       return acc
     }, {})
 
     const groupedToUpdate = toUpdate.reduce((acc, lead) => {
-      const officeId = lead.office_id
-      if (!acc[officeId]) {
-        acc[officeId] = []
+      try {
+        const officeId = lead.office_id || 'unknown'
+        if (!acc[officeId]) {
+          acc[officeId] = []
+        }
+        acc[officeId].push(lead)
+      } catch (error) {
+        console.error('Error grouping lead for update:', lead, error)
       }
-      acc[officeId].push(lead)
       return acc
     }, {})
 
@@ -404,6 +438,8 @@ router.get('/sync/bitrix24', async (req, res, next) => {
       count: leads.length,
       type: 'update'
     }))
+
+    console.log(`Sync complete: ${createList.length} office groups to create, ${updateList.length} office groups to update`)
 
     res.json({
       data: {
@@ -432,28 +468,51 @@ router.post('/bulk', [
 ], async (req, res, next) => {
   try {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    if (!errors.isEmpty()) {
+      console.error('Validation errors:', errors.array());
+      return res.status(400).json({ errors: errors.array() });
+    }
 
     const { appointments } = req.body;
+    console.log(`Starting bulk creation of ${appointments.length} appointments`);
 
-    // Создаем встречи пакетно
-    const createdAppointments = await models.Appointment.bulkCreate(
-      appointments.map(apt => ({
-        bitrix_lead_id: apt.bitrix_lead_id,
-        office_id: apt.office_id,
-        date: apt.date,
-        timeSlot: apt.timeSlot,
-        status: apt.status || 'pending',
-        createdBy: 0 // Системный пользователь
-      }))
-    );
+    // Обрабатываем по частям, чтобы избежать таймаутов
+    const batchSize = 50;
+    const createdAppointments = [];
+    let processed = 0;
 
+    for (let i = 0; i < appointments.length; i += batchSize) {
+      const batch = appointments.slice(i, i + batchSize);
+      console.log(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(appointments.length / batchSize)} (${batch.length} items)`);
+
+      try {
+        const batchResults = await models.Appointment.bulkCreate(
+          batch.map(apt => ({
+            bitrix_lead_id: apt.bitrix_lead_id,
+            office_id: apt.office_id,
+            date: apt.date,
+            timeSlot: apt.timeSlot,
+            status: apt.status || 'pending',
+            createdBy: 0 // Системный пользователь
+          }))
+        );
+        createdAppointments.push(...batchResults);
+        processed += batch.length;
+        console.log(`Batch complete: ${processed}/${appointments.length} processed`);
+      } catch (batchError) {
+        console.error('Error in batch:', batchError);
+        // Продолжаем с следующей партией, но логируем ошибку
+      }
+    }
+
+    console.log(`Bulk creation complete: ${createdAppointments.length} appointments created`);
     res.json({
       data: createdAppointments,
       message: `Создано ${createdAppointments.length} встреч`
     });
 
   } catch (e) {
+    console.error('Bulk creation error:', e);
     next(e);
   }
 });
@@ -468,29 +527,56 @@ router.put('/bulk', [
 ], async (req, res, next) => {
   try {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-
-    const { appointments } = req.body;
-    const updatedAppointments = [];
-
-    // Обновляем встречи по одной
-    for (const apt of appointments) {
-      const appointment = await models.Appointment.findByPk(apt.id);
-      if (appointment) {
-        if (apt.date !== undefined) appointment.date = apt.date;
-        if (apt.timeSlot !== undefined) appointment.timeSlot = apt.timeSlot;
-        if (apt.status !== undefined) appointment.status = apt.status;
-        await appointment.save();
-        updatedAppointments.push(appointment);
-      }
+    if (!errors.isEmpty()) {
+      console.error('Validation errors:', errors.array());
+      return res.status(400).json({ errors: errors.array() });
     }
 
+    const { appointments } = req.body;
+    console.log(`Starting bulk update of ${appointments.length} appointments`);
+
+    const updatedAppointments = [];
+    const batchSize = 50;
+    let processed = 0;
+
+    // Обрабатываем по частям
+    for (let i = 0; i < appointments.length; i += batchSize) {
+      const batch = appointments.slice(i, i + batchSize);
+      console.log(`Processing update batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(appointments.length / batchSize)} (${batch.length} items)`);
+
+      const batchPromises = batch.map(async (apt) => {
+        try {
+          const appointment = await models.Appointment.findByPk(apt.id);
+          if (appointment) {
+            if (apt.date !== undefined) appointment.date = apt.date;
+            if (apt.timeSlot !== undefined) appointment.timeSlot = apt.timeSlot;
+            if (apt.status !== undefined) appointment.status = apt.status;
+            await appointment.save();
+            return appointment;
+          }
+          return null;
+        } catch (error) {
+          console.error('Error updating appointment:', apt.id, error);
+          return null;
+        }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      const validResults = batchResults.filter(result => result !== null);
+      updatedAppointments.push(...validResults);
+
+      processed += batch.length;
+      console.log(`Update batch complete: ${processed}/${appointments.length} processed, ${validResults.length} updated`);
+    }
+
+    console.log(`Bulk update complete: ${updatedAppointments.length} appointments updated`);
     res.json({
       data: updatedAppointments,
       message: `Обновлено ${updatedAppointments.length} встреч`
     });
 
   } catch (e) {
+    console.error('Bulk update error:', e);
     next(e);
   }
 });

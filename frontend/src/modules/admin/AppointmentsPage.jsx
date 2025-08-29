@@ -386,8 +386,17 @@ export default function AppointmentsPage() {
     try {
       setSyncLoading(true)
 
+      // Устанавливаем таймаут для запроса (2 минуты)
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 120000)
+
       // Запрашиваем данные через наш бэкенд
-      const response = await api.get('/admin/appointments/sync/bitrix24')
+      const response = await api.get('/admin/appointments/sync/bitrix24', {
+        signal: controller.signal,
+        timeout: 120000
+      })
+
+      clearTimeout(timeoutId)
 
       const syncData = response.data.data
       setBitrixLeads(syncData.allLeads || [])
@@ -402,7 +411,16 @@ export default function AppointmentsPage() {
       setSyncModalVisible(true)
     } catch (error) {
       console.error('Ошибка при синхронизации с Bitrix24:', error)
-      message.error('Не удалось получить данные из Bitrix24')
+
+      if (error.name === 'AbortError') {
+        message.error('Запрос прерван по таймауту. Попробуйте еще раз.')
+      } else if (error.response?.status === 502) {
+        message.error('Сервер недоступен. Попробуйте позже.')
+      } else if (error.response?.status === 500) {
+        message.error('Внутренняя ошибка сервера. Проверьте логи.')
+      } else {
+        message.error('Не удалось получить данные из Bitrix24')
+      }
     } finally {
       setSyncLoading(false)
     }
@@ -460,18 +478,22 @@ export default function AppointmentsPage() {
         }
       }
 
-      // Выполняем операции
+      console.log(`Importing: ${toCreate.length} to create, ${toUpdate.length} to update`)
+
+      // Выполняем операции по частям, чтобы избежать таймаутов
       let createdCount = 0
       let updatedCount = 0
 
       if (toCreate.length > 0) {
-        await api.post('/admin/appointments/bulk', { appointments: toCreate })
-        createdCount = toCreate.length
+        const createResponse = await api.post('/admin/appointments/bulk', { appointments: toCreate })
+        createdCount = createResponse.data.data?.length || 0
+        console.log(`Created ${createdCount} appointments`)
       }
 
       if (toUpdate.length > 0) {
-        await api.put('/admin/appointments/bulk', { appointments: toUpdate })
-        updatedCount = toUpdate.length
+        const updateResponse = await api.put('/admin/appointments/bulk', { appointments: toUpdate })
+        updatedCount = updateResponse.data.data?.length || 0
+        console.log(`Updated ${updatedCount} appointments`)
       }
 
       const totalProcessed = createdCount + updatedCount
@@ -483,7 +505,14 @@ export default function AppointmentsPage() {
 
     } catch (error) {
       console.error('Ошибка при синхронизации:', error)
-      message.error('Не удалось синхронизировать встречи')
+
+      if (error.response?.status === 502) {
+        message.error('Сервер недоступен при обработке данных. Попробуйте с меньшим количеством записей.')
+      } else if (error.response?.status === 500) {
+        message.error('Ошибка сервера при обработке данных. Проверьте логи.')
+      } else {
+        message.error('Не удалось синхронизировать встречи')
+      }
     } finally {
       setSyncLoading(false)
     }
