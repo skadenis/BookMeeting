@@ -3,6 +3,7 @@ const { query, param, body, validationResult } = require('express-validator');
 const { models, Op, Sequelize } = require('../lib/db');
 const { adminAuthMiddleware } = require('../middleware/adminAuth');
 const dayjs = require('dayjs');
+const axios = require('axios');
 
 const router = Router();
 
@@ -281,27 +282,20 @@ router.get('/sync/bitrix24', async (req, res, next) => {
 
     while (true) {
       console.log(`Fetching page ${pageCount + 1}, start: ${start}`)
-      const response = await fetch('https://bitrix24.newhc.by/rest/15/qseod599og9fc16a/crm.lead.list', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const response = await axios.post('https://bitrix24.newhc.by/rest/15/qseod599og9fc16a/crm.lead.list', {
+        "SELECT": ["ID", "UF_CRM_1675255265", "UF_CRM_1725445029", "UF_CRM_1725483092", "UF_CRM_1655460588", "UF_CRM_1657019494", "STATUS_ID"],
+        "FILTER": {
+          "STATUS_ID": [2, 37] // 2 - встреча назначена, 37 - встреча подтверждена
         },
-        body: JSON.stringify({
-          "SELECT": ["ID", "UF_CRM_1675255265", "UF_CRM_1725445029", "UF_CRM_1725483092", "UF_CRM_1655460588", "UF_CRM_1657019494", "STATUS_ID"],
-          "FILTER": {
-            "STATUS_ID": [2, 37] // 2 - встреча назначена, 37 - встреча подтверждена
-          },
-          "start": start
-        })
+        "start": start
+      }, {
+        timeout: 30000, // 30 секунд таймаут
+        headers: {
+          'Content-Type': 'application/json'
+        }
       })
 
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error('Bitrix24 API error:', response.status, errorText)
-        throw new Error(`Bitrix24 API error: ${response.status} ${response.statusText}`)
-      }
-
-      const data = await response.json()
+      const data = response.data
       console.log(`Received ${data.result ? data.result.length : 0} leads from Bitrix24`)
 
       if (data.result && data.result.length > 0) {
@@ -453,7 +447,19 @@ router.get('/sync/bitrix24', async (req, res, next) => {
     })
 
   } catch (e) {
-    next(e)
+    console.error('Sync complete error:', e);
+    if (e.response) {
+      // Ошибка от сервера Bitrix24
+      console.error('Bitrix24 API error:', e.response.status, e.response.data)
+      return next(new Error(`Bitrix24 API error: ${e.response.status} - ${JSON.stringify(e.response.data)}`))
+    } else if (e.code === 'ECONNABORTED') {
+      // Таймаут
+      console.error('Bitrix24 API timeout')
+      return next(new Error('Bitrix24 API request timeout'))
+    } else {
+      // Другая ошибка
+      return next(e)
+    }
   }
 })
 
