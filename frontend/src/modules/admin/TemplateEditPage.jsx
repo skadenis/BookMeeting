@@ -708,14 +708,14 @@ export default function TemplateEditPage() {
             {/* Заголовки колонок */}
             <div style={{ 
               display: 'grid', 
-              gridTemplateColumns: '40px 120px 100px 80px 80px 100px 120px',
+              gridTemplateColumns: '35px 90px 70px 70px 80px 80px',
               alignItems: 'center',
-              gap: 12,
-              padding: '8px 0',
+              gap: 8,
+              padding: '6px 0',
               borderBottom: '2px solid #d9d9d9',
-              marginBottom: '12px',
+              marginBottom: '8px',
               fontWeight: 600,
-              fontSize: '12px',
+              fontSize: '11px',
               color: '#666'
             }}>
               <div style={{ textAlign: 'center' }}>День</div>
@@ -733,18 +733,18 @@ export default function TemplateEditPage() {
                 return (
                   <div key={d.key} style={{ 
                     display: 'grid', 
-                    gridTemplateColumns: '40px 120px 100px 80px 80px 100px 120px',
+                    gridTemplateColumns: '35px 90px 70px 70px 80px 80px',
                     alignItems: 'center',
-                    gap: 12,
-                    padding: '12px 0',
+                    gap: 8,
+                    padding: '8px 0',
                     borderBottom: '1px solid #f0f0f0'
                   }}>
                     {/* День недели */}
-                    <div style={{ fontWeight: 600, textAlign: 'center' }}>{d.short}</div>
+                    <div style={{ fontWeight: 600, textAlign: 'center', fontSize: '12px' }}>{d.short}</div>
                     
                     {/* Рабочий день */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <Text style={{ whiteSpace: 'nowrap', fontSize: '12px' }}>Рабочий день:</Text>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Text style={{ whiteSpace: 'nowrap', fontSize: '11px' }}>Рабочий:</Text>
                       <Switch
                         checked={working}
                         onChange={(checked) => {
@@ -761,8 +761,8 @@ export default function TemplateEditPage() {
                     </div>
                     
                     {/* Время начала */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <Text style={{ whiteSpace: 'nowrap', fontSize: '12px' }}>с</Text>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <Text style={{ whiteSpace: 'nowrap', fontSize: '11px' }}>с</Text>
                       <TimePicker
                         value={wd.start ? dayjs(wd.start, 'HH:mm') : baseStartTime}
                         onChange={(val) => {
@@ -774,14 +774,14 @@ export default function TemplateEditPage() {
                         format="HH:mm"
                         minuteStep={30}
                         disabled={!working}
-                        style={{ width: 70 }}
+                        style={{ width: 55 }}
                         size="small"
                       />
                     </div>
                     
                     {/* Время окончания */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <Text style={{ whiteSpace: 'nowrap', fontSize: '12px' }}>до</Text>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <Text style={{ whiteSpace: 'nowrap', fontSize: '11px' }}>до</Text>
                       <TimePicker
                         value={wd.end ? dayjs(wd.end, 'HH:mm') : baseEndTime}
                         onChange={(val) => {
@@ -793,14 +793,13 @@ export default function TemplateEditPage() {
                         format="HH:mm"
                         minuteStep={30}
                         disabled={!working}
-                        style={{ width: 70 }}
+                        style={{ width: 55 }}
                         size="small"
                       />
                     </div>
                     
                     {/* Количество сотрудников */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <Text style={{ whiteSpace: 'nowrap', fontSize: '12px' }}>Сотрудников:</Text>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                       <Input
                         type="number"
                         min={0}
@@ -813,9 +812,10 @@ export default function TemplateEditPage() {
                           setWeekdays(copy)
                         }}
                         disabled={!working}
-                        style={{ width: 60 }}
+                        style={{ width: 50 }}
                         size="small"
                         suffix="чел."
+                        placeholder="0"
                       />
                     </div>
                     
@@ -825,8 +825,9 @@ export default function TemplateEditPage() {
                         size="small" 
                         onClick={() => resetDayToDefault(d.key)}
                         disabled={!working}
+                        style={{ fontSize: '11px', padding: '0 6px' }}
                       >
-                        Сбросить
+                        Сброс
                       </Button>
                     </div>
                   </div>
