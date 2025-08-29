@@ -20,7 +20,7 @@ services:
       - /app/node_modules
 
   frontend:
-    image: node:20-alpine
+    image: node:20
     working_dir: /app
     command: sh -c "npm ci && VITE_API_PROXY_TARGET=http://backend:4000 npm run dev -- --host --port 5174"
     ports:

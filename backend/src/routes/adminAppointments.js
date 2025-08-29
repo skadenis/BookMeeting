@@ -1,12 +1,12 @@
 const { Router } = require('express');
 const { query, param, body, validationResult } = require('express-validator');
 const { models, Op, Sequelize } = require('../lib/db');
-const { adminAuth } = require('../middleware/adminAuth');
+const { adminAuthMiddleware } = require('../middleware/adminAuth');
 
 const router = Router();
 
 // Middleware для проверки админских прав
-router.use(adminAuth);
+router.use(adminAuthMiddleware);
 
 // Получить все встречи с фильтрами
 router.get('/', [

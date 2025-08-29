@@ -1,12 +1,12 @@
-FROM node:20-alpine
+FROM node:20
 
 WORKDIR /app
 
 # Копируем package файлы
 COPY package*.json ./
 
-# Устанавливаем зависимости
-RUN npm install --omit=dev
+# Устанавливаем зависимости (включая dev зависимости для nodemon)
+RUN npm install
 
 # Копируем исходный код
 COPY . .
