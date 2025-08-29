@@ -142,17 +142,18 @@ export default function TemplateEditPage() {
           for (const [dayKey, slots] of Object.entries(template.weekdays)) {
             if (Array.isArray(slots) && slots.length > 0) {
               // Восстанавливаем базовые настройки дня
+              const baseCapacity = slots[0].capacity || template.defaultCapacity || 1
               newWeekdays[dayKey] = {
                 start: slots[0].start,
                 end: slots[slots.length - 1].end,
-                capacity: slots[0].capacity || template.defaultCapacity || 1,
+                capacity: baseCapacity,
                 specialSlots: []
               }
               
               // Восстанавливаем specialSlots из слотов с нестандартной вместимостью
               const specialSlots = []
               slots.forEach(slot => {
-                if (slot.capacity !== (template.defaultCapacity || 1)) {
+                if (slot.capacity !== baseCapacity) {
                   specialSlots.push({
                     start: slot.start,
                     end: slot.end,
@@ -164,6 +165,7 @@ export default function TemplateEditPage() {
               
               if (specialSlots.length > 0) {
                 newWeekdays[dayKey].specialSlots = specialSlots
+                console.log(`🔍 Восстановлены specialSlots для дня ${dayKey}:`, specialSlots)
               }
             }
           }
@@ -185,6 +187,8 @@ export default function TemplateEditPage() {
         })
         setWeekdays(newWeekdays)
       }
+      
+      console.log('📥 Загруженные weekdays:', weekdays)
     } catch (error) {
       console.error('❌ Error loading template:', error)
       console.error('❌ Error response:', error.response)
@@ -315,7 +319,7 @@ export default function TemplateEditPage() {
             capacity: profile.capacity || defaultCapacity
           }))
           
-          // Применяем специальные слоты
+          // Применяем специальные слоты (если есть)
           if (profile.specialSlots && Array.isArray(profile.specialSlots)) {
             profile.specialSlots.forEach(special => {
               const startMin = dayjs(special.start, 'HH:mm').diff(dayjs('00:00', 'HH:mm'), 'minute')
@@ -336,6 +340,17 @@ export default function TemplateEditPage() {
           processedWeekdays[dayKey] = slotsWithCapacity
         }
       }
+      
+      console.log('💾 Сохраняю шаблон:', {
+        name: templateName,
+        weekdays: processedWeekdays,
+        specialSlots: Object.fromEntries(
+          Object.entries(weekdays).map(([key, profile]) => [
+            key, 
+            profile?.specialSlots || []
+          ])
+        )
+      })
       
       const templateData = {
         name: templateName,
