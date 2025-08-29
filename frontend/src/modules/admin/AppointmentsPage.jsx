@@ -382,106 +382,24 @@ export default function AppointmentsPage() {
   }
 
   // Функции для синхронизации с Bitrix24
-  const fetchBitrixLeads = async () => {
+  const handleSyncWithBitrix = async () => {
     try {
       setSyncLoading(true)
-      setSyncProgress(0)
-      const allLeads = []
-      let start = 0
 
-      while (true) {
-        const response = await fetch('https://bitrix24.newhc.by/rest/15/qseod599og9fc16a/crm.lead.list', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            "SELECT": ["ID", "UF_CRM_1675255265", "UF_CRM_1725445029", "UF_CRM_1725483092", "UF_CRM_1655460588", "UF_CRM_1657019494"],
-            "FILTER": {
-              "STATUS_ID": 2
-            },
-            "start": start
-          })
-        })
+      // Запрашиваем данные через наш бэкенд
+      const response = await api.get('/admin/appointments/sync/bitrix24')
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
-        }
+      const syncData = response.data.data
+      setBitrixLeads(syncData.allLeads || [])
+      setMissingAppointments(syncData.missingAppointments || [])
 
-        const data = await response.json()
-
-        if (data.result && data.result.length > 0) {
-          allLeads.push(...data.result)
-          setSyncProgress(Math.round((allLeads.length / data.total) * 100))
-
-          if (data.next) {
-            start = data.next
-          } else {
-            break
-          }
-        } else {
-          break
-        }
-      }
-
-      setBitrixLeads(allLeads)
-      return allLeads
+      setSyncModalVisible(true)
     } catch (error) {
-      console.error('Ошибка при получении данных из Bitrix24:', error)
+      console.error('Ошибка при синхронизации с Bitrix24:', error)
       message.error('Не удалось получить данные из Bitrix24')
-      return []
     } finally {
       setSyncLoading(false)
     }
-  }
-
-  const compareWithExistingAppointments = async (bitrixLeads) => {
-    try {
-      // Получаем все существующие встречи из нашей системы
-      const response = await api.get('/admin/appointments', {
-        params: {
-          page: 1,
-          pageSize: 10000 // Получаем все записи
-        }
-      })
-
-      const existingAppointments = response.data.data || []
-      const existingLeadIds = new Set(existingAppointments.map(app => app.bitrix_lead_id))
-
-      // Находим отсутствующие встречи
-      const missing = bitrixLeads.filter(lead => !existingLeadIds.has(lead.ID))
-
-      // Группируем по офисам для удобства отображения
-      const groupedMissing = missing.reduce((acc, lead) => {
-        const officeId = lead.UF_CRM_1675255265
-        if (!acc[officeId]) {
-          acc[officeId] = []
-        }
-        acc[officeId].push(lead)
-        return acc
-      }, {})
-
-      const missingList = Object.entries(groupedMissing).map(([officeId, leads]) => ({
-        officeId,
-        leads,
-        count: leads.length
-      }))
-
-      setMissingAppointments(missingList)
-      return missingList
-    } catch (error) {
-      console.error('Ошибка при сравнении данных:', error)
-      message.error('Не удалось сравнить данные')
-      return []
-    }
-  }
-
-  const handleSyncWithBitrix = async () => {
-    const leads = await fetchBitrixLeads()
-    if (leads.length > 0) {
-      await compareWithExistingAppointments(leads)
-    }
-    setSyncModalVisible(true)
   }
 
   const handleImportSelected = async () => {
@@ -582,7 +500,7 @@ export default function AppointmentsPage() {
   const [missingAppointments, setMissingAppointments] = useState([])
   const [syncLoading, setSyncLoading] = useState(false)
   const [selectedLeads, setSelectedLeads] = useState([])
-  const [syncProgress, setSyncProgress] = useState(0)
+
 
   return (
     <div>
@@ -802,7 +720,10 @@ export default function AppointmentsPage() {
           <Space>
             <SyncOutlined />
             Синхронизация с Bitrix24
-            {syncLoading && <span>({syncProgress}%)</span>}
+            {syncLoading && <span>(Загрузка...)</span>}
+            {!syncLoading && bitrixLeads.length > 0 && (
+              <span>({bitrixLeads.length} лидов получено)</span>
+            )}
           </Space>
         }
         open={syncModalVisible}
@@ -827,7 +748,6 @@ export default function AppointmentsPage() {
           <div style={{ textAlign: 'center', padding: '20px' }}>
             <SyncOutlined spin style={{ fontSize: '24px', marginBottom: '16px' }} />
             <div>Получение данных из Bitrix24...</div>
-            <div>{syncProgress}%</div>
           </div>
         )}
 

@@ -270,6 +270,85 @@ router.get('/stats/overview', async (req, res, next) => {
   }
 });
 
+// Синхронизация с Bitrix24
+router.get('/sync/bitrix24', async (req, res, next) => {
+  try {
+    const allLeads = []
+    let start = 0
+
+    while (true) {
+      const response = await fetch('https://bitrix24.newhc.by/rest/15/qseod599og9fc16a/crm.lead.list', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          "SELECT": ["ID", "UF_CRM_1675255265", "UF_CRM_1725445029", "UF_CRM_1725483092", "UF_CRM_1655460588", "UF_CRM_1657019494"],
+          "FILTER": {
+            "STATUS_ID": 2
+          },
+          "start": start
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(`Bitrix24 API error: ${response.status} ${response.statusText}`)
+      }
+
+      const data = await response.json()
+
+      if (data.result && data.result.length > 0) {
+        allLeads.push(...data.result)
+
+        if (data.next) {
+          start = data.next
+        } else {
+          break
+        }
+      } else {
+        break
+      }
+    }
+
+    // Получаем все существующие встречи из нашей системы
+    const existingAppointments = await models.Appointment.findAll({
+      attributes: ['bitrix_lead_id']
+    })
+    const existingLeadIds = new Set(existingAppointments.map(app => app.bitrix_lead_id))
+
+    // Находим отсутствующие встречи
+    const missing = allLeads.filter(lead => !existingLeadIds.has(lead.ID))
+
+    // Группируем по офисам для удобства отображения
+    const groupedMissing = missing.reduce((acc, lead) => {
+      const officeId = lead.UF_CRM_1675255265
+      if (!acc[officeId]) {
+        acc[officeId] = []
+      }
+      acc[officeId].push(lead)
+      return acc
+    }, {})
+
+    const missingList = Object.entries(groupedMissing).map(([officeId, leads]) => ({
+      officeId,
+      leads,
+      count: leads.length
+    }))
+
+    res.json({
+      data: {
+        totalBitrixLeads: allLeads.length,
+        missingAppointments: missingList,
+        missingCount: missing.length,
+        allLeads: allLeads // Отправляем все лиды для возможности импорта
+      }
+    })
+
+  } catch (e) {
+    next(e)
+  }
+})
+
 // Bulk создание встреч для импорта из Bitrix24
 router.post('/bulk', [
   body('appointments').isArray({ min: 1 }),
