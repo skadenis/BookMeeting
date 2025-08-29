@@ -705,23 +705,46 @@ export default function TemplateEditPage() {
 
           {/* Настройки дней недели (просто: рабочий? и время с/до) */}
           <Card title="Настройки дней недели" style={{ marginBottom: '24px' }}>
+            {/* Заголовки колонок */}
+            <div style={{ 
+              display: 'grid', 
+              gridTemplateColumns: '40px 120px 100px 80px 80px 100px 120px',
+              alignItems: 'center',
+              gap: 12,
+              padding: '8px 0',
+              borderBottom: '2px solid #d9d9d9',
+              marginBottom: '12px',
+              fontWeight: 600,
+              fontSize: '12px',
+              color: '#666'
+            }}>
+              <div style={{ textAlign: 'center' }}>День</div>
+              <div>Статус</div>
+              <div>Начало</div>
+              <div>Конец</div>
+              <div>Сотрудники</div>
+              <div style={{ textAlign: 'center' }}>Действия</div>
+            </div>
+            
             <Space direction="vertical" style={{ width: '100%' }}>
               {DOW.map(d => {
                 const wd = weekdays[d.key] || {}
                 const working = (wd.capacity ?? defaultCapacity) > 0
                 return (
                   <div key={d.key} style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: 8, 
-                    flexWrap: 'wrap',
-                    padding: '8px 0',
+                    display: 'grid', 
+                    gridTemplateColumns: '40px 120px 100px 80px 80px 100px 120px',
+                    alignItems: 'center',
+                    gap: 12,
+                    padding: '12px 0',
                     borderBottom: '1px solid #f0f0f0'
                   }}>
-                    <div style={{ width: 40, fontWeight: 600, flexShrink: 0 }}>{d.short}</div>
+                    {/* День недели */}
+                    <div style={{ fontWeight: 600, textAlign: 'center' }}>{d.short}</div>
                     
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                      <Text style={{ whiteSpace: 'nowrap' }}>Рабочий день:</Text>
+                    {/* Рабочий день */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Text style={{ whiteSpace: 'nowrap', fontSize: '12px' }}>Рабочий день:</Text>
                       <Switch
                         checked={working}
                         onChange={(checked) => {
@@ -733,17 +756,13 @@ export default function TemplateEditPage() {
                           copy[d.key].end = copy[d.key].end || baseEndTime.format('HH:mm')
                           setWeekdays(copy)
                         }}
+                        size="small"
                       />
                     </div>
                     
-                    <div style={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      gap: 6, 
-                      flexShrink: 0,
-                      marginLeft: 'auto'
-                    }}>
-                      <Text style={{ whiteSpace: 'nowrap' }}>с</Text>
+                    {/* Время начала */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Text style={{ whiteSpace: 'nowrap', fontSize: '12px' }}>с</Text>
                       <TimePicker
                         value={wd.start ? dayjs(wd.start, 'HH:mm') : baseStartTime}
                         onChange={(val) => {
@@ -755,9 +774,14 @@ export default function TemplateEditPage() {
                         format="HH:mm"
                         minuteStep={30}
                         disabled={!working}
-                        style={{ width: 80 }}
+                        style={{ width: 70 }}
+                        size="small"
                       />
-                      <Text style={{ whiteSpace: 'nowrap' }}>до</Text>
+                    </div>
+                    
+                    {/* Время окончания */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Text style={{ whiteSpace: 'nowrap', fontSize: '12px' }}>до</Text>
                       <TimePicker
                         value={wd.end ? dayjs(wd.end, 'HH:mm') : baseEndTime}
                         onChange={(val) => {
@@ -769,33 +793,40 @@ export default function TemplateEditPage() {
                         format="HH:mm"
                         minuteStep={30}
                         disabled={!working}
-                        style={{ width: 80 }}
+                        style={{ width: 70 }}
+                        size="small"
                       />
-                      <div style={{ 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        gap: 4, 
-                        marginLeft: 8,
-                        padding: '4px 8px',
-                        background: working ? '#f6ffed' : '#fff2f0',
-                        borderRadius: '4px',
-                        border: `1px solid ${working ? '#b7eb8f' : '#ffccc7'}`
-                      }}>
-                        <Text style={{ 
-                          fontSize: '12px', 
-                          color: working ? '#52c41a' : '#ff4d4f',
-                          fontWeight: 600 
-                        }}>
-                          {working ? `${wd.capacity || defaultCapacity} чел.` : 'Закрыт'}
-                        </Text>
-                      </div>
+                    </div>
+                    
+                    {/* Количество сотрудников */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Text style={{ whiteSpace: 'nowrap', fontSize: '12px' }}>Сотрудников:</Text>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={10}
+                        value={wd.capacity || defaultCapacity}
+                        onChange={(e) => {
+                          const copy = { ...weekdays }
+                          copy[d.key] = copy[d.key] || {}
+                          copy[d.key].capacity = Number(e.target.value) || 0
+                          setWeekdays(copy)
+                        }}
+                        disabled={!working}
+                        style={{ width: 60 }}
+                        size="small"
+                        suffix="чел."
+                      />
+                    </div>
+                    
+                    {/* Кнопка сброса */}
+                    <div style={{ textAlign: 'center' }}>
                       <Button 
                         size="small" 
                         onClick={() => resetDayToDefault(d.key)}
                         disabled={!working}
-                        style={{ marginLeft: 8, flexShrink: 0 }}
                       >
-                        Сбросить к базовым
+                        Сбросить
                       </Button>
                     </div>
                   </div>
