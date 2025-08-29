@@ -379,13 +379,27 @@ export default function TemplateEditPage() {
   }
 
   const renderChessboard = () => {
-    if (!baseStartTime || !baseEndTime) {
-      return <div>Заполните время начала и окончания</div>
-    }
+    // Находим самый длинный рабочий день для определения временных слотов
+    let maxStartTime = baseStartTime
+    let maxEndTime = baseEndTime
+    
+    Object.values(weekdays).forEach(weekday => {
+      if (weekday && weekday.start && weekday.end && weekday.capacity > 0) {
+        const dayStart = dayjs(weekday.start, 'HH:mm')
+        const dayEnd = dayjs(weekday.end, 'HH:mm')
+        
+        if (dayStart.isBefore(maxStartTime)) {
+          maxStartTime = dayStart
+        }
+        if (dayEnd.isAfter(maxEndTime)) {
+          maxEndTime = dayEnd
+        }
+      }
+    })
     
     const timeSlots = generateTimeSlots(
-      baseStartTime.format('HH:mm'), 
-      baseEndTime.format('HH:mm'), 
+      maxStartTime.format('HH:mm'), 
+      maxEndTime.format('HH:mm'), 
       slotDuration
     )
     
@@ -668,6 +682,21 @@ export default function TemplateEditPage() {
                     value={defaultCapacity}
                     onChange={(e) => setDefaultCapacity(Number(e.target.value) || 1)}
                     style={{ marginTop: '8px' }}
+                    suffix="чел."
+                  />
+                </Col>
+                <Col span={12}>
+                  <Text strong>Длительность слота:</Text>
+                  <Select
+                    value={slotDuration}
+                    onChange={setSlotDuration}
+                    style={{ width: '100%', marginTop: '8px' }}
+                    options={[
+                      { value: 15, label: '15 минут' },
+                      { value: 30, label: '30 минут' },
+                      { value: 45, label: '45 минут' },
+                      { value: 60, label: '1 час' }
+                    ]}
                   />
                 </Col>
               </Row>
@@ -742,6 +771,24 @@ export default function TemplateEditPage() {
                         disabled={!working}
                         style={{ width: 80 }}
                       />
+                      <div style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 4, 
+                        marginLeft: 8,
+                        padding: '4px 8px',
+                        background: working ? '#f6ffed' : '#fff2f0',
+                        borderRadius: '4px',
+                        border: `1px solid ${working ? '#b7eb8f' : '#ffccc7'}`
+                      }}>
+                        <Text style={{ 
+                          fontSize: '12px', 
+                          color: working ? '#52c41a' : '#ff4d4f',
+                          fontWeight: 600 
+                        }}>
+                          {working ? `${wd.capacity || defaultCapacity} чел.` : 'Закрыт'}
+                        </Text>
+                      </div>
                       <Button 
                         size="small" 
                         onClick={() => resetDayToDefault(d.key)}
