@@ -21,8 +21,8 @@ export default function PageHeader({
 }) {
   return (
     <div style={{
-      marginBottom: '24px',
-      padding: '20px 0',
+      marginBottom: '16px',
+      paddingBottom: '12px',
       borderBottom: '1px solid #f0f0f0'
     }}>
       <div style={{
@@ -30,23 +30,24 @@ export default function PageHeader({
         justifyContent: 'space-between',
         alignItems: 'center'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {icon && <span style={{ fontSize: '24px', color: '#1890ff' }}>{icon}</span>}
-          <Title level={3} style={{
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {icon && <span style={{ fontSize: '20px', color: '#666' }}>{icon}</span>}
+          <Title level={4} style={{
             margin: 0,
-            fontWeight: 600,
+            fontWeight: 500,
             color: '#262626'
           }}>
             {title}
           </Title>
         </div>
 
-        <Space>
+        <Space size="small">
           {onRefresh && (
             <Button
               icon={<ReloadOutlined />}
               onClick={onRefresh}
               loading={loading}
+              size="small"
             >
               Обновить
             </Button>

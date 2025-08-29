@@ -6,43 +6,30 @@ import {
   Select,
   Input,
   message,
-  Tooltip,
   Modal,
   Space,
   Form,
-  TimePicker,
   List,
   Checkbox,
-  Divider,
-  Row,
-  Col,
   Card,
-  Statistic,
-  Typography
+  Statistic
 } from 'antd'
 import {
   CalendarOutlined,
-  ClockCircleOutlined,
-  EnvironmentOutlined,
-  EyeOutlined,
   ReloadOutlined,
-  EditOutlined,
   SyncOutlined,
   CheckCircleOutlined,
   WarningOutlined,
-  BarChartOutlined,
-  FilterOutlined,
-  TableOutlined
+  EyeOutlined,
+  EditOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../../api/client'
 import PageHeader from './components/PageHeader'
-import { FilterSection } from './components/PageSection'
 import PageTable from './components/PageTable'
 import StatsSection from './components/StatsSection'
 
 const { RangePicker } = DatePicker
-const { Search } = Input
 
 function useApi() { return api }
 
@@ -576,298 +563,120 @@ export default function AppointmentsPage() {
   const { Title, Text } = Typography
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-      padding: '20px'
-    }}>
-      {/* Header Section */}
-      <Card
-        style={{
-          marginBottom: '24px',
-          background: 'rgba(255, 255, 255, 0.95)',
-          backdropFilter: 'blur(10px)',
-          border: 'none',
-          borderRadius: '20px',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)'
-        }}
-      >
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '16px'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <div style={{
-              width: '60px',
-              height: '60px',
-              borderRadius: '16px',
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 4px 20px rgba(102, 126, 234, 0.3)'
-            }}>
-              <CalendarOutlined style={{ fontSize: '28px', color: 'white' }} />
-            </div>
-            <div>
-              <Title level={2} style={{ margin: 0, color: '#1a1a1a' }}>
-                Управление встречами
-              </Title>
-              <Text type="secondary" style={{ fontSize: '14px' }}>
-                Синхронизация и управление записями клиентов
-              </Text>
-            </div>
-          </div>
-
-          <Space size="middle">
+    <div>
+      <PageHeader
+        title="Встречи"
+        icon={<CalendarOutlined />}
+        extra={
+          <Space>
             <Button
               type="primary"
               icon={<SyncOutlined />}
               onClick={handleSyncWithBitrix}
               loading={syncLoading}
-              style={{
-                height: '44px',
-                borderRadius: '12px',
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                border: 'none',
-                boxShadow: '0 4px 15px rgba(102, 126, 234, 0.4)',
-                fontWeight: '600'
-              }}
+              size="small"
             >
-              Синхронизировать с Bitrix24
-            </Button>
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={handleRefresh}
-              loading={loading}
-              style={{
-                height: '44px',
-                borderRadius: '12px',
-                background: 'rgba(255, 255, 255, 0.8)',
-                border: '1px solid rgba(102, 126, 234, 0.3)',
-                color: '#667eea',
-                fontWeight: '600'
-              }}
-            >
-              Обновить
+              Синхронизировать
             </Button>
           </Space>
-        </div>
-      </Card>
+        }
+        onRefresh={handleRefresh}
+        loading={loading}
+      />
 
-      {/* Statistics Section */}
-      <div style={{ marginBottom: '24px' }}>
-        <StatsSection stats={showDetailedStats ? fullStatsData : keyStatsData} />
-      </div>
+      <StatsSection stats={showDetailedStats ? fullStatsData : keyStatsData} />
 
-      {/* Control Buttons */}
-      <div style={{ marginBottom: '24px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-        <Button
-          type={showTable ? "default" : "primary"}
-          onClick={() => setShowTable(!showTable)}
-          style={{
-            borderRadius: '12px',
-            height: '40px',
-            background: showTable ? 'rgba(255, 255, 255, 0.9)' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            border: showTable ? '1px solid #d9d9d9' : 'none',
-            color: showTable ? '#666' : 'white',
-            fontWeight: '500',
-            transition: 'all 0.3s ease'
-          }}
-          icon={<EyeOutlined />}
-        >
-          {showTable ? 'Скрыть таблицу' : 'Показать таблицу'}
-        </Button>
-
-        <Button
-          type="text"
-          onClick={() => setShowDetailedStats(!showDetailedStats)}
-          style={{
-            borderRadius: '12px',
-            height: '40px',
-            color: '#667eea',
-            fontWeight: '500',
-            border: '1px solid rgba(102, 126, 234, 0.2)',
-            background: 'rgba(255, 255, 255, 0.8)',
-            transition: 'all 0.3s ease'
-          }}
-          icon={<BarChartOutlined />}
-        >
-          {showDetailedStats ? 'Показать основное' : 'Показать все статусы'}
-        </Button>
+      <div style={{ marginBottom: '16px' }}>
+        <Space>
+          <Button
+            onClick={() => setShowTable(!showTable)}
+            size="small"
+          >
+            {showTable ? 'Скрыть таблицу' : 'Показать таблицу'}
+          </Button>
+          <Button
+            onClick={() => setShowDetailedStats(!showDetailedStats)}
+            size="small"
+          >
+            {showDetailedStats ? 'Основное' : 'Все статусы'}
+          </Button>
+        </Space>
       </div>
 
       {showTable && (
         <>
-          {/* Filters Section */}
-          <Card
-            style={{
-              marginBottom: '24px',
-              background: 'rgba(255, 255, 255, 0.95)',
-              backdropFilter: 'blur(10px)',
-              border: 'none',
-              borderRadius: '16px',
-              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)'
-            }}
-            title={
-              <Space>
-                <FilterOutlined style={{ color: '#667eea' }} />
-                <span style={{ fontWeight: '600', color: '#1a1a1a' }}>Фильтры и поиск</span>
-              </Space>
-            }
-          >
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-              gap: '20px',
-              alignItems: 'end'
-            }}>
-              <div>
-                <Text style={{ fontSize: '12px', color: '#666', marginBottom: '8px', fontWeight: '500' }}>
-                  📅 Период
-                </Text>
-                <RangePicker
-                  value={filters.dateRange}
-                  onChange={(dates) => handleFilterChange('dateRange', dates)}
-                  format="DD.MM.YYYY"
-                  style={{
-                    width: '100%',
-                    height: '44px',
-                    borderRadius: '12px',
-                    border: '1px solid rgba(102, 126, 234, 0.3)'
-                  }}
-                  placeholder={['Дата начала', 'Дата окончания']}
-                />
-              </div>
+          <Form layout="inline" style={{ marginBottom: '16px' }}>
+            <Form.Item label="Период">
+              <RangePicker
+                value={filters.dateRange}
+                onChange={(dates) => handleFilterChange('dateRange', dates)}
+                format="DD.MM.YYYY"
+              />
+            </Form.Item>
 
-              <div>
-                <Text style={{ fontSize: '12px', color: '#666', marginBottom: '8px', fontWeight: '500' }}>
-                  📊 Статус
-                </Text>
-                <Select
-                  placeholder="Все статусы"
-                  value={filters.status}
-                  onChange={(value) => handleFilterChange('status', value)}
-                  style={{
-                    width: '100%',
-                    height: '44px',
-                    borderRadius: '12px',
-                    border: '1px solid rgba(102, 126, 234, 0.3)'
-                  }}
-                  allowClear
-                >
-                  <Select.Option value="pending">
-                    <Tag color="gold">Ожидает подтверждения</Tag>
+            <Form.Item label="Статус">
+              <Select
+                placeholder="Все статусы"
+                value={filters.status}
+                onChange={(value) => handleFilterChange('status', value)}
+                style={{ width: '140px' }}
+                allowClear
+              >
+                <Select.Option value="pending">Ожидает</Select.Option>
+                <Select.Option value="confirmed">Подтверждена</Select.Option>
+                <Select.Option value="cancelled">Отменена</Select.Option>
+                <Select.Option value="rescheduled">Перенесена</Select.Option>
+              </Select>
+            </Form.Item>
+
+            <Form.Item label="Офис">
+              <Select
+                placeholder="Все офисы"
+                value={filters.office}
+                onChange={(value) => handleFilterChange('office', value)}
+                style={{ width: '180px' }}
+                allowClear
+                showSearch
+                filterOption={(input, option) =>
+                  (option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+              >
+                {offices.map(office => (
+                  <Select.Option key={office.id} value={office.id}>
+                    {office.city} - {office.address}
                   </Select.Option>
-                  <Select.Option value="confirmed">
-                    <Tag color="green">Подтверждена</Tag>
-                  </Select.Option>
-                  <Select.Option value="cancelled">
-                    <Tag color="red">Отменена</Tag>
-                  </Select.Option>
-                  <Select.Option value="rescheduled">
-                    <Tag color="purple">Перенесена</Tag>
-                  </Select.Option>
-                </Select>
-              </div>
+                ))}
+              </Select>
+            </Form.Item>
 
-              <div>
-                <Text style={{ fontSize: '12px', color: '#666', marginBottom: '8px', fontWeight: '500' }}>
-                  🏢 Офис
-                </Text>
-                <Select
-                  placeholder="Все офисы"
-                  value={filters.office}
-                  onChange={(value) => handleFilterChange('office', value)}
-                  style={{
-                    width: '100%',
-                    height: '44px',
-                    borderRadius: '12px',
-                    border: '1px solid rgba(102, 126, 234, 0.3)'
-                  }}
-                  allowClear
-                  showSearch
-                  filterOption={(input, option) =>
-                    (option?.children ?? '').toLowerCase().includes(input.toLowerCase())
-                  }
-                >
-                  {offices.map(office => (
-                    <Select.Option key={office.id} value={office.id}>
-                      {office.city} - {office.address}
-                    </Select.Option>
-                  ))}
-                </Select>
-              </div>
+            <Form.Item label="Поиск">
+              <Input
+                placeholder="Поиск..."
+                value={filters.search}
+                onChange={(e) => handleFilterChange('search', e.target.value)}
+                style={{ width: '160px' }}
+                allowClear
+              />
+            </Form.Item>
 
-              <div>
-                <Text style={{ fontSize: '12px', color: '#666', marginBottom: '8px', fontWeight: '500' }}>
-                  🔍 Поиск
-                </Text>
-                <Search
-                  placeholder="Поиск по лиду, сделке..."
-                  value={filters.search}
-                  onChange={(e) => handleFilterChange('search', e.target.value)}
-                  style={{
-                    width: '100%',
-                    height: '44px',
-                    borderRadius: '12px',
-                    border: '1px solid rgba(102, 126, 234, 0.3)'
-                  }}
-                  allowClear
-                />
-              </div>
+            <Form.Item>
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={resetFilters}
+              >
+                Сбросить
+              </Button>
+            </Form.Item>
+          </Form>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <Button
-                  icon={<ReloadOutlined />}
-                  onClick={resetFilters}
-                  style={{
-                    height: '44px',
-                    borderRadius: '12px',
-                    border: '1px solid rgba(102, 126, 234, 0.3)',
-                    color: '#667eea',
-                    fontWeight: '500'
-                  }}
-                >
-                  Сбросить фильтры
-                </Button>
-              </div>
-            </div>
-          </Card>
-
-          {/* Appointments Table */}
-          <Card
-            style={{
-              background: 'rgba(255, 255, 255, 0.95)',
-              backdropFilter: 'blur(10px)',
-              border: 'none',
-              borderRadius: '16px',
-              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-              overflow: 'hidden'
-            }}
-            title={
-              <Space>
-                <TableOutlined style={{ color: '#667eea' }} />
-                <span style={{ fontWeight: '600', color: '#1a1a1a' }}>Список встреч</span>
-                <Tag color="blue" style={{ borderRadius: '12px' }}>
-                  {appointments.length} записей
-                </Tag>
-              </Space>
-            }
-          >
-            <PageTable
-              columns={columns}
-              dataSource={appointments}
-              loading={loading}
-              pagination={pagination}
-              onChange={handleTableChange}
-              scroll={{ x: 1000 }}
-              bordered={false}
-            />
-          </Card>
+          <PageTable
+            columns={columns}
+            dataSource={appointments}
+            loading={loading}
+            pagination={pagination}
+            onChange={handleTableChange}
+            scroll={{ x: 'max-content' }}
+          />
         </>
       )}
 
@@ -969,225 +778,110 @@ export default function AppointmentsPage() {
 
       {/* Модальное окно синхронизации с Bitrix24 */}
       <Modal
-        title={
-          <div style={{
-            padding: '16px 24px',
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            color: 'white',
-            margin: '-24px -24px 20px -24px',
-            borderRadius: '16px 16px 0 0'
-          }}>
-            <Space align="center">
-              <div style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '12px',
-                background: 'rgba(255, 255, 255, 0.2)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <SyncOutlined style={{ fontSize: '24px', color: 'white' }} />
-              </div>
-              <div>
-                <div style={{ fontSize: '18px', fontWeight: '600', marginBottom: '4px' }}>
-                  Синхронизация с Bitrix24
-                </div>
-                {syncLoading && (
-                  <div style={{ fontSize: '14px', opacity: 0.9 }}>
-                    Загрузка данных...
-                  </div>
-                )}
-                {!syncLoading && bitrixLeads.length > 0 && (
-                  <div style={{ fontSize: '14px', opacity: 0.9 }}>
-                    {bitrixLeads.length} лидов получено из Bitrix24
-                  </div>
-                )}
-              </div>
-            </Space>
-          </div>
-        }
+        title="Синхронизация с Bitrix24"
         open={syncModalVisible}
         onCancel={() => setSyncModalVisible(false)}
-        width={900}
-        footer={
-          <div style={{
-            padding: '16px 24px',
-            background: '#fafafa',
-            borderRadius: '0 0 16px 16px',
-            margin: '0 -24px -24px -24px'
-          }}>
-            <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-              <Space>
-                <Button
-                  onClick={() => setSelectedLeads(bitrixLeads.map(lead => lead.ID))}
-                  style={{ borderRadius: '8px' }}
-                >
-                  Выбрать все
-                </Button>
-                <Button
-                  onClick={() => setSelectedLeads([])}
-                  style={{ borderRadius: '8px' }}
-                >
-                  Снять все
-                </Button>
-              </Space>
-              <Space>
-                <Button
-                  onClick={() => setSyncModalVisible(false)}
-                  style={{ borderRadius: '8px' }}
-                >
-                  Отмена
-                </Button>
-                <Button
-                  type="primary"
-                  onClick={handleImportSelected}
-                  loading={syncLoading}
-                  disabled={selectedLeads.length === 0}
-                  style={{
-                    borderRadius: '8px',
-                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                    border: 'none',
-                    fontWeight: '600'
-                  }}
-                >
-                  Импортировать выбранные ({selectedLeads.length})
-                </Button>
-              </Space>
-            </Space>
-          </div>
-        }
-        bodyStyle={{ padding: '0' }}
-        style={{ borderRadius: '16px', overflow: 'hidden' }}
+        width={800}
+        footer={[
+          <Button key="cancel" onClick={() => setSyncModalVisible(false)}>
+            Отмена
+          </Button>,
+          <Button
+            key="select-all"
+            onClick={() => setSelectedLeads(bitrixLeads.map(lead => lead.ID))}
+          >
+            Выбрать все
+          </Button>,
+          <Button
+            key="deselect-all"
+            onClick={() => setSelectedLeads([])}
+          >
+            Снять все
+          </Button>,
+          <Button
+            key="import"
+            type="primary"
+            onClick={handleImportSelected}
+            loading={syncLoading}
+            disabled={selectedLeads.length === 0}
+          >
+            Импортировать выбранные ({selectedLeads.length})
+          </Button>
+        ]}
       >
-        <div style={{ padding: '24px' }}>
-          {syncLoading && (
-            <div style={{ textAlign: 'center', padding: '40px' }}>
-              <SyncOutlined spin style={{ fontSize: '48px', color: '#667eea', marginBottom: '16px' }} />
-              <div style={{ fontSize: '16px', fontWeight: '500', color: '#1a1a1a' }}>
-                Получение данных из Bitrix24...
-              </div>
-              <div style={{ color: '#666', marginTop: '8px' }}>
-                Пожалуйста, подождите
-              </div>
-            </div>
-          )}
+                {syncLoading && (
+          <div style={{ textAlign: 'center', padding: '20px' }}>
+            <SyncOutlined spin style={{ fontSize: '24px' }} />
+            <div>Получение данных из Bitrix24...</div>
+          </div>
+        )}
 
-          {!syncLoading && missingAppointments.length === 0 && (
-            <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-              <CheckCircleOutlined style={{ fontSize: '64px', color: '#52c41a', marginBottom: '20px' }} />
-              <div style={{ fontSize: '18px', fontWeight: '600', color: '#1a1a1a', marginBottom: '8px' }}>
-                Все данные синхронизированы!
-              </div>
-              <div style={{ color: '#666', fontSize: '14px' }}>
-                В Bitrix24 нет новых встреч для импорта
-              </div>
+        {!syncLoading && missingAppointments.length === 0 && (
+          <div style={{ textAlign: 'center', padding: '20px' }}>
+            <CheckCircleOutlined style={{ fontSize: '24px', color: '#52c41a' }} />
+            <div>Все данные синхронизированы!</div>
+            <div style={{ color: '#666', marginTop: '8px' }}>
+              В Bitrix24 нет новых встреч для импорта
             </div>
-          )}
+          </div>
+        )}
 
-            {!syncLoading && missingAppointments.length > 0 && (
-              <div>
-                <div style={{
-                  marginBottom: '20px',
-                  padding: '16px',
-                  background: 'linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%)',
-                  borderRadius: '12px',
-                  border: '1px solid #faad14'
-                }}>
-                  <Space align="start">
-                    <WarningOutlined style={{ color: '#faad14', fontSize: '20px' }} />
-                    <div>
-                      <div style={{ fontSize: '16px', fontWeight: '600', color: '#1a1a1a', marginBottom: '4px' }}>
-                        Найдено {missingAppointments.reduce((sum, group) => sum + group.count, 0)} изменений
-                      </div>
-                      <div style={{ color: '#666', fontSize: '14px' }}>
-                        Новых встреч: {missingAppointments.filter(g => g.actionType === 'create').reduce((sum, group) => sum + group.count, 0)} |
-                        Обновлений: {missingAppointments.filter(g => g.actionType === 'update').reduce((sum, group) => sum + group.count, 0)}
-                      </div>
+        {!syncLoading && missingAppointments.length > 0 && (
+          <div>
+            <div style={{ marginBottom: '16px' }}>
+              <WarningOutlined style={{ color: '#faad14', marginRight: '8px' }} />
+              Найдено {missingAppointments.reduce((sum, group) => sum + group.count, 0)} изменений:
+              <br />
+              <small style={{ color: '#666' }}>
+                Новых встреч: {missingAppointments.filter(g => g.actionType === 'create').reduce((sum, group) => sum + group.count, 0)} |
+                Обновлений: {missingAppointments.filter(g => g.actionType === 'update').reduce((sum, group) => sum + group.count, 0)}
+              </small>
+            </div>
+
+            <List
+              dataSource={missingAppointments}
+              renderItem={(group) => (
+                <List.Item>
+                  <div style={{ width: '100%' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>
+                      {(() => {
+                        const office = offices.find(o => o.bitrixOfficeId === group.officeId)
+                        return office ? `${office.city} • ${office.address}` : `Офис ID: ${group.officeId}`
+                      })()} ({group.count} встреч)
                     </div>
-                  </Space>
-                </div>
 
-                <List
-                  dataSource={missingAppointments}
-                  renderItem={(group) => (
-                    <List.Item style={{
-                      padding: '16px',
-                      marginBottom: '12px',
-                      background: 'rgba(255, 255, 255, 0.8)',
-                      borderRadius: '12px',
-                      border: '1px solid rgba(102, 126, 234, 0.1)'
-                    }}>
-                      <div style={{ width: '100%' }}>
-                        <div style={{
-                          fontWeight: '600',
-                          marginBottom: '12px',
-                          color: '#1a1a1a',
-                          fontSize: '16px'
-                        }}>
-                          {(() => {
-                            const office = offices.find(o => o.bitrixOfficeId === group.officeId)
-                            return office ? `${office.city} • ${office.address}` : `Офис ID: ${group.officeId}`
-                          })()}
-                          <Tag
-                            color={group.actionType === 'create' ? 'green' : 'orange'}
-                            style={{
-                              marginLeft: '12px',
-                              borderRadius: '12px',
-                              fontSize: '12px'
+                    <List
+                      size="small"
+                      dataSource={group.leads}
+                      renderItem={(lead) => (
+                        <List.Item style={{ padding: '4px 0' }}>
+                          <Checkbox
+                            checked={selectedLeads.includes(lead.ID)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedLeads([...selectedLeads, lead.ID])
+                              } else {
+                                setSelectedLeads(selectedLeads.filter(id => id !== lead.ID))
+                              }
                             }}
-                          >
-                            {group.actionType === 'create' ? 'Новые' : 'Обновить'} ({group.count})
-                          </Tag>
-                        </div>
-
-                        <List
-                          size="small"
-                          dataSource={group.leads}
-                          renderItem={(lead) => (
-                            <List.Item style={{
-                              padding: '8px 0',
-                              border: 'none'
-                            }}>
-                              <Checkbox
-                                checked={selectedLeads.includes(lead.ID)}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedLeads([...selectedLeads, lead.ID])
-                                  } else {
-                                    setSelectedLeads(selectedLeads.filter(id => id !== lead.ID))
-                                  }
-                                }}
-                                style={{ marginRight: '12px' }}
-                              />
-                              <div style={{ flex: 1 }}>
-                                <div style={{
-                                  fontWeight: '500',
-                                  color: '#1a1a1a',
-                                  marginBottom: '4px'
-                                }}>
-                                  <span style={{ color: '#667eea' }}>Лид #{lead.ID}</span> •
-                                  {dayjs(lead.UF_CRM_1655460588).format('DD.MM.YYYY')} •
-                                  {lead.UF_CRM_1657019494}
-                                </div>
-                                <div style={{ color: '#666', fontSize: '12px' }}>
-                                  Сотрудник ID: {lead.UF_CRM_1725445029}
-                                  {group.actionType === 'update' && lead.currentStatus && (
-                                    <span style={{ marginLeft: '12px', color: '#faad14' }}>
-                                      Изменение: {lead.currentStatus} → {lead.status === '37' ? 'confirmed' : 'pending'}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </List.Item>
-                          )}
-                        />
-                      </div>
-                    </List.Item>
-                  )}
-                />
-              </div>
-            )}
+                          />
+                          <div style={{ marginLeft: '8px', flex: 1 }}>
+                            <div>
+                              <strong>Лид #{lead.ID}</strong> •
+                              {dayjs(lead.UF_CRM_1655460588).format('DD.MM.YYYY')} •
+                              {lead.UF_CRM_1657019494}
+                            </div>
+                            <div style={{ color: '#666', fontSize: '12px' }}>
+                              Сотрудник ID: {lead.UF_CRM_1725445029}
+                            </div>
+                          </div>
+                        </List.Item>
+                      )}
+                    />
+                  </div>
+                </List.Item>
+              )}
+            />
           </div>
         )}
       </Modal>

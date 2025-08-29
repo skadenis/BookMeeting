@@ -1,5 +1,5 @@
 import React from 'react'
-import { Table, Card } from 'antd'
+import { Table } from 'antd'
 
 /**
  * Единый компонент для таблиц на страницах админки
@@ -18,22 +18,27 @@ export default function PageTable({
   pagination = false,
   onChange,
   bordered = false,
-  scroll = { x: 800 },
+  scroll = { x: 'max-content' },
   rowKey = 'id',
+  size = 'small',
   ...props
 }) {
   return (
-    <Card bordered={bordered}>
-      <Table
-        columns={columns}
-        dataSource={dataSource}
-        rowKey={rowKey}
-        loading={loading}
-        pagination={pagination}
-        onChange={onChange}
-        scroll={scroll}
-        {...props}
-      />
-    </Card>
+    <Table
+      columns={columns}
+      dataSource={dataSource}
+      rowKey={rowKey}
+      loading={loading}
+      pagination={pagination}
+      onChange={onChange}
+      scroll={scroll}
+      size={size}
+      bordered={bordered}
+      style={{
+        background: '#fff',
+        borderRadius: '6px'
+      }}
+      {...props}
+    />
   )
 }
