@@ -10,7 +10,10 @@ import {
   Modal,
   Space,
   Form,
-  TimePicker
+  TimePicker,
+  List,
+  Checkbox,
+  Divider
 } from 'antd'
 import {
   CalendarOutlined,
@@ -18,7 +21,10 @@ import {
   EnvironmentOutlined,
   EyeOutlined,
   ReloadOutlined,
-  EditOutlined
+  EditOutlined,
+  SyncOutlined,
+  CheckCircleOutlined,
+  WarningOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../../api/client'
@@ -375,6 +381,162 @@ export default function AppointmentsPage() {
     }
   }
 
+  // Функции для синхронизации с Bitrix24
+  const fetchBitrixLeads = async () => {
+    try {
+      setSyncLoading(true)
+      setSyncProgress(0)
+      const allLeads = []
+      let start = 0
+
+      while (true) {
+        const response = await fetch('https://bitrix24.newhc.by/rest/15/qseod599og9fc16a/crm.lead.list', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            "SELECT": ["ID", "UF_CRM_1675255265", "UF_CRM_1725445029", "UF_CRM_1725483092", "UF_CRM_1655460588", "UF_CRM_1657019494"],
+            "FILTER": {
+              "STATUS_ID": 2
+            },
+            "start": start
+          })
+        })
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`)
+        }
+
+        const data = await response.json()
+
+        if (data.result && data.result.length > 0) {
+          allLeads.push(...data.result)
+          setSyncProgress(Math.round((allLeads.length / data.total) * 100))
+
+          if (data.next) {
+            start = data.next
+          } else {
+            break
+          }
+        } else {
+          break
+        }
+      }
+
+      setBitrixLeads(allLeads)
+      return allLeads
+    } catch (error) {
+      console.error('Ошибка при получении данных из Bitrix24:', error)
+      message.error('Не удалось получить данные из Bitrix24')
+      return []
+    } finally {
+      setSyncLoading(false)
+    }
+  }
+
+  const compareWithExistingAppointments = async (bitrixLeads) => {
+    try {
+      // Получаем все существующие встречи из нашей системы
+      const response = await api.get('/admin/appointments', {
+        params: {
+          page: 1,
+          pageSize: 10000 // Получаем все записи
+        }
+      })
+
+      const existingAppointments = response.data.data || []
+      const existingLeadIds = new Set(existingAppointments.map(app => app.bitrix_lead_id))
+
+      // Находим отсутствующие встречи
+      const missing = bitrixLeads.filter(lead => !existingLeadIds.has(lead.ID))
+
+      // Группируем по офисам для удобства отображения
+      const groupedMissing = missing.reduce((acc, lead) => {
+        const officeId = lead.UF_CRM_1675255265
+        if (!acc[officeId]) {
+          acc[officeId] = []
+        }
+        acc[officeId].push(lead)
+        return acc
+      }, {})
+
+      const missingList = Object.entries(groupedMissing).map(([officeId, leads]) => ({
+        officeId,
+        leads,
+        count: leads.length
+      }))
+
+      setMissingAppointments(missingList)
+      return missingList
+    } catch (error) {
+      console.error('Ошибка при сравнении данных:', error)
+      message.error('Не удалось сравнить данные')
+      return []
+    }
+  }
+
+  const handleSyncWithBitrix = async () => {
+    const leads = await fetchBitrixLeads()
+    if (leads.length > 0) {
+      await compareWithExistingAppointments(leads)
+    }
+    setSyncModalVisible(true)
+  }
+
+  const handleImportSelected = async () => {
+    if (selectedLeads.length === 0) {
+      message.warning('Выберите встречи для импорта')
+      return
+    }
+
+    try {
+      setSyncLoading(true)
+
+      // Получаем офисы для сопоставления
+      const officesResponse = await api.get('/admin/offices')
+      const offices = officesResponse.data.data || []
+      const officeMap = offices.reduce((acc, office) => {
+        acc[office.bitrixOfficeId] = office.id
+        return acc
+      }, {})
+
+      // Создаем встречи
+      const appointmentsToCreate = []
+
+      for (const leadId of selectedLeads) {
+        const lead = bitrixLeads.find(l => l.ID === leadId)
+        if (lead) {
+          const officeId = officeMap[lead.UF_CRM_1675255265]
+          if (officeId) {
+            appointmentsToCreate.push({
+              bitrix_lead_id: lead.ID,
+              office_id: officeId,
+              date: dayjs(lead.UF_CRM_1655460588).format('YYYY-MM-DD'),
+              timeSlot: lead.UF_CRM_1657019494,
+              status: 'pending'
+            })
+          }
+        }
+      }
+
+      // Отправляем на сервер
+      await api.post('/admin/appointments/bulk', { appointments: appointmentsToCreate })
+
+      message.success(`Импортировано ${appointmentsToCreate.length} встреч`)
+      setSyncModalVisible(false)
+      setSelectedLeads([])
+      loadAppointments()
+      loadStatistics()
+
+    } catch (error) {
+      console.error('Ошибка при импорте:', error)
+      message.error('Не удалось импортировать встречи')
+    } finally {
+      setSyncLoading(false)
+    }
+  }
+
   // Основные показатели для быстрого просмотра
   const keyStatsData = [
     {
@@ -414,6 +576,14 @@ export default function AppointmentsPage() {
   const [showDetailedStats, setShowDetailedStats] = useState(false)
   const [showTable, setShowTable] = useState(false)
 
+  // Состояния для синхронизации с Bitrix24
+  const [syncModalVisible, setSyncModalVisible] = useState(false)
+  const [bitrixLeads, setBitrixLeads] = useState([])
+  const [missingAppointments, setMissingAppointments] = useState([])
+  const [syncLoading, setSyncLoading] = useState(false)
+  const [selectedLeads, setSelectedLeads] = useState([])
+  const [syncProgress, setSyncProgress] = useState(0)
+
   return (
     <div>
       <PageHeader
@@ -421,6 +591,14 @@ export default function AppointmentsPage() {
         icon={<CalendarOutlined />}
         extra={
           <Space>
+            <Button
+              type="primary"
+              icon={<SyncOutlined />}
+              onClick={handleSyncWithBitrix}
+              loading={syncLoading}
+            >
+              Синхронизировать с Bitrix24
+            </Button>
             <Button
               type="text"
               onClick={() => setShowDetailedStats(!showDetailedStats)}
@@ -616,6 +794,123 @@ export default function AppointmentsPage() {
             </div>
           )}
         </Form>
+      </Modal>
+
+      {/* Модальное окно синхронизации с Bitrix24 */}
+      <Modal
+        title={
+          <Space>
+            <SyncOutlined />
+            Синхронизация с Bitrix24
+            {syncLoading && <span>({syncProgress}%)</span>}
+          </Space>
+        }
+        open={syncModalVisible}
+        onCancel={() => setSyncModalVisible(false)}
+        width={800}
+        footer={[
+          <Button key="cancel" onClick={() => setSyncModalVisible(false)}>
+            Отмена
+          </Button>,
+          <Button
+            key="import"
+            type="primary"
+            onClick={handleImportSelected}
+            loading={syncLoading}
+            disabled={selectedLeads.length === 0}
+          >
+            Импортировать выбранные ({selectedLeads.length})
+          </Button>
+        ]}
+      >
+        {syncLoading && (
+          <div style={{ textAlign: 'center', padding: '20px' }}>
+            <SyncOutlined spin style={{ fontSize: '24px', marginBottom: '16px' }} />
+            <div>Получение данных из Bitrix24...</div>
+            <div>{syncProgress}%</div>
+          </div>
+        )}
+
+        {!syncLoading && missingAppointments.length === 0 && (
+          <div style={{ textAlign: 'center', padding: '40px' }}>
+            <CheckCircleOutlined style={{ fontSize: '48px', color: '#52c41a', marginBottom: '16px' }} />
+            <div>Все данные синхронизированы!</div>
+            <div style={{ color: '#666', marginTop: '8px' }}>
+              В Bitrix24 нет новых встреч для импорта
+            </div>
+          </div>
+        )}
+
+        {!syncLoading && missingAppointments.length > 0 && (
+          <div>
+            <div style={{ marginBottom: '16px' }}>
+              <WarningOutlined style={{ color: '#faad14', marginRight: '8px' }} />
+              Найдено <strong>{missingAppointments.reduce((sum, group) => sum + group.count, 0)}</strong> встреч,
+              отсутствующих в системе
+            </div>
+
+            <Divider />
+
+            <List
+              dataSource={missingAppointments}
+              renderItem={(group) => (
+                <List.Item>
+                  <div style={{ width: '100%' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>
+                      Офис ID: {group.officeId} ({group.count} встреч)
+                    </div>
+
+                    <List
+                      size="small"
+                      dataSource={group.leads}
+                      renderItem={(lead) => (
+                        <List.Item style={{ padding: '4px 0' }}>
+                          <Checkbox
+                            checked={selectedLeads.includes(lead.ID)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedLeads([...selectedLeads, lead.ID])
+                              } else {
+                                setSelectedLeads(selectedLeads.filter(id => id !== lead.ID))
+                              }
+                            }}
+                          />
+                          <div style={{ marginLeft: '8px', flex: 1 }}>
+                            <div>
+                              <strong>Лид #{lead.ID}</strong> •
+                              {dayjs(lead.UF_CRM_1655460588).format('DD.MM.YYYY')} •
+                              {lead.UF_CRM_1657019494}
+                            </div>
+                            <div style={{ color: '#666', fontSize: '12px' }}>
+                              Сотрудник ID: {lead.UF_CRM_1725445029}
+                            </div>
+                          </div>
+                        </List.Item>
+                      )}
+                    />
+                  </div>
+                </List.Item>
+              )}
+            />
+
+            <Divider />
+
+            <div style={{ marginTop: '16px' }}>
+              <Space>
+                <Button
+                  onClick={() => setSelectedLeads(bitrixLeads.map(lead => lead.ID))}
+                >
+                  Выбрать все
+                </Button>
+                <Button
+                  onClick={() => setSelectedLeads([])}
+                >
+                  Снять все
+                </Button>
+              </Space>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   )

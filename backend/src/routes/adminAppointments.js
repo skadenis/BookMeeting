@@ -270,4 +270,41 @@ router.get('/stats/overview', async (req, res, next) => {
   }
 });
 
+// Bulk создание встреч для импорта из Bitrix24
+router.post('/bulk', [
+  body('appointments').isArray({ min: 1 }),
+  body('appointments.*.bitrix_lead_id').isString(),
+  body('appointments.*.office_id').isUUID(),
+  body('appointments.*.date').isISO8601(),
+  body('appointments.*.timeSlot').isString(),
+  body('appointments.*.status').optional().isIn(['pending', 'confirmed', 'cancelled', 'rescheduled']),
+], async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+    const { appointments } = req.body;
+
+    // Создаем встречи пакетно
+    const createdAppointments = await models.Appointment.bulkCreate(
+      appointments.map(apt => ({
+        bitrix_lead_id: apt.bitrix_lead_id,
+        office_id: apt.office_id,
+        date: apt.date,
+        timeSlot: apt.timeSlot,
+        status: apt.status || 'pending',
+        createdBy: 0 // Системный пользователь
+      }))
+    );
+
+    res.json({
+      data: createdAppointments,
+      message: `Создано ${createdAppointments.length} встреч`
+    });
+
+  } catch (e) {
+    next(e);
+  }
+});
+
 module.exports = router;
