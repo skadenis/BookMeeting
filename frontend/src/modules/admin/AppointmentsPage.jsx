@@ -492,7 +492,7 @@ export default function AppointmentsPage() {
   ]
 
   const [showDetailedStats, setShowDetailedStats] = useState(false)
-  const [showTable, setShowTable] = useState(false)
+  const [showTable, setShowTable] = useState(true)
 
   // Состояния для синхронизации с Bitrix24
   const [syncModalVisible, setSyncModalVisible] = useState(false)
@@ -518,24 +518,33 @@ export default function AppointmentsPage() {
               Синхронизировать с Bitrix24
             </Button>
             <Button
-              type="text"
-              onClick={() => setShowDetailedStats(!showDetailedStats)}
+              icon={<ReloadOutlined />}
+              onClick={handleRefresh}
+              loading={loading}
             >
-              {showDetailedStats ? 'Показать основное' : 'Показать детали'}
-            </Button>
-            <Button
-              type="text"
-              onClick={() => setShowTable(!showTable)}
-            >
-              {showTable ? 'Скрыть таблицу' : 'Показать таблицу'}
+              Обновить
             </Button>
           </Space>
         }
-        onRefresh={handleRefresh}
-        loading={loading}
       />
 
       <StatsSection stats={showDetailedStats ? fullStatsData : keyStatsData} />
+
+      <div style={{ marginTop: '16px' }}>
+        <Button
+          type="link"
+          onClick={() => setShowTable(!showTable)}
+          style={{ marginRight: '16px' }}
+        >
+          {showTable ? 'Скрыть таблицу' : 'Показать таблицу'}
+        </Button>
+        <Button
+          type="link"
+          onClick={() => setShowDetailedStats(!showDetailedStats)}
+        >
+          {showDetailedStats ? 'Показать основное' : 'Показать все статусы'}
+        </Button>
+      </div>
 
       {showTable && (
         <>
@@ -777,7 +786,10 @@ export default function AppointmentsPage() {
                 <List.Item>
                   <div style={{ width: '100%' }}>
                     <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>
-                      Офис ID: {group.officeId} ({group.count} встреч)
+                      {(() => {
+                        const office = offices.find(o => o.bitrixOfficeId === group.officeId)
+                        return office ? `${office.city} • ${office.address}` : `Офис ID: ${group.officeId}`
+                      })()} ({group.count} встреч)
                     </div>
 
                     <List
