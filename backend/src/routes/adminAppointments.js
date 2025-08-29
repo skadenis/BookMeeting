@@ -166,6 +166,19 @@ router.put('/:id', [
       return res.status(404).json({ error: 'Встреча не найдена' });
     }
 
+    // Проверяем, изменяется ли дата или время
+    const isDateChanged = date !== undefined && new Date(date).toISOString().split('T')[0] !== appointment.date;
+    const isTimeSlotChanged = time_slot !== undefined && time_slot !== appointment.timeSlot;
+
+    // Если изменяется дата или время, и статус не был явно установлен,
+    // и текущий статус не является финальным - автоматически устанавливаем rescheduled
+    if ((isDateChanged || isTimeSlotChanged) && status === undefined) {
+      // Не устанавливаем rescheduled для уже завершенных или отмененных встреч
+      if (appointment.status !== 'confirmed' && appointment.status !== 'cancelled') {
+        appointment.status = 'rescheduled';
+      }
+    }
+
     // Обновляем поля
     if (status !== undefined) appointment.status = status;
     if (date !== undefined) appointment.date = date;

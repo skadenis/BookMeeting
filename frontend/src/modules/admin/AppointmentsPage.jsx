@@ -8,14 +8,17 @@ import {
   message,
   Tooltip,
   Modal,
-  Space
+  Space,
+  Form,
+  TimePicker
 } from 'antd'
 import {
   CalendarOutlined,
   ClockCircleOutlined,
   EnvironmentOutlined,
   EyeOutlined,
-  ReloadOutlined
+  ReloadOutlined,
+  EditOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../../api/client'
@@ -28,6 +31,14 @@ const { RangePicker } = DatePicker
 const { Search } = Input
 
 function useApi() { return api }
+
+const TIME_SLOTS = [
+  '09:00-09:30', '09:30-10:00', '10:00-10:30', '10:30-11:00',
+  '11:00-11:30', '11:30-12:00', '12:00-12:30', '12:30-13:00',
+  '13:00-13:30', '13:30-14:00', '14:00-14:30', '14:30-15:00',
+  '15:00-15:30', '15:30-16:00', '16:00-16:30', '16:30-17:00',
+  '17:00-17:30', '17:30-18:00'
+]
 
 const STATUS_COLORS = {
   pending: 'gold',
@@ -138,6 +149,11 @@ export default function AppointmentsPage() {
     cancelled: 0,
     rescheduled: 0
   })
+
+  // Состояние для модального окна редактирования
+  const [editModalVisible, setEditModalVisible] = useState(false)
+  const [editingAppointment, setEditingAppointment] = useState(null)
+  const [editForm] = Form.useForm()
 
   const loadStatistics = async () => {
     try {
@@ -258,13 +274,22 @@ export default function AppointmentsPage() {
     {
       title: 'Действия',
       key: 'actions',
+      width: 150,
+      fixed: 'right',
       render: (_, record) => (
         <Space>
           <Tooltip title="Просмотр">
-            <Button 
-              size="small" 
-              icon={<EyeOutlined />} 
+            <Button
+              size="small"
+              icon={<EyeOutlined />}
               onClick={() => showAppointmentDetails(record)}
+            />
+          </Tooltip>
+          <Tooltip title="Редактировать">
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => openEditModal(record)}
             />
           </Tooltip>
           {record.status === 'pending' && (
@@ -290,29 +315,57 @@ export default function AppointmentsPage() {
     }
   ]
 
+  const [detailsModalVisible, setDetailsModalVisible] = useState(false)
+  const [viewingAppointment, setViewingAppointment] = useState(null)
+
   const showAppointmentDetails = (appointment) => {
-    Modal.info({
-      title: 'Детали встречи',
-      width: 600,
-      content: (
-        <div>
-          <Row gutter={16}>
-            <Col span={12}>
-              <p><strong>Дата:</strong> {dayjs(appointment.date).format('DD.MM.YYYY dddd')}</p>
-              <p><strong>Время:</strong> {appointment.timeSlot}</p>
-              <p><strong>Статус:</strong> <Tag color={STATUS_COLORS[appointment.status]}>{STATUS_LABELS[appointment.status]}</Tag></p>
-            </Col>
-            <Col span={12}>
-              <p><strong>Офис:</strong> {appointment.Office?.city}, {appointment.Office?.address}</p>
-              <p><strong>Создано:</strong> {dayjs(appointment.createdAt).format('DD.MM.YYYY HH:mm')}</p>
-              {appointment.bitrix_lead_id && (
-                <p><strong>ID лида в Битрикс:</strong> {appointment.bitrix_lead_id}</p>
-              )}
-            </Col>
-          </Row>
-        </div>
-      )
+    setViewingAppointment(appointment)
+    setDetailsModalVisible(true)
+  }
+
+  const handleDetailsEdit = () => {
+    setDetailsModalVisible(false)
+    openEditModal(viewingAppointment)
+  }
+
+  const openEditModal = (appointment) => {
+    setEditingAppointment(appointment)
+    editForm.setFieldsValue({
+      date: dayjs(appointment.date),
+      timeSlot: appointment.timeSlot,
+      status: appointment.status
     })
+    setEditModalVisible(true)
+  }
+
+  const handleEditSave = async () => {
+    try {
+      const values = await editForm.validateFields()
+      // Проверяем, изменялись ли дата или время
+      const isDateChanged = values.date.format('YYYY-MM-DD') !== editingAppointment.date
+      const isTimeChanged = values.timeSlot !== editingAppointment.timeSlot
+      const isStatusChanged = values.status !== editingAppointment.status
+
+      const updateData = {
+        date: values.date.format('YYYY-MM-DD'),
+        time_slot: values.timeSlot
+      }
+
+      // Если статус был изменен вручную, передаем его
+      if (isStatusChanged) {
+        updateData.status = values.status
+      }
+      // Если статус не был изменен, но изменилась дата или время,
+      // не передаем статус - пусть бэкенд установит rescheduled автоматически
+
+      await api.put(`/admin/appointments/${editingAppointment.id}`, updateData)
+      message.success('Встреча обновлена')
+      setEditModalVisible(false)
+      loadAppointments()
+      loadStatistics()
+    } catch (error) {
+      message.error('Не удалось обновить встречу')
+    }
   }
 
   const statsData = [
@@ -430,6 +483,102 @@ export default function AppointmentsPage() {
         onChange={handleTableChange}
         scroll={{ x: 1000 }}
       />
+
+      {/* Модальное окно просмотра деталей встречи */}
+      <Modal
+        title="Детали встречи"
+        open={detailsModalVisible}
+        onCancel={() => setDetailsModalVisible(false)}
+        onOk={handleDetailsEdit}
+        width={600}
+        okText="Редактировать"
+        cancelText="Закрыть"
+      >
+        {viewingAppointment && (
+          <div>
+            <Row gutter={16}>
+              <Col span={12}>
+                <p><strong>Дата:</strong> {dayjs(viewingAppointment.date).format('DD.MM.YYYY dddd')}</p>
+                <p><strong>Время:</strong> {viewingAppointment.timeSlot}</p>
+                <p><strong>Статус:</strong> <Tag color={STATUS_COLORS[viewingAppointment.status]}>{STATUS_LABELS[viewingAppointment.status]}</Tag></p>
+              </Col>
+              <Col span={12}>
+                <p><strong>Офис:</strong> {viewingAppointment.Office?.city}, {viewingAppointment.Office?.address}</p>
+                <p><strong>Создано:</strong> {dayjs(viewingAppointment.createdAt).format('DD.MM.YYYY HH:mm')}</p>
+                {viewingAppointment.bitrix_lead_id && (
+                  <p><strong>ID лида в Битрикс:</strong> {viewingAppointment.bitrix_lead_id}</p>
+                )}
+              </Col>
+            </Row>
+          </div>
+        )}
+      </Modal>
+
+      {/* Модальное окно редактирования встречи */}
+      <Modal
+        title="Редактирование встречи"
+        open={editModalVisible}
+        onCancel={() => setEditModalVisible(false)}
+        onOk={handleEditSave}
+        width={500}
+        okText="Сохранить"
+        cancelText="Отмена"
+      >
+        <Form
+          form={editForm}
+          layout="vertical"
+          initialValues={{
+            status: 'pending'
+          }}
+        >
+          <Form.Item
+            name="date"
+            label="Дата встречи"
+            rules={[{ required: true, message: 'Выберите дату' }]}
+          >
+            <DatePicker
+              format="DD.MM.YYYY"
+              disabledDate={(current) => current && current < dayjs().startOf('day')}
+              style={{ width: '100%' }}
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="timeSlot"
+            label="Время встречи"
+            rules={[{ required: true, message: 'Выберите время' }]}
+          >
+            <Select placeholder="Выберите время">
+              {TIME_SLOTS.map(slot => (
+                <Select.Option key={slot} value={slot}>
+                  {slot}
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            name="status"
+            label="Статус"
+            rules={[{ required: true, message: 'Выберите статус' }]}
+          >
+            <Select>
+              <Select.Option value="pending">Ожидает подтверждения</Select.Option>
+              <Select.Option value="confirmed">Подтверждена</Select.Option>
+              <Select.Option value="cancelled">Отменена</Select.Option>
+              <Select.Option value="rescheduled">Перенесена</Select.Option>
+            </Select>
+          </Form.Item>
+
+          {editingAppointment && (
+            <div style={{ marginTop: 16, padding: 12, backgroundColor: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 4 }}>
+              <p style={{ margin: 0, fontSize: '12px', color: '#52c41a' }}>
+                <strong>Внимание:</strong> При изменении даты или времени без ручного изменения статуса, статус автоматически установится как "Перенесена".
+              </p>
+            </div>
+          )}
+        </Form>
+      </Modal>
     </div>
   )
 }
