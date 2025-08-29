@@ -137,17 +137,34 @@ export default function TemplateEditPage() {
         // Проверяем, нужно ли конвертировать старый формат
         const firstDay = Object.values(template.weekdays)[0]
         if (firstDay && Array.isArray(firstDay)) {
-          // Старый формат: конвертируем в новый
+          // Старый формат: конвертируем в новый и восстанавливаем specialSlots
           const newWeekdays = {}
           for (const [dayKey, slots] of Object.entries(template.weekdays)) {
             if (Array.isArray(slots) && slots.length > 0) {
+              // Восстанавливаем базовые настройки дня
               newWeekdays[dayKey] = {
                 start: slots[0].start,
                 end: slots[slots.length - 1].end,
-                capacity: slots[0].capacity || 1,
+                capacity: slots[0].capacity || template.defaultCapacity || 1,
                 specialSlots: []
               }
               
+              // Восстанавливаем specialSlots из слотов с нестандартной вместимостью
+              const specialSlots = []
+              slots.forEach(slot => {
+                if (slot.capacity !== (template.defaultCapacity || 1)) {
+                  specialSlots.push({
+                    start: slot.start,
+                    end: slot.end,
+                    capacity: slot.capacity,
+                    type: slot.capacity === 0 ? 'break' : 'custom'
+                  })
+                }
+              })
+              
+              if (specialSlots.length > 0) {
+                newWeekdays[dayKey].specialSlots = specialSlots
+              }
             }
           }
           setWeekdays(newWeekdays)
@@ -664,10 +681,18 @@ export default function TemplateEditPage() {
                 const wd = weekdays[d.key] || {}
                 const working = (wd.capacity ?? defaultCapacity) > 0
                 return (
-                  <div key={d.key} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ width: 40, fontWeight: 600 }}>{d.short}</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <Text>Рабочий день:</Text>
+                  <div key={d.key} style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 8, 
+                    flexWrap: 'wrap',
+                    padding: '8px 0',
+                    borderBottom: '1px solid #f0f0f0'
+                  }}>
+                    <div style={{ width: 40, fontWeight: 600, flexShrink: 0 }}>{d.short}</div>
+                    
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      <Text style={{ whiteSpace: 'nowrap' }}>Рабочий день:</Text>
                       <Switch
                         checked={working}
                         onChange={(checked) => {
@@ -681,8 +706,15 @@ export default function TemplateEditPage() {
                         }}
                       />
                     </div>
-                    <div style={{ marginLeft: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <Text>с</Text>
+                    
+                    <div style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: 6, 
+                      flexShrink: 0,
+                      marginLeft: 'auto'
+                    }}>
+                      <Text style={{ whiteSpace: 'nowrap' }}>с</Text>
                       <TimePicker
                         value={wd.start ? dayjs(wd.start, 'HH:mm') : baseStartTime}
                         onChange={(val) => {
@@ -694,8 +726,9 @@ export default function TemplateEditPage() {
                         format="HH:mm"
                         minuteStep={30}
                         disabled={!working}
+                        style={{ width: 80 }}
                       />
-                      <Text>до</Text>
+                      <Text style={{ whiteSpace: 'nowrap' }}>до</Text>
                       <TimePicker
                         value={wd.end ? dayjs(wd.end, 'HH:mm') : baseEndTime}
                         onChange={(val) => {
@@ -707,12 +740,13 @@ export default function TemplateEditPage() {
                         format="HH:mm"
                         minuteStep={30}
                         disabled={!working}
+                        style={{ width: 80 }}
                       />
                       <Button 
                         size="small" 
                         onClick={() => resetDayToDefault(d.key)}
                         disabled={!working}
-                        style={{ marginLeft: 8 }}
+                        style={{ marginLeft: 8, flexShrink: 0 }}
                       >
                         Сбросить к базовым
                       </Button>
