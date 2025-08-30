@@ -294,6 +294,39 @@ router.post('/open-late', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Clear slots in a specific time interval within the day
+router.post('/clear-interval', async (req, res) => {
+    try {
+        const { office_id, date, from, to } = req.body;
+        if (!office_id || !date || !from || !to) return res.status(400).json({ error: 'Missing params' });
+
+        // Basic HH:mm validation
+        const isTime = (t) => /^\d{2}:\d{2}$/.test(String(t));
+        if (!isTime(from) || !isTime(to)) return res.status(400).json({ error: 'Invalid time format, expected HH:mm' });
+        if (from >= to) return res.status(400).json({ error: 'from must be earlier than to' });
+
+        const schedule = await models.Schedule.findOne({ where: { office_id, date } });
+        if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
+
+        // Remove all slots fully inside the interval [from, to]
+        const deleted = await models.Slot.destroy({ 
+            where: { 
+                schedule_id: schedule.id,
+                start: { [Op.gte]: from },
+                end:   { [Op.lte]: to }
+            }
+        });
+
+        schedule.isCustomized = true;
+        schedule.customizedAt = new Date();
+        await schedule.save();
+        await invalidateSlotsCache(office_id, date);
+        broadcastSlotsUpdated(office_id, date);
+
+        res.json({ success: true, message: 'Interval cleared', deleted });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Set working window for a day: regenerate from template, then trim by bounds
 router.post('/set-window', async (req, res) => {
     try {

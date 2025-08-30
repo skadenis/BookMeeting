@@ -423,60 +423,7 @@ export default function OfficeDetail() {
                               >
                                 Изменить
                               </button>
-                              <button 
-                                style={{ 
-                                  border: '1px solid #faad14', 
-                                  background: 'white', 
-                                  color: '#faad14', 
-                                  padding: '4px 8px', 
-                                  borderRadius: 4, 
-                                  fontSize: 11, 
-                                  cursor: 'pointer',
-                                  fontWeight: 500,
-                                  transition: 'all 0.2s'
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.target.style.background = '#faad14'
-                                  e.target.style.color = 'white'
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.target.style.background = 'white'
-                                  e.target.style.color = '#faad14'
-                                }}
-                                onClick={() => {
-                                  Modal.confirm({
-                                    title: 'Очистить расписание дня?',
-                                    icon: <ExclamationCircleOutlined />,
-                                    content: (
-                                      <div>
-                                        <p>Удалить все слоты на <strong>{full}</strong>?</p>
-                                        <p style={{ color: '#ff4d4f', fontSize: '12px' }}>
-                                          ⚠️ Все записи на этот день будут отменены.
-                                        </p>
-                                      </div>
-                                    ),
-                                    okText: 'Да, очистить',
-                                    okButtonProps: { danger: true },
-                                    cancelText: 'Отмена',
-                                    onOk: async () => {
-                                      try {
-                                        await api.post('/slots/bulk', { 
-                                          office_id: id, 
-                                          date: dateISO, 
-                                          slots: [] 
-                                        })
-                                        await loadPreview()
-                                        message.success('Расписание дня очищено')
-                                      } catch (error) {
-                                        console.error('Ошибка очистки дня:', error)
-                                        message.error('Не удалось очистить расписание')
-                                      }
-                                    }
-                                  })
-                                }}
-                              >
-                                Очистить
-                              </button>
+                              {/* Очистить = закрыть: кнопка удалена как дублирующая */}
                             </>
                           ) : (
                             <button 
@@ -705,6 +652,37 @@ export default function OfficeDetail() {
                         message.error('Ошибка открытия с времени')
                       }
                     }}>Применить</Button>
+                  </div>
+                </div>
+                <div style={{ gridColumn: '1 / span 2' }}>
+                  <div style={{ marginBottom: 8, fontSize: 12, color: '#666' }}>Очистить промежуток</div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <TimePicker 
+                      format="HH:mm" 
+                      minuteStep={30} 
+                      placeholder="с" 
+                      onChange={(v)=>setOpenFrom(v? v.format('HH:mm'): '')}
+                    />
+                    <span>—</span>
+                    <TimePicker 
+                      format="HH:mm" 
+                      minuteStep={30} 
+                      placeholder="до" 
+                      onChange={(v)=>setCloseAfter(v? v.format('HH:mm'): '')}
+                    />
+                    <Button size="small" danger onClick={async () => {
+                      if (!openFrom || !closeAfter) return message.warning('Укажите оба времени');
+                      try {
+                        await api.post('/admin/slots/clear-interval', { office_id: id, date: dayEditModal.date, from: openFrom, to: closeAfter })
+                        message.success('Промежуток очищен')
+                        setDayEditModal(null)
+                        setOpenFrom('');
+                        setCloseAfter('');
+                        await loadPreview()
+                      } catch (err) {
+                        message.error('Ошибка очистки промежутка')
+                      }
+                    }}>Очистить</Button>
                   </div>
                 </div>
               </div>

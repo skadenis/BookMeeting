@@ -24,11 +24,11 @@ export default function OverridesPage() {
   const [period, setPeriod] = useState([dayjs('09:00','HH:mm'), dayjs('18:00','HH:mm')])
   const [rows, setRows] = useState([])
 
-  useEffect(() => { api.get('/offices').then(r=>setOffices(r.data.data)) }, [api])
+  useEffect(() => { api.get('/admin/offices').then(r=>setOffices(r.data.data)) }, [api])
 
   const loadDay = async () => {
     if (!officeId || !date) return
-    const r = await api.get('/slots/all', { params: { office_id: officeId, date: date.format('YYYY-MM-DD') } })
+    const r = await api.get('/admin/slots/all', { params: { office_id: officeId, date: date.format('YYYY-MM-DD') } })
     setRows(r.data.data || [])
   }
 
@@ -43,7 +43,7 @@ export default function OverridesPage() {
 
   const save = async () => {
     if (!officeId || !date) return
-    await api.post('/slots/bulk', { office_id: officeId, date: date.format('YYYY-MM-DD'), slots: rows })
+    await api.post('/admin/slots/set-window', { office_id: officeId, date: date.format('YYYY-MM-DD') })
     message.success('Сохранено')
   }
 
@@ -69,11 +69,10 @@ export default function OverridesPage() {
       cancelText: 'Отмена',
       onOk: async () => {
         try {
-          // Отправляем пустой массив слотов для очистки дня
-          await api.post('/slots/bulk', { 
+          // Закрываем день через административный endpoint
+          await api.post('/admin/slots/close-day', { 
             office_id: officeId, 
-            date: date.format('YYYY-MM-DD'), 
-            slots: [] 
+            date: date.format('YYYY-MM-DD') 
           })
           setRows([])
           message.success('Все слоты очищены')
