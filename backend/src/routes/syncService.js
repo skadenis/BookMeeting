@@ -164,16 +164,16 @@ router.get('/completed-stats', async (req, res, next) => {
       raw: true
     });
 
+    // Агрегируем по дате без JOIN, чтобы избежать ошибок GROUP BY
     const detailedStats = await models.Appointment.findAll({
       attributes: [
         'status',
-        [models.Appointment.sequelize.fn('COUNT', '*'), 'count'],
-        [models.Appointment.sequelize.fn('DATE', models.Appointment.sequelize.col('date')), 'date']
+        [models.Appointment.sequelize.fn('COUNT', models.Appointment.sequelize.col('id')), 'count'],
+        'date'
       ],
       where: whereClause,
       group: ['status', 'date'],
       order: [['date', 'DESC']],
-      include: [{ model: models.Office, attributes: ['city', 'address'] }],
       raw: true
     });
 
