@@ -457,21 +457,25 @@ export default function OfficeDetail() {
                     if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd) || minStart>=maxEnd) return null
                     const rows = []
                     for (let t=minStart; t<maxEnd; t+=30) rows.push(toTime(t))
-                    // Color helpers: gradient by free/capacity from red (0 free) to green (all free)
+                    // Color helpers: carefully picked, accessible palette (discrete steps)
+                    // 0 -> soft red, quarter -> warm rose, half -> soft amber, 3/4 -> fresh olive, full -> mint
                     const getBgByLoad = (free, cap) => {
-                      if (cap <= 0) return 'linear-gradient(180deg, #fff7e6 0%, #fff2e8 100%)'
-                      const r = Math.max(0, Math.min(1, Number(free)/Number(cap))) // 0..1
-                      const hue = 0 + r * 120 // 0 red -> 120 green
-                      const light = 96 - (1 - r) * 18
-                      const top = Math.min(100, light + 4)
-                      return `linear-gradient(180deg, hsl(${Math.round(hue)}, 70%, ${Math.round(top)}%) 0%, hsl(${Math.round(hue)}, 70%, ${Math.round(light)}%) 100%)`
+                      if (cap <= 0) return '#FFF1E8' // break
+                      const r = Math.max(0, Math.min(1, Number(free)/Number(cap)))
+                      if (r === 0) return '#F8D0CD'       // fully booked
+                      if (r < 0.25) return '#FDE2E1'       // high load
+                      if (r < 0.5) return '#FFF4C2'        // medium load
+                      if (r < 0.75) return '#F4FBE9'       // light load
+                      return '#E9F8EF'                    // very light / free
                     }
                     const getFgByLoad = (free, cap) => {
-                      if (cap <= 0) return '#d46b08'
+                      if (cap <= 0) return '#C75000'
                       const r = Math.max(0, Math.min(1, Number(free)/Number(cap)))
-                      if (r >= 0.66) return '#0b2e13'
-                      if (r >= 0.33) return '#614700'
-                      return '#7f1d1d'
+                      if (r === 0) return '#7F1D1D'
+                      if (r < 0.25) return '#7F1D1D'
+                      if (r < 0.5) return '#6B4E00'
+                      if (r < 0.75) return '#2F4F1F'
+                      return '#134E4A'
                     }
                     return rows.map((t) => (
                       <React.Fragment key={`row-${t}`}>
