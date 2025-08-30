@@ -37,29 +37,17 @@ router.get('/', [
     // Базовые условия
     const where = {};
     
-    // Принудительно показываем только будущие встречи (включая сегодняшние)
+    // Фильтр по датам: строго уважаем выбранный период, без подмены границ
     const today = dayjs().format('YYYY-MM-DD');
-    
-    // Фильтр по датам
     if (start_date && end_date) {
-      const filterStartDate = start_date >= today ? start_date : today;
-      where.date = {
-        [Op.between]: [filterStartDate, end_date]
-      };
+      where.date = { [Op.between]: [start_date, end_date] };
     } else if (start_date) {
-      const filterStartDate = start_date >= today ? start_date : today;
-      where.date = {
-        [Op.gte]: filterStartDate
-      };
+      where.date = { [Op.gte]: start_date };
     } else if (end_date) {
-      where.date = {
-        [Op.between]: [today, end_date]
-      };
+      where.date = { [Op.lte]: end_date };
     } else {
-      // Если нет фильтра по датам, показываем только с сегодняшнего дня
-      where.date = {
-        [Op.gte]: today
-      };
+      // По умолчанию: с сегодняшнего дня
+      where.date = { [Op.gte]: today };
     }
     
     // Фильтр по статусу
@@ -379,6 +367,14 @@ router.get('/sync/bitrix24', async (req, res, next) => {
           const leadDateRaw = String(lead.UF_CRM_1655460588 || '')
           const leadDate = leadDateRaw.includes('T') ? leadDateRaw.slice(0, 10) : dayjs(leadDateRaw).format('YYYY-MM-DD')
           toCreate.push({
+            // Для фронта: оригинальные поля Bitrix, чтобы корректно отображать и выбирать
+            ID: String(lead.ID),
+            STATUS_ID: lead.STATUS_ID,
+            UF_CRM_1675255265: lead.UF_CRM_1675255265, // office id
+            UF_CRM_1725445029: lead.UF_CRM_1725445029, // employee id
+            UF_CRM_1725483092: lead.UF_CRM_1725483092, // reserved
+            UF_CRM_1655460588: lead.UF_CRM_1655460588, // date/time raw
+            UF_CRM_1657019494: lead.UF_CRM_1657019494, // time
             bitrix_lead_id: lead.ID,
             office_id: lead.UF_CRM_1675255265,
             date: leadDate,
@@ -398,6 +394,14 @@ router.get('/sync/bitrix24', async (req, res, next) => {
           if (needsUpdate) {
             toUpdate.push({
               id: existingAppointment.id,
+              // Для фронта: оригинальные поля Bitrix
+              ID: String(lead.ID),
+              STATUS_ID: lead.STATUS_ID,
+              UF_CRM_1675255265: lead.UF_CRM_1675255265,
+              UF_CRM_1725445029: lead.UF_CRM_1725445029,
+              UF_CRM_1725483092: lead.UF_CRM_1725483092,
+              UF_CRM_1655460588: lead.UF_CRM_1655460588,
+              UF_CRM_1657019494: lead.UF_CRM_1657019494,
               bitrix_lead_id: lead.ID,
               office_id: lead.UF_CRM_1675255265,
               date: leadDate,

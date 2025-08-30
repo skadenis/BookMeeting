@@ -916,18 +916,20 @@ export default function AppointmentsPage() {
                             onChange={(e) => {
                               const leadId = String(lead.ID)
                               if (e.target.checked) {
-                                setSelectedLeads([...selectedLeads, leadId])
+                                setSelectedLeads(prev => prev.includes(leadId) ? prev : [...prev, leadId])
                               } else {
-                                setSelectedLeads(selectedLeads.filter(id => id !== leadId))
+                                setSelectedLeads(prev => prev.filter(id => id !== leadId))
                               }
                             }}
                           />
                           <div style={{ marginLeft: '8px', flex: 1 }}>
                             <div>
-                              <strong>Лид #{lead.ID}</strong> •
-                              {dayjs(lead.UF_CRM_1655460588).format('DD.MM.YYYY')}
-                              {lead.UF_CRM_1657019494 && (
-                                <span> • {lead.UF_CRM_1657019494}</span>
+                              <strong>Лид #{lead.ID}</strong>
+                              {lead.UF_CRM_1655460588 && (
+                                <>
+                                  {' '}• {dayjs(String(lead.UF_CRM_1655460588).slice(0,10)).format('DD.MM.YYYY')}
+                                  {lead.UF_CRM_1657019494 && (<span> • {lead.UF_CRM_1657019494}</span>)}
+                                </>
                               )}
                             </div>
                             <div style={{ color: '#666', fontSize: '12px' }}>
