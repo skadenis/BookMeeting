@@ -9,6 +9,7 @@ import TemplatesPage from './modules/admin/TemplatesPage.jsx'
 import TemplateEditPage from './modules/admin/TemplateEditPage.jsx'
 import AppointmentsPage from './modules/admin/AppointmentsPage.jsx'
 import UsersPage from './modules/admin/UsersPage.jsx'
+import SettingsPage from './modules/admin/SettingsPage.jsx'
 import 'antd/dist/reset.css'
 import { ConfigProvider } from 'antd'
 import ruRU from 'antd/locale/ru_RU'
@@ -32,6 +33,7 @@ const router = createBrowserRouter([
       { path: 'templates/:id/edit', element: <TemplateEditPage /> },
       { path: 'appointments', element: <AppointmentsPage /> },
       { path: 'users', element: <UsersPage /> },
+      { path: 'settings', element: <SettingsPage /> },
     ]
   },
 ])

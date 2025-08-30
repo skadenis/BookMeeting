@@ -145,6 +145,7 @@ export function App() {
   const [allSlotsWeek, setAllSlotsWeek] = useState([[],[],[],[],[],[],[]])
   const [availableWeek, setAvailableWeek] = useState([[],[],[],[],[],[],[]])
   const [leadAppt, setLeadAppt] = useState(null)
+  const [settings, setSettings] = useState({ max_booking_days: 7 })
   
   const [autoSelectAttempted, setAutoSelectAttempted] = useState(false)
 
@@ -156,6 +157,16 @@ export function App() {
       .then(r => setOffices(r.data.data))
       .catch(console.error)
       .finally(() => setOfficesLoading(false))
+  }, [apiInstance])
+
+  // Загружаем настройки системы
+  useEffect(() => {
+    apiInstance.get('/admin/settings/public')
+      .then(r => setSettings(r.data.data || { max_booking_days: 7 }))
+      .catch(e => {
+        console.error('Failed to load settings:', e)
+        setSettings({ max_booking_days: 7 }) // fallback
+      })
   }, [apiInstance])
 
   // Auto-select office from Bitrix lead field UF_CRM_1675255265
@@ -297,6 +308,7 @@ export function App() {
     const avail = availableWeek[dayIdx] || []
     if (all.length === 0) return <Tag color="default">Нет расписания</Tag>
     if (isPastDay(dayIdx)) return <Tag color="default">Прошло</Tag>
+    if (isBeyondMaxBookingPeriod(dayIdx)) return <Tag color="default">Недоступно для записи</Tag>
     if (isToday(dayIdx)) {
       const futureAll = all.filter(s => !isPastSlot(dayIdx, s))
       if (futureAll.length === 0) return <Tag color="default">Прошло</Tag>
@@ -340,6 +352,12 @@ export function App() {
 
   const isToday = (dayIdx) => {
     return toLocalISO(addDays(weekStart, dayIdx)) === toLocalISO(new Date())
+  }
+
+  const isBeyondMaxBookingPeriod = (dayIdx) => {
+    const targetDate = dayjs(addDays(weekStart, dayIdx))
+    const maxDate = dayjs().add(settings.max_booking_days, 'day')
+    return targetDate.isAfter(maxDate, 'day')
   }
 
   const jumpToLeadOffice = () => {
@@ -423,6 +441,14 @@ export function App() {
             <Button onClick={nextWeek}>→</Button>
           </Space>
           <div style={{ color:'#666' }}>{toLocalISO(weekStart)} — {toLocalISO(addDays(weekStart,6))}</div>
+          {settings.max_booking_days && (
+            <div style={{ color:'#1890ff', fontSize:'12px', fontWeight: 500 }}>
+              Запись доступна на {settings.max_booking_days} {
+                settings.max_booking_days === 1 ? 'день' : 
+                settings.max_booking_days < 5 ? 'дня' : 'дней'
+              } вперед
+            </div>
+          )}
         </div>
       </Header>
       <Modal open={!officeId && !bootstrapping && autoSelectAttempted} footer={null} closable={false} centered maskClosable={false} title={null}>
@@ -536,6 +562,11 @@ export function App() {
                               <Button size="middle" block disabled
                                 style={{ background:'#d9d9d9', borderColor:'#d9d9d9', color:'#fff', opacity:1, fontSize:'13px' }}>
                                 {t} | прошло
+                              </Button>
+                            ) : isBeyondMaxBookingPeriod(idx) ? (
+                              <Button size="middle" block disabled
+                                style={{ background:'#d9d9d9', borderColor:'#d9d9d9', color:'#fff', opacity:1, fontSize:'13px' }}>
+                                {t} | недоступно
                               </Button>
                             ) : a ? (
                               <Button size="middle" block onClick={() => {

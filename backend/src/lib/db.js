@@ -89,6 +89,16 @@ const User = sequelize.define('User', {
   updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'), field: 'updated_at' },
 }, { tableName: 'users' });
 
+// Settings
+const Setting = sequelize.define('Setting', {
+  id: { type: DataTypes.UUID, primaryKey: true, defaultValue: DataTypes.UUIDV4 },
+  key: { type: DataTypes.STRING(100), allowNull: false, unique: true },
+  value: { type: DataTypes.JSON, allowNull: false },
+  description: { type: DataTypes.TEXT, allowNull: true },
+  createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'), field: 'created_at' },
+  updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'), field: 'updated_at' },
+}, { tableName: 'settings' });
+
 // Associations
 Office.hasMany(Schedule, { foreignKey: { name: 'office_id', allowNull: false } });
 Schedule.belongsTo(Office, { foreignKey: { name: 'office_id', allowNull: false } });
@@ -117,4 +127,4 @@ async function seedDefaultAdminIfEmpty() {
   console.log('Seeded default admin user:', email);
 }
 
-module.exports = { sequelize, Sequelize, DataTypes, Op, models: { Office, Schedule, Slot, Appointment, AppointmentHistory, Template, User }, seedDefaultAdminIfEmpty };
+module.exports = { sequelize, Sequelize, DataTypes, Op, models: { Office, Schedule, Slot, Appointment, AppointmentHistory, Template, User, Setting }, seedDefaultAdminIfEmpty };
