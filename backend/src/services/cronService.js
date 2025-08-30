@@ -23,7 +23,7 @@ class CronService {
         });
 
         const result = response.data.data;
-        console.log(`Auto sync completed: ${result.updated} updated, ${result.expired} expired`);
+        console.log(`Auto sync completed: ${result.updated} updated, ${result.no_show} marked as no_show`);
         
       } catch (error) {
         console.error('Auto sync cron error:', error.message);
