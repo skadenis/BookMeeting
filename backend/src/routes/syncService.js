@@ -12,6 +12,7 @@ const BITRIX_STATUS_MAPPING = {
   '38': 'completed',     // Встреча завершена успешно
   '39': 'no_show',       // Клиент не пришел
   '40': 'cancelled',     // Встреча отменена
+  'CONVERTED': 'completed', // Лид конвертирован → считаем как завершенную встречу
   // Добавьте другие статусы по мере необходимости
 };
 
@@ -82,38 +83,38 @@ router.post('/auto-sync-statuses', async (req, res, next) => {
     }, {});
 
     let updatedCount = 0;
-    let expiredCount = 0;
+    let noShowCount = 0;
 
     // Обновляем статусы встреч
     for (const appointment of appointmentsToCheck) {
       const leadId = appointment.bitrix_lead_id;
       const newStatus = leadStatusMap[leadId];
 
-      // Проверяем, прошла ли встреча (автоматическое истечение)
+      // Проверяем, прошла ли встреча
       const appointmentDateTime = dayjs(`${appointment.date} ${appointment.timeSlot.split('-')[1]}`);
       const isPastDue = appointmentDateTime.isBefore(dayjs().subtract(2, 'hours')); // 2 часа буфер
 
-      if (isPastDue && appointment.status === 'confirmed' && !newStatus) {
-        // Встреча прошла, но статус в Bitrix24 не обновлен - помечаем как просроченную
-        await appointment.update({ status: 'expired' });
-        expiredCount++;
-        console.log(`Marked appointment ${appointment.id} as expired (past due)`);
-      } else if (newStatus && newStatus !== appointment.status) {
-        // Статус изменился в Bitrix24
+      if (newStatus && newStatus !== appointment.status) {
+        // Статус изменился в Bitrix24 (включая CONVERTED -> completed)
         await appointment.update({ status: newStatus });
         updatedCount++;
         console.log(`Updated appointment ${appointment.id}: ${appointment.status} -> ${newStatus}`);
+      } else if (isPastDue && ['pending', 'confirmed', 'rescheduled'].includes(appointment.status)) {
+        // Встреча прошла, а в Bitrix нет признака завершения → считаем как неявку
+        await appointment.update({ status: 'no_show' });
+        noShowCount++;
+        console.log(`Marked appointment ${appointment.id} as no_show (past due without conversion)`);
       }
     }
 
-    console.log(`Status sync complete: ${updatedCount} updated, ${expiredCount} expired`);
+    console.log(`Status sync complete: ${updatedCount} updated, ${noShowCount} marked as no_show`);
 
     res.json({
       data: {
         checked: appointmentsToCheck.length,
         updated: updatedCount,
-        expired: expiredCount,
-        message: `Проверено ${appointmentsToCheck.length} встреч, обновлено ${updatedCount}, просрочено ${expiredCount}`
+        no_show: noShowCount,
+        message: `Проверено ${appointmentsToCheck.length} встреч, обновлено ${updatedCount}, неявок ${noShowCount}`
       }
     });
 
