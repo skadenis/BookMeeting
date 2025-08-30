@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const { models, Op } = require('../lib/db');
+const { adminAuthMiddleware } = require('../middleware/adminAuth');
 const dayjs = require('dayjs');
 const axios = require('axios');
 
@@ -16,18 +17,19 @@ const BITRIX_STATUS_MAPPING = {
   // Добавьте другие статусы по мере необходимости
 };
 
-// Middleware для защиты cron-ручек внутренним токеном
-function verifyCronToken(req, res, next) {
+// Middleware: разрешить вызов либо по внутреннему X-Cron-Token, либо от авторизованного админа
+function allowCronOrAdmin(req, res, next) {
   const token = req.headers['x-cron-token'];
   const expected = process.env.CRON_TOKEN || 'internal-cron-token';
-  if (token !== expected) {
-    return res.status(403).json({ error: 'Forbidden' });
+  if (token && token === expected) {
+    return next();
   }
-  next();
+  // Фоллбек: пускаем авторизованных админов
+  return adminAuthMiddleware(req, res, next);
 }
 
 // Автоматическая синхронизация статусов с Bitrix24
-router.post('/auto-sync-statuses', verifyCronToken, async (req, res, next) => {
+router.post('/auto-sync-statuses', allowCronOrAdmin, async (req, res, next) => {
   try {
     console.log('Starting automatic status sync with Bitrix24...');
 
@@ -205,7 +207,7 @@ router.get('/completed-stats', async (req, res, next) => {
 });
 
 // Автоматическое истечение просроченных встреч
-router.post('/auto-expire', verifyCronToken, async (req, res, next) => {
+router.post('/auto-expire', allowCronOrAdmin, async (req, res, next) => {
   try {
     console.log('Starting automatic appointment expiration...');
 
