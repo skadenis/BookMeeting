@@ -457,11 +457,21 @@ export default function OfficeDetail() {
                     if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd) || minStart>=maxEnd) return null
                     const rows = []
                     for (let t=minStart; t<maxEnd; t+=30) rows.push(toTime(t))
-                    // Minimalist encoding: white cells, thin left bar for critical states, subtle progress line
+                    // Minimalist encoding: thin left bar for critical states, subtle progress line, gentle background hues
                     const leftAccent = (free, cap) => {
                       if (cap <= 0) return '#fa8c16' // break
                       if (Number(cap) > 0 && Number(free) === 0) return '#ef4444' // fully booked
                       return '#e5e7eb' // neutral
+                    }
+                    const cellBg = (selected, free, cap, isBreak) => {
+                      if (selected) return '#f0f7ff'
+                      if (isBreak) return '#FFF7E6'
+                      if (cap <= 0) return '#ffffff'
+                      const r = Math.max(0, Math.min(1, Number(free)/Number(cap)))
+                      if (r === 0) return '#FFF1F0'   // very light red
+                      if (r < 0.5) return '#FFFBE6'    // very light amber
+                      if (r < 0.75) return '#F6FFED'   // very light green
+                      return '#F0FFFB'                 // near free, minty white
                     }
                     return rows.map((t) => (
                       <React.Fragment key={`row-${t}`}>
@@ -474,7 +484,7 @@ export default function OfficeDetail() {
                           const dateISO = toLocalISO(dayjs(previewStart).add(i,'day'))
                           const selected = has && isSlotSelected(dateISO, slot?.start, slot?.end, slot?.id)
                           const accent = has ? leftAccent(free, cap) : '#e5e7eb'
-                          const bg = selected ? '#f0f7ff' : (isBreak ? '#FFF7E6' : '#ffffff')
+                          const bg = cellBg(selected, free, cap, isBreak)
                           const fg = has ? (isBreak ? '#874d00' : (free===0 && cap>0 ? '#b91c1c' : '#1f2937')) : '#999'
                           const baseStyle = { borderRight:'1px solid #f2f2f2', borderBottom:'1px solid #f2f2f2', padding:6, background: bg, color: fg, cursor: has ? 'pointer' : 'default', boxShadow: selected ? 'inset 0 0 0 2px #1677ff' : 'none', borderLeft:`4px solid ${accent}` }
                           const ratio = (cap>0) ? Math.max(0, Math.min(1, Number(free)/Number(cap))) : 0
