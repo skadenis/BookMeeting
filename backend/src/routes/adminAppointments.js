@@ -423,14 +423,14 @@ router.get('/sync/bitrix24', async (req, res, next) => {
       officeId,
       leads,
       count: leads.length,
-      type: 'create'
+      actionType: 'create'
     }))
 
     const updateList = Object.entries(groupedToUpdate).map(([officeId, leads]) => ({
       officeId,
       leads,
       count: leads.length,
-      type: 'update'
+      actionType: 'update'
     }))
 
     console.log(`Sync complete: ${createList.length} office groups to create, ${updateList.length} office groups to update`)

@@ -405,8 +405,8 @@ export default function AppointmentsPage() {
 
       // Объединяем новые и обновляемые встречи для отображения
       const allChanges = [
-        ...(syncData.toCreate || []).map(group => ({ ...group, actionType: 'create' })),
-        ...(syncData.toUpdate || []).map(group => ({ ...group, actionType: 'update' }))
+        ...(syncData.toCreate || []),
+        ...(syncData.toUpdate || [])
       ]
       setMissingAppointments(allChanges)
 
@@ -450,14 +450,14 @@ export default function AppointmentsPage() {
       }, {})
 
       for (const leadId of selectedLeads) {
-        const lead = bitrixLeads.find(l => l.ID === leadId)
+        const lead = bitrixLeads.find(l => String(l.ID) === String(leadId))
         if (lead) {
           const officeId = officeMap[lead.UF_CRM_1675255265]
 
           // Ищем, есть ли уже такая встреча в нашей системе
           const existingAppointment = missingAppointments
             .flatMap(group => group.leads)
-            .find(app => app.bitrix_lead_id === leadId && app.id)
+            .find(app => (String(app.bitrix_lead_id) === String(leadId) || String(app.ID) === String(leadId)) && app.id)
 
           if (existingAppointment) {
             // Обновляем существующую встречу
@@ -874,11 +874,20 @@ export default function AppointmentsPage() {
                           <div style={{ marginLeft: '8px', flex: 1 }}>
                             <div>
                               <strong>Лид #{lead.ID}</strong> •
-                              {dayjs(lead.UF_CRM_1655460588).format('DD.MM.YYYY')} •
-                              {lead.UF_CRM_1657019494}
+                              {dayjs(lead.UF_CRM_1655460588).format('DD.MM.YYYY')}
+                              {lead.UF_CRM_1657019494 && (
+                                <span> • {lead.UF_CRM_1657019494}</span>
+                              )}
                             </div>
                             <div style={{ color: '#666', fontSize: '12px' }}>
-                              Сотрудник ID: {lead.UF_CRM_1725445029}
+                              {lead.UF_CRM_1725445029 && (
+                                <span>Сотрудник ID: {lead.UF_CRM_1725445029}</span>
+                              )}
+                              {lead.STATUS_ID && (
+                                <span style={{ marginLeft: lead.UF_CRM_1725445029 ? '12px' : '0' }}>
+                                  Статус: {lead.STATUS_ID === '37' ? 'Подтверждена' : 'Ожидает'}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </List.Item>
