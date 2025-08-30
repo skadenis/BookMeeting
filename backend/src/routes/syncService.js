@@ -86,7 +86,7 @@ router.post('/auto-sync-statuses', verifyCronToken, async (req, res, next) => {
 
     console.log(`Retrieved ${bitrixLeads.length} leads from Bitrix24`);
 
-    // Создаем маппинг lead_id -> status
+    // Создаем маппинг lead_id -> статус Bitrix
     const leadStatusMap = bitrixLeads.reduce((acc, lead) => {
       acc[lead.ID] = BITRIX_STATUS_MAPPING[lead.STATUS_ID] || null;
       return acc;
@@ -101,7 +101,7 @@ router.post('/auto-sync-statuses', verifyCronToken, async (req, res, next) => {
       const newStatus = leadStatusMap[leadId];
 
       // Проверяем, прошла ли встреча
-      const appointmentDateTime = dayjs(`${appointment.date} ${appointment.timeSlot.split('-')[1]}`);
+      const appointmentDateTime = dayjs(`${appointment.date} ${appointment.timeSlot?.split('-')[1] || '23:59'}`);
       const isPastDue = appointmentDateTime.isBefore(dayjs().subtract(2, 'hours')); // 2 часа буфер
 
       if (newStatus && newStatus !== appointment.status) {

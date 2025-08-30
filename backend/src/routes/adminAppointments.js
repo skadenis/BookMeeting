@@ -376,16 +376,19 @@ router.get('/sync/bitrix24', async (req, res, next) => {
 
         if (!existingAppointment) {
           // Лида нет в нашей системе - нужно создать
+          const leadDateRaw = String(lead.UF_CRM_1655460588 || '')
+          const leadDate = leadDateRaw.includes('T') ? leadDateRaw.slice(0, 10) : dayjs(leadDateRaw).format('YYYY-MM-DD')
           toCreate.push({
             bitrix_lead_id: lead.ID,
             office_id: lead.UF_CRM_1675255265,
-            date: dayjs(lead.UF_CRM_1655460588).format('YYYY-MM-DD'),
+            date: leadDate,
             timeSlot: lead.UF_CRM_1657019494,
             status: bitrixStatus
           })
         } else {
           // Лид есть в нашей системе - проверяем статус и данные
-          const leadDate = dayjs(lead.UF_CRM_1655460588).format('YYYY-MM-DD')
+          const leadDateRaw = String(lead.UF_CRM_1655460588 || '')
+          const leadDate = leadDateRaw.includes('T') ? leadDateRaw.slice(0, 10) : dayjs(leadDateRaw).format('YYYY-MM-DD')
           const needsUpdate = (
             existingAppointment.status !== bitrixStatus ||
             existingAppointment.date !== leadDate ||
