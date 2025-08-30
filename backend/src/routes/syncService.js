@@ -186,11 +186,15 @@ router.get('/completed-stats', async (req, res, next) => {
       cancelled: 0
     });
 
+    const totalProcessed = Object.values(totalStats).reduce((sum, count) => sum + count, 0);
+    // Дублируем total внутрь summary для удобства фронта
+    const summary = { ...totalStats, total: totalProcessed };
+
     res.json({
       data: {
-        summary: totalStats,
+        summary,
         daily: detailedStats,
-        total: Object.values(totalStats).reduce((sum, count) => sum + count, 0)
+        total: totalProcessed
       }
     });
 
