@@ -457,22 +457,11 @@ export default function OfficeDetail() {
                     if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd) || minStart>=maxEnd) return null
                     const rows = []
                     for (let t=minStart; t<maxEnd; t+=30) rows.push(toTime(t))
-                    // Accessibility-first encoding: strong left accent color + ASCII fill bar
-                    const getAccentByLoad = (free, cap) => {
-                      if (cap <= 0) return '#fa8c16'          // break
-                      const usedRatio = 1 - Math.max(0, Math.min(1, Number(free)/Number(cap)))
-                      if (usedRatio === 1) return '#cf1322'   // fully booked (red)
-                      if (usedRatio >= 0.5) return '#faad14'  // medium-high (amber)
-                      if (usedRatio > 0) return '#52c41a'     // low (green)
-                      return '#13c2c2'                        // empty (teal)
-                    }
-                    const buildPips = (free, cap) => {
-                      if (cap <= 0) return 'перерыв'
-                      const units = Math.max(1, Math.min(4, Number(cap)))
-                      const usedUnits = Math.round(units * (1 - Math.max(0, Math.min(1, Number(free)/Number(cap)))))
-                      const filled = '▮'.repeat(usedUnits)
-                      const empty = '▯'.repeat(Math.max(0, units - usedUnits))
-                      return filled + empty
+                    // Minimalist encoding: white cells, thin left bar for critical states, subtle progress line
+                    const leftAccent = (free, cap) => {
+                      if (cap <= 0) return '#fa8c16' // break
+                      if (Number(cap) > 0 && Number(free) === 0) return '#ef4444' // fully booked
+                      return '#e5e7eb' // neutral
                     }
                     return rows.map((t) => (
                       <React.Fragment key={`row-${t}`}>
@@ -484,10 +473,13 @@ export default function OfficeDetail() {
                           const isBreak = has && cap === 0
                           const dateISO = toLocalISO(dayjs(previewStart).add(i,'day'))
                           const selected = has && isSlotSelected(dateISO, slot?.start, slot?.end, slot?.id)
-                          const accent = has ? getAccentByLoad(free, cap) : '#d9d9d9'
-                          const bg = selected ? '#e6f4ff' : (isBreak ? '#FFF7E6' : '#ffffff')
-                          const fg = has ? (isBreak ? '#874d00' : '#243240') : '#999'
-                          const baseStyle = { borderRight:'1px solid #eee', borderBottom:'1px solid #eee', padding:6, background: bg, color: fg, cursor: has ? 'pointer' : 'default', boxShadow: selected ? 'inset 0 0 0 2px #1677ff' : 'none', borderLeft:`6px solid ${accent}` }
+                          const accent = has ? leftAccent(free, cap) : '#e5e7eb'
+                          const bg = selected ? '#f0f7ff' : (isBreak ? '#FFF7E6' : '#ffffff')
+                          const fg = has ? (isBreak ? '#874d00' : (free===0 && cap>0 ? '#b91c1c' : '#1f2937')) : '#999'
+                          const baseStyle = { borderRight:'1px solid #f2f2f2', borderBottom:'1px solid #f2f2f2', padding:6, background: bg, color: fg, cursor: has ? 'pointer' : 'default', boxShadow: selected ? 'inset 0 0 0 2px #1677ff' : 'none', borderLeft:`4px solid ${accent}` }
+                          const ratio = (cap>0) ? Math.max(0, Math.min(1, Number(free)/Number(cap))) : 0
+                          const barTrack = { height:3, background:'#f1f5f9', borderRadius:2, overflow:'hidden', marginTop:4 }
+                          const barFill = { height:'100%', width: `${Math.round(ratio*100)}%`, background: (cap>0 && free===0) ? '#ef4444' : '#22c55e' }
                           return <div key={`${i}-${t}`} style={baseStyle} onClick={() => {
                             if (!has) return
                             const additive = (window.event && (window.event.metaKey || window.event.ctrlKey))
@@ -500,7 +492,12 @@ export default function OfficeDetail() {
                             setSelectedSlots([])
                             setEditSlot({ ...slot, date: dateISO2, office_id: id })
                             setEditCapacity(cap || 1)
-                          }}>{has ? (isBreak ? `${slot.start} • Перерыв` : `${slot.start} • ${free}/${cap}  ${buildPips(free, cap)}`) : '—'}</div>
+                          }}>{has ? (
+                            <>
+                              <div>{isBreak ? `${slot.start} • Перерыв` : `${slot.start} • ${free}/${cap}`}</div>
+                              {!isBreak && <div style={barTrack}><div style={barFill} /></div>}
+                            </>
+                          ) : '—'}</div>
                         })}
                       </React.Fragment>
                     ))
