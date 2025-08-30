@@ -793,7 +793,7 @@ export default function AppointmentsPage() {
           </Button>,
           <Button
             key="select-all"
-            onClick={() => setSelectedLeads(bitrixLeads.map(lead => lead.ID))}
+            onClick={() => setSelectedLeads(bitrixLeads.map(lead => String(lead.ID)))}
           >
             Выбрать все
           </Button>,
@@ -861,12 +861,13 @@ export default function AppointmentsPage() {
                       renderItem={(lead) => (
                         <List.Item style={{ padding: '4px 0' }}>
                           <Checkbox
-                            checked={selectedLeads.includes(lead.ID)}
+                            checked={selectedLeads.includes(String(lead.ID))}
                             onChange={(e) => {
+                              const leadId = String(lead.ID)
                               if (e.target.checked) {
-                                setSelectedLeads([...selectedLeads, lead.ID])
+                                setSelectedLeads([...selectedLeads, leadId])
                               } else {
-                                setSelectedLeads(selectedLeads.filter(id => id !== lead.ID))
+                                setSelectedLeads(selectedLeads.filter(id => id !== leadId))
                               }
                             }}
                           />
