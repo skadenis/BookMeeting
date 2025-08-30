@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+// Fixed Row/Col imports for appointment details modal
 import {
   DatePicker,
   Button,
