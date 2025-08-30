@@ -562,12 +562,23 @@ router.get('/all', async (req, res, next) => {
 		
 		const allSlots = await models.Slot.findAll({ where: { schedule_id: schedule.id }, order: [['start','ASC']] });
 		const appointments = await models.Appointment.findAll({ where: { office_id: officeId, date, status: ['pending','confirmed'] } });
-		const pendingByTime = appointments.filter(a=>a.status==='pending').reduce((acc,a)=>{ acc[a.timeSlot]=(acc[a.timeSlot]||0)+1; return acc },{});
-		const confirmedByTime = appointments.filter(a=>a.status==='confirmed').reduce((acc,a)=>{ acc[a.timeSlot]=(acc[a.timeSlot]||0)+1; return acc },{});
+		const pendingByTime = { };
+		const confirmedByTime = { };
+		for (const a of appointments) {
+			const ts = String(a.timeSlot||'').trim();
+			if (!ts) continue;
+			const bucket = a.status==='pending' ? pendingByTime : confirmedByTime;
+			if (ts.includes('-')) {
+				const key = ts.replace(/\s+/g,'');
+				bucket[key] = (bucket[key]||0)+1;
+			} else {
+				bucket[ts] = (bucket[ts]||0)+1; // по старту
+			}
+		}
 		const data = allSlots.map(s => {
-			const key = `${s.start}-${s.end}`;
-			const pending = pendingByTime[key] || 0;
-			const confirmed = confirmedByTime[key] || 0;
+			const key = `${s.start}-${s.end}`.replace(/\s+/g,'');
+			const pending = (pendingByTime[key] || 0) + (pendingByTime[s.start] || 0);
+			const confirmed = (confirmedByTime[key] || 0) + (confirmedByTime[s.start] || 0);
 			const used = pending + confirmed;
 			const capacity = Number.isFinite(s.capacity) ? s.capacity : 1;
 			const free = Math.max(0, capacity - used);
