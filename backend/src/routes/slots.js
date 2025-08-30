@@ -697,4 +697,72 @@ router.post('/capacity', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Удалить слот
+router.delete('/:id', [
+  param('id').isUUID()
+], async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { id } = req.params;
+
+    // Находим слот
+    const slot = await models.Slot.findByPk(id, {
+      include: [{ model: models.Schedule, attributes: ['office_id', 'date'] }]
+    });
+
+    if (!slot) {
+      return res.status(404).json({ error: 'Слот не найден' });
+    }
+
+    const schedule = slot.Schedule;
+
+    // Отменяем все записи в этом слоте
+    await models.Appointment.update(
+      { status: 'cancelled' },
+      {
+        where: {
+          office_id: schedule.office_id,
+          date: schedule.date,
+          timeSlot: `${slot.start}-${slot.end}`
+        }
+      }
+    );
+
+    // Удаляем слот
+    await slot.destroy();
+
+    // Проверяем, остались ли еще слоты в этом расписании
+    const remainingSlots = await models.Slot.count({
+      where: { schedule_id: schedule.id }
+    });
+
+    // Если слотов больше нет, удаляем и расписание
+    if (remainingSlots === 0) {
+      await schedule.destroy();
+    }
+
+    // Инвалидируем кеш и уведомляем клиентов
+    await invalidateSlotsCache(schedule.office_id, schedule.date);
+    broadcastSlotsUpdated(schedule.office_id, schedule.date);
+
+    console.log(`Deleted slot ${id}, cancelled appointments, remaining slots: ${remainingSlots}`);
+
+    res.json({ 
+      data: { 
+        id, 
+        cancelled_appointments: true,
+        schedule_removed: remainingSlots === 0
+      } 
+    });
+
+  } catch (e) { 
+    console.error('Delete slot error:', e);
+    next(e); 
+  }
+});
+
 module.exports = router;

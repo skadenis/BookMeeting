@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Tabs, Card, Space, Button, DatePicker, Typography, message, Skeleton, Select, Input, Modal, Form, TimePicker, Divider, Tag, Tooltip, Dropdown } from 'antd'
-import { MoreOutlined, DeleteOutlined, EnvironmentOutlined } from '@ant-design/icons'
+import { MoreOutlined, DeleteOutlined, EnvironmentOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import 'dayjs/locale/ru'
@@ -290,6 +290,70 @@ export default function OfficeDetail() {
                     </Space>
                   </Space>
                 </Card>
+
+                {/* Панель управления выбранными слотами */}
+                {selectedSlots.length > 0 && (
+                  <Card 
+                    size="small" 
+                    style={{ 
+                      background: '#e6f4ff', 
+                      border: '1px solid #91caff' 
+                    }}
+                  >
+                    <Space>
+                      <span style={{ fontWeight: 500 }}>
+                        Выбрано слотов: {selectedSlots.length}
+                      </span>
+                      <Button 
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => {
+                          Modal.confirm({
+                            title: 'Удалить выбранные слоты?',
+                            icon: <ExclamationCircleOutlined />,
+                            content: (
+                              <div>
+                                <p>Вы уверены, что хотите <strong>удалить {selectedSlots.length} выбранных слотов</strong>?</p>
+                                <p style={{ color: '#ff4d4f', fontSize: '12px' }}>
+                                  ⚠️ Все записи в этих слотах будут отменены.
+                                </p>
+                              </div>
+                            ),
+                            okText: 'Да, удалить',
+                            okButtonProps: { danger: true },
+                            cancelText: 'Отмена',
+                            onOk: async () => {
+                              try {
+                                // Удаляем выбранные слоты
+                                for (const slot of selectedSlots) {
+                                  if (slot.slotId) {
+                                    await api.delete(`/admin/slots/${slot.slotId}`)
+                                  }
+                                }
+                                setSelectedSlots([])
+                                await loadPreview()
+                                message.success(`Удалено ${selectedSlots.length} слотов`)
+                              } catch (error) {
+                                console.error('Ошибка удаления слотов:', error)
+                                message.error('Не удалось удалить слоты')
+                              }
+                            }
+                          })
+                        }}
+                      >
+                        Удалить выбранные
+                      </Button>
+                      <Button 
+                        size="small"
+                        onClick={() => setSelectedSlots([])}
+                      >
+                        Снять выделение
+                      </Button>
+                    </Space>
+                  </Card>
+                )}
+
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(7, minmax(160px, 1fr))', borderLeft:'1px solid #eee', borderTop:'1px solid #eee' }}>
                   {[0,1,2,3,4,5,6].map((i) => {
                     const dd = dayjs(previewStart).add(i,'day').locale('ru')
@@ -361,6 +425,60 @@ export default function OfficeDetail() {
                                 onClick={() => setDayEditModal({ date: dateISO, dateLabel: full })}
                               >
                                 Изменить
+                              </button>
+                              <button 
+                                style={{ 
+                                  border: '1px solid #faad14', 
+                                  background: 'white', 
+                                  color: '#faad14', 
+                                  padding: '4px 8px', 
+                                  borderRadius: 4, 
+                                  fontSize: 11, 
+                                  cursor: 'pointer',
+                                  fontWeight: 500,
+                                  transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.target.style.background = '#faad14'
+                                  e.target.style.color = 'white'
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.target.style.background = 'white'
+                                  e.target.style.color = '#faad14'
+                                }}
+                                onClick={() => {
+                                  Modal.confirm({
+                                    title: 'Очистить расписание дня?',
+                                    icon: <ExclamationCircleOutlined />,
+                                    content: (
+                                      <div>
+                                        <p>Удалить все слоты на <strong>{full}</strong>?</p>
+                                        <p style={{ color: '#ff4d4f', fontSize: '12px' }}>
+                                          ⚠️ Все записи на этот день будут отменены.
+                                        </p>
+                                      </div>
+                                    ),
+                                    okText: 'Да, очистить',
+                                    okButtonProps: { danger: true },
+                                    cancelText: 'Отмена',
+                                    onOk: async () => {
+                                      try {
+                                        await api.post('/slots/bulk', { 
+                                          office_id: id, 
+                                          date: dateISO, 
+                                          slots: [] 
+                                        })
+                                        await loadPreview()
+                                        message.success('Расписание дня очищено')
+                                      } catch (error) {
+                                        console.error('Ошибка очистки дня:', error)
+                                        message.error('Не удалось очистить расписание')
+                                      }
+                                    }
+                                  })
+                                }}
+                              >
+                                Очистить
                               </button>
                             </>
                           ) : (

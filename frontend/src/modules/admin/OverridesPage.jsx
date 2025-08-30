@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { DatePicker, TimePicker, Button, Space, Select, message, Card, Input } from 'antd'
-import { CalendarOutlined } from '@ant-design/icons'
+import { DatePicker, TimePicker, Button, Space, Select, message, Card, Input, Modal } from 'antd'
+import { CalendarOutlined, DeleteOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../../api/client'
 import PageHeader from './components/PageHeader'
@@ -47,6 +47,44 @@ export default function OverridesPage() {
     message.success('Сохранено')
   }
 
+  const clearAllSlots = () => {
+    if (!officeId || !date) {
+      message.warning('Выберите офис и дату')
+      return
+    }
+
+    Modal.confirm({
+      title: 'Очистить все слоты?',
+      icon: <ExclamationCircleOutlined />,
+      content: (
+        <div>
+          <p>Вы уверены, что хотите <strong>удалить все слоты</strong> на {date.format('DD.MM.YYYY')}?</p>
+          <p style={{ color: '#ff4d4f', fontSize: '12px' }}>
+            ⚠️ Это действие нельзя отменить. Все существующие записи на этот день будут отменены.
+          </p>
+        </div>
+      ),
+      okText: 'Да, очистить все',
+      okButtonProps: { danger: true },
+      cancelText: 'Отмена',
+      onOk: async () => {
+        try {
+          // Отправляем пустой массив слотов для очистки дня
+          await api.post('/slots/bulk', { 
+            office_id: officeId, 
+            date: date.format('YYYY-MM-DD'), 
+            slots: [] 
+          })
+          setRows([])
+          message.success('Все слоты очищены')
+        } catch (error) {
+          console.error('Ошибка очистки слотов:', error)
+          message.error('Не удалось очистить слоты')
+        }
+      }
+    })
+  }
+
   return (
     <div>
       <PageHeader
@@ -63,6 +101,14 @@ export default function OverridesPage() {
         <Button onClick={loadDay}>Загрузить</Button>
         <Button onClick={fill}>Заполнить периодом</Button>
         <Button onClick={addRow}>Добавить слот</Button>
+        <Button 
+          danger 
+          icon={<DeleteOutlined />} 
+          onClick={clearAllSlots}
+          disabled={!officeId || !date}
+        >
+          Очистить все слоты
+        </Button>
         <Button type="primary" onClick={save}>Сохранить</Button>
       </Space>
 
