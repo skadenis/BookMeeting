@@ -657,7 +657,7 @@ router.post('/generate-week', [
 			if (items.length > 0) {
 				const schedule = await models.Schedule.create({ office_id, date: iso, isWorkingDay: true });
 				for (const s of items) {
-					await models.Slot.create({ schedule_id: schedule.id, start: s.start, end: s.end, available: true, capacity: s.capacity || 1 });
+					await models.Slot.create({ schedule_id: schedule.id, start: s.start, end: s.end, available: true, capacity: (s.capacity ?? 1) });
 				}
 			}
 		}
