@@ -143,7 +143,7 @@ export default function TemplateEditPage() {
           for (const [dayKey, slots] of Object.entries(template.weekdays)) {
             if (Array.isArray(slots) && slots.length > 0) {
               // Восстанавливаем базовые настройки дня
-              const baseCapacity = slots[0].capacity || template.defaultCapacity || 1
+              const baseCapacity = (slots[0].capacity ?? template.defaultCapacity ?? 1)
               newWeekdays[dayKey] = {
                 start: slots[0].start,
                 end: slots[slots.length - 1].end,
@@ -182,7 +182,7 @@ export default function TemplateEditPage() {
           newWeekdays[d.key] = {
             start: template.baseStartTime || '09:00',
             end: template.baseEndTime || '18:00',
-            capacity: template.defaultCapacity || 1,
+            capacity: (template.defaultCapacity ?? 1),
             specialSlots: []
           }
         })
@@ -296,7 +296,7 @@ export default function TemplateEditPage() {
     const slots = generateTimeSlots(weekday.start, weekday.end, slotDuration)
     return slots.map(slot => ({
       ...slot,
-      capacity: weekday.capacity || defaultCapacity
+      capacity: (weekday.capacity ?? defaultCapacity)
     }))
   }
 
@@ -317,7 +317,7 @@ export default function TemplateEditPage() {
           const slots = generateTimeSlots(profile.start, profile.end, slotDuration)
           const slotsWithCapacity = slots.map(slot => ({
             ...slot,
-            capacity: profile.capacity || defaultCapacity
+            capacity: (profile.capacity ?? defaultCapacity)
           }))
           
           // Применяем специальные слоты (если есть)
@@ -400,7 +400,7 @@ export default function TemplateEditPage() {
     let maxEndTime = baseEndTime
     
     Object.values(weekdays).forEach(weekday => {
-      if (weekday && weekday.start && weekday.end && weekday.capacity > 0) {
+      if (weekday && weekday.start && weekday.end && (weekday.capacity ?? 1) > 0) {
         const dayStart = dayjs(weekday.start, 'HH:mm')
         const dayEnd = dayjs(weekday.end, 'HH:mm')
         
@@ -463,7 +463,7 @@ export default function TemplateEditPage() {
           }}>Время</div>
           {DOW.map((d, index) => {
             const weekday = weekdays[d.key]
-            const isClosed = weekday?.capacity === 0
+            const isClosed = (weekday?.capacity ?? 0) === 0
             
             console.log(`🔍 Rendering day ${d.key} (${d.short}):`, { weekday, isClosed })
             
@@ -483,11 +483,11 @@ export default function TemplateEditPage() {
                   setEditSlot({ 
                     dayKey: d.key, 
                     timeSlot: null, 
-                    currentCapacity: weekday?.capacity || defaultCapacity, 
+                    currentCapacity: (weekday?.capacity ?? defaultCapacity), 
                     isSpecialSlot: false,
                     isDayEdit: true
                   })
-                  setEditCapacity(weekday?.capacity || defaultCapacity)
+                  setEditCapacity(weekday?.capacity ?? defaultCapacity)
                 }}
                 title={`Кликните для редактирования дня ${d.short}`}
               >
@@ -563,7 +563,7 @@ export default function TemplateEditPage() {
                 }
                 
                 // Базовая вместимость: 0 для времени вне окна, иначе capacity дня
-                let capacity = isWithin ? (typeof weekday.capacity === 'number' ? weekday.capacity : defaultCapacity) : 0
+                let capacity = isWithin ? (typeof (weekday?.capacity ?? defaultCapacity) === 'number' ? (weekday?.capacity ?? defaultCapacity) : defaultCapacity) : 0
                 
                 // Специальные слоты перекрывают базовую вместимость (могут открыть время в выходной/за окном)
                 if (weekday.specialSlots) {
@@ -745,7 +745,7 @@ export default function TemplateEditPage() {
                           onChange={(checked) => {
                             const copy = { ...weekdays }
                             copy[d.key] = copy[d.key] || {}
-                            copy[d.key].capacity = checked ? (defaultCapacity || 1) : 0
+                            copy[d.key].capacity = checked ? (defaultCapacity ?? 1) : 0
                             // При включении заполняем базовыми часами, если пусто
                             copy[d.key].start = copy[d.key].start || baseStartTime.format('HH:mm')
                             copy[d.key].end = copy[d.key].end || baseEndTime.format('HH:mm')
@@ -816,7 +816,7 @@ export default function TemplateEditPage() {
                           type="number"
                           min={0}
                           max={10}
-                          value={wd.capacity || defaultCapacity}
+                          value={wd.capacity ?? defaultCapacity}
                           onChange={(e) => {
                             const copy = { ...weekdays }
                             copy[d.key] = copy[d.key] || {}
