@@ -128,7 +128,40 @@ export default function AppointmentsPage() {
 
       const response = await api.get('/admin/appointments', { params })
 
-      setAppointments(response.data.data || [])
+      // Клиентская страховка: убираем записи вне выбранного периода
+      let items = response.data.data || []
+      if (filters.dateRange && filters.dateRange.length === 2) {
+        const start = filters.dateRange[0].startOf('day')
+        const end = filters.dateRange[1].endOf('day')
+        items = items.filter(a => {
+          const d = dayjs(a.date, 'YYYY-MM-DD')
+          return (d.isAfter(start) || d.isSame(start, 'day')) && (d.isBefore(end) || d.isSame(end, 'day'))
+        })
+      }
+
+      if (filters.status) {
+        items = items.filter(a => a.status === filters.status)
+      }
+
+      if (filters.office) {
+        items = items.filter(a => String(a.office_id || a.Office?.id) === String(filters.office))
+      }
+
+      if (filters.search && String(filters.search).trim().length) {
+        const q = String(filters.search).trim().toLowerCase()
+        items = items.filter(a => {
+          const parts = [
+            a.bitrix_lead_id && String(a.bitrix_lead_id),
+            a.timeSlot && String(a.timeSlot),
+            a.date && dayjs(a.date).format('DD.MM.YYYY'),
+            a.Office?.city,
+            a.Office?.address
+          ].filter(Boolean).map(s => String(s).toLowerCase())
+          return parts.some(p => p.includes(q))
+        })
+      }
+
+      setAppointments(items)
       setPagination(prev => ({
         ...prev,
         current: page,
