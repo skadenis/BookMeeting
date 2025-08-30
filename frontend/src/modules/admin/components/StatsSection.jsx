@@ -18,8 +18,6 @@ export default function StatsSection({ stats }) {
               valueStyle={{
                 color: stat.color || '#1677ff'
               }}
-              suffix={stat.suffix}
-              prefix={stat.prefix}
             />
           </Card>
         </Col>
