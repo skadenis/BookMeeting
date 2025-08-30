@@ -616,4 +616,64 @@ router.put('/bulk', [
   }
 });
 
+// Normalize existing appointments that have timeSlot in short form ("HH:MM") to full interval ("HH:MM-HH:MM")
+router.post('/normalize-timeslots', [
+  body('start_date').optional().isISO8601(),
+  body('end_date').optional().isISO8601(),
+  body('office_id').optional().isUUID(),
+  body('dry_run').optional().isBoolean(),
+], async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+    const todayIso = new Date().toISOString().slice(0,10);
+    const start = req.body.start_date || todayIso;
+    const end = req.body.end_date || new Date(Date.now()+365*24*3600*1000).toISOString().slice(0,10);
+    const officeId = req.body.office_id || null;
+    const dryRun = !!req.body.dry_run;
+
+    const where = {
+      status: ['pending','confirmed'],
+      date: { [Op.between]: [start, end] }
+    };
+    if (officeId) where.office_id = officeId;
+
+    // Only short-form timeslots
+    const all = await models.Appointment.findAll({ where });
+    const targets = all.filter(a => a && a.timeSlot && !String(a.timeSlot).includes('-'));
+
+    const invalidatePairs = new Set();
+    const results = { scanned: all.length, candidates: targets.length, updated: 0, misses: 0 };
+
+    for (const appt of targets) {
+      try {
+        const startTime = String(appt.timeSlot).slice(0,5);
+        const schedule = await models.Schedule.findOne({ where: { office_id: appt.office_id, date: appt.date } });
+        if (!schedule) { results.misses++; continue; }
+        const slot = await models.Slot.findOne({ where: { schedule_id: schedule.id, start: startTime } });
+        if (!slot) { results.misses++; continue; }
+        const full = `${slot.start}-${slot.end}`;
+        if (!dryRun) {
+          appt.timeSlot = full;
+          await appt.save();
+          invalidatePairs.add(`${appt.office_id}__${appt.date}`);
+        }
+        results.updated++;
+      } catch { results.misses++; }
+    }
+
+    if (!dryRun) {
+      for (const key of Array.from(invalidatePairs)) {
+        const [oid, dt] = key.split('__');
+        await require('../services/slotsService').invalidateSlotsCache(oid, dt);
+        const { broadcastSlotsUpdated } = require('../lib/ws');
+        broadcastSlotsUpdated(oid, dt);
+      }
+    }
+
+    res.json({ ok: true, range: { start, end }, office_id: officeId, dry_run: dryRun, ...results });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
