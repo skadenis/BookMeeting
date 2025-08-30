@@ -457,25 +457,22 @@ export default function OfficeDetail() {
                     if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd) || minStart>=maxEnd) return null
                     const rows = []
                     for (let t=minStart; t<maxEnd; t+=30) rows.push(toTime(t))
-                    // Color helpers: carefully picked, accessible palette (discrete steps)
-                    // 0 -> soft red, quarter -> warm rose, half -> soft amber, 3/4 -> fresh olive, full -> mint
-                    const getBgByLoad = (free, cap) => {
-                      if (cap <= 0) return '#FFF1E8' // break
-                      const r = Math.max(0, Math.min(1, Number(free)/Number(cap)))
-                      if (r === 0) return '#F8D0CD'       // fully booked
-                      if (r < 0.25) return '#FDE2E1'       // high load
-                      if (r < 0.5) return '#FFF4C2'        // medium load
-                      if (r < 0.75) return '#F4FBE9'       // light load
-                      return '#E9F8EF'                    // very light / free
+                    // Accessibility-first encoding: strong left accent color + ASCII fill bar
+                    const getAccentByLoad = (free, cap) => {
+                      if (cap <= 0) return '#fa8c16'          // break
+                      const usedRatio = 1 - Math.max(0, Math.min(1, Number(free)/Number(cap)))
+                      if (usedRatio === 1) return '#cf1322'   // fully booked (red)
+                      if (usedRatio >= 0.5) return '#faad14'  // medium-high (amber)
+                      if (usedRatio > 0) return '#52c41a'     // low (green)
+                      return '#13c2c2'                        // empty (teal)
                     }
-                    const getFgByLoad = (free, cap) => {
-                      if (cap <= 0) return '#C75000'
-                      const r = Math.max(0, Math.min(1, Number(free)/Number(cap)))
-                      if (r === 0) return '#7F1D1D'
-                      if (r < 0.25) return '#7F1D1D'
-                      if (r < 0.5) return '#6B4E00'
-                      if (r < 0.75) return '#2F4F1F'
-                      return '#134E4A'
+                    const buildPips = (free, cap) => {
+                      if (cap <= 0) return 'перерыв'
+                      const units = Math.max(1, Math.min(4, Number(cap)))
+                      const usedUnits = Math.round(units * (1 - Math.max(0, Math.min(1, Number(free)/Number(cap)))))
+                      const filled = '▮'.repeat(usedUnits)
+                      const empty = '▯'.repeat(Math.max(0, units - usedUnits))
+                      return filled + empty
                     }
                     return rows.map((t) => (
                       <React.Fragment key={`row-${t}`}>
@@ -487,9 +484,10 @@ export default function OfficeDetail() {
                           const isBreak = has && cap === 0
                           const dateISO = toLocalISO(dayjs(previewStart).add(i,'day'))
                           const selected = has && isSlotSelected(dateISO, slot?.start, slot?.end, slot?.id)
-                          const bg = selected ? '#e6f4ff' : (has ? getBgByLoad(free, cap) : '#fafafa')
-                          const fg = has ? getFgByLoad(free, cap) : '#999'
-                          const baseStyle = { borderRight:'1px solid #eee', borderBottom:'1px solid #eee', padding:6, background: bg, color: fg, cursor: has ? 'pointer' : 'default', boxShadow: selected ? 'inset 0 0 0 2px #1677ff' : 'none' }
+                          const accent = has ? getAccentByLoad(free, cap) : '#d9d9d9'
+                          const bg = selected ? '#e6f4ff' : (isBreak ? '#FFF7E6' : '#ffffff')
+                          const fg = has ? (isBreak ? '#874d00' : '#243240') : '#999'
+                          const baseStyle = { borderRight:'1px solid #eee', borderBottom:'1px solid #eee', padding:6, background: bg, color: fg, cursor: has ? 'pointer' : 'default', boxShadow: selected ? 'inset 0 0 0 2px #1677ff' : 'none', borderLeft:`6px solid ${accent}` }
                           return <div key={`${i}-${t}`} style={baseStyle} onClick={() => {
                             if (!has) return
                             const additive = (window.event && (window.event.metaKey || window.event.ctrlKey))
@@ -502,7 +500,7 @@ export default function OfficeDetail() {
                             setSelectedSlots([])
                             setEditSlot({ ...slot, date: dateISO2, office_id: id })
                             setEditCapacity(cap || 1)
-                          }}>{has ? (isBreak ? `${slot.start} • Перерыв` : `${slot.start} • ${free}/${cap}`) : '—'}</div>
+                          }}>{has ? (isBreak ? `${slot.start} • Перерыв` : `${slot.start} • ${free}/${cap}  ${buildPips(free, cap)}`) : '—'}</div>
                         })}
                       </React.Fragment>
                     ))
