@@ -248,8 +248,9 @@ router.post('/:id/apply', [
 			}
 			await models.Schedule.destroy({ where: { office_id, date: iso } });
 			
-			// Create schedule and slots
-			if ((items||[]).length > 0) {
+			// Create schedule and slots only if there are working (>0 capacity) slots
+			const hasWorking = (items||[]).some(it => Number(it?.capacity ?? 1) > 0);
+			if (hasWorking) {
 				const schedule = await models.Schedule.create({ 
 					office_id, 
 					date: iso, 
@@ -264,7 +265,7 @@ router.post('/:id/apply', [
 						start: slot.start, 
 						end: slot.end, 
 						available: true, 
-						capacity: slot.capacity || 1 
+						capacity: (slot.capacity ?? 1) 
 					});
 				}
 			}

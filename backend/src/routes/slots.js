@@ -29,8 +29,9 @@ async function applyTemplateToDate(officeId, date, weekdaysTemplate, markAsCusto
 	}
 	await models.Schedule.destroy({ where: { office_id: officeId, date } });
 	
-	// Create new schedule
-	if (items.length > 0) {
+	// Create new schedule only if there are any working slots (>0 capacity)
+	const hasWorking = (items||[]).some(it => Number(it?.capacity ?? 1) > 0);
+	if (hasWorking) {
 		const schedule = await models.Schedule.create({ 
 			office_id: officeId, 
 			date, 
