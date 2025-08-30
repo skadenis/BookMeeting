@@ -24,21 +24,24 @@ export default function PageTable({
   ...props
 }) {
   return (
-    <Table
-      columns={columns}
-      dataSource={dataSource}
-      rowKey={rowKey}
-      loading={loading}
-      pagination={pagination}
-      onChange={onChange}
-      scroll={scroll}
-      size={size}
-      bordered={bordered}
-      style={{
-        background: '#fff',
-        borderRadius: '6px'
-      }}
-      {...props}
-    />
+    <div style={{ overflowX: 'auto' }}>
+      <Table
+        columns={columns}
+        dataSource={dataSource}
+        rowKey={rowKey}
+        loading={loading}
+        pagination={pagination}
+        onChange={onChange}
+        scroll={scroll}
+        size={size}
+        bordered={bordered}
+        style={{
+          background: '#fff',
+          borderRadius: '6px',
+          minWidth: '100%'
+        }}
+        {...props}
+      />
+    </div>
   )
 }

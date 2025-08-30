@@ -519,14 +519,12 @@ export default function AppointmentsPage() {
     {
       title: 'Записано',
       value: statistics.pending,
-      color: '#faad14',
-      suffix: 'ожидают подтверждения'
+      color: '#faad14'
     },
     {
       title: 'Подтверждено',
       value: statistics.confirmed,
-      color: '#52c41a',
-      suffix: 'активных встреч'
+      color: '#52c41a'
     }
   ]
 
@@ -587,21 +585,21 @@ export default function AppointmentsPage() {
 
       <StatsSection stats={showDetailedStats ? fullStatsData : keyStatsData} />
 
-      <div style={{ marginBottom: '16px' }}>
-        <Space>
-          <Button
-            onClick={() => setShowTable(!showTable)}
-            size="small"
-          >
-            {showTable ? 'Скрыть таблицу' : 'Показать таблицу'}
-          </Button>
-          <Button
-            onClick={() => setShowDetailedStats(!showDetailedStats)}
-            size="small"
-          >
-            {showDetailedStats ? 'Основное' : 'Все статусы'}
-          </Button>
-        </Space>
+      <div style={{ marginBottom: '16px', display: 'flex', gap: '8px' }}>
+        <Button
+          onClick={() => setShowTable(!showTable)}
+          size="small"
+          type={showTable ? 'default' : 'primary'}
+        >
+          {showTable ? 'Скрыть таблицу' : 'Показать таблицу'}
+        </Button>
+        <Button
+          onClick={() => setShowDetailedStats(!showDetailedStats)}
+          size="small"
+          type={showDetailedStats ? 'default' : 'primary'}
+        >
+          {showDetailedStats ? 'Основное' : 'Все статусы'}
+        </Button>
       </div>
 
       {showTable && (
