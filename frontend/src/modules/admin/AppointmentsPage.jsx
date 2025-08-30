@@ -388,6 +388,9 @@ export default function AppointmentsPage() {
     try {
       setSyncLoading(true)
 
+      // Сбрасываем предыдущий выбор
+      setSelectedLeads([])
+
       // Устанавливаем таймаут для запроса (2 минуты)
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 120000)
@@ -449,24 +452,41 @@ export default function AppointmentsPage() {
         return acc
       }, {})
 
+      console.log('Selected leads:', selectedLeads)
+      console.log('Missing appointments structure:', missingAppointments)
+
       for (const leadId of selectedLeads) {
-        const lead = bitrixLeads.find(l => String(l.ID) === String(leadId))
-        if (lead) {
-          const officeId = officeMap[lead.UF_CRM_1675255265]
+        // Ищем лида в missingAppointments
+        let lead = null
+        let group = null
+        
+        for (const appointmentGroup of missingAppointments) {
+          const foundLead = appointmentGroup.leads.find(l => String(l.ID) === String(leadId))
+          if (foundLead) {
+            lead = foundLead
+            group = appointmentGroup
+            break
+          }
+        }
 
-          // Ищем, есть ли уже такая встреча в нашей системе
-          const existingAppointment = missingAppointments
-            .flatMap(group => group.leads)
-            .find(app => (String(app.bitrix_lead_id) === String(leadId) || String(app.ID) === String(leadId)) && app.id)
+        console.log(`Looking for lead ${leadId}, found:`, lead, 'in group:', group?.officeId)
+        
+        if (lead && group) {
+          const officeId = officeMap[group.officeId]
+          console.log(`Lead ${leadId} office mapping: ${group.officeId} -> ${officeId}`)
 
-          if (existingAppointment) {
+          // Проверяем, это создание или обновление
+          const isUpdate = group.actionType === 'update'
+
+          if (isUpdate && lead.id) {
             // Обновляем существующую встречу
             toUpdate.push({
-              id: existingAppointment.id,
+              id: lead.id,
               date: dayjs(lead.UF_CRM_1655460588).format('YYYY-MM-DD'),
               timeSlot: lead.UF_CRM_1657019494,
               status: lead.STATUS_ID === '37' ? 'confirmed' : 'pending'
             })
+            console.log(`Added to update: ${lead.id}`)
           } else if (officeId) {
             // Создаем новую встречу
             toCreate.push({
@@ -476,6 +496,9 @@ export default function AppointmentsPage() {
               timeSlot: lead.UF_CRM_1657019494,
               status: lead.STATUS_ID === '37' ? 'confirmed' : 'pending'
             })
+            console.log(`Added to create: ${lead.ID}`)
+          } else {
+            console.warn(`No office found for lead ${lead.ID}, office mapping: ${group.officeId}`)
           }
         }
       }
@@ -793,7 +816,14 @@ export default function AppointmentsPage() {
           </Button>,
           <Button
             key="select-all"
-            onClick={() => setSelectedLeads(bitrixLeads.map(lead => String(lead.ID)))}
+            onClick={() => {
+              // Выбираем все лиды из missingAppointments
+              const allLeadIds = missingAppointments
+                .flatMap(group => group.leads)
+                .map(lead => String(lead.ID))
+              console.log('Selecting all leads:', allLeadIds)
+              setSelectedLeads(allLeadIds)
+            }}
           >
             Выбрать все
           </Button>,
