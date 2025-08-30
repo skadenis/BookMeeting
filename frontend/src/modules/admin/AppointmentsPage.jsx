@@ -27,7 +27,8 @@ import {
   WarningOutlined,
   EyeOutlined,
   EditOutlined,
-  EnvironmentOutlined
+  EnvironmentOutlined,
+  ClockCircleOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../../api/client'
