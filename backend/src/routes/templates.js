@@ -65,7 +65,7 @@ router.post('/', [
 				for (const [dayKey, profile] of Object.entries(weekdays)) {
 					if (profile && profile.start && profile.end) {
 						// Генерируем слоты на основе профиля дня
-						const slots = generateSlotsFromWeekday(profile, { slotDuration: slotDuration || 30, defaultCapacity: defaultCapacity || 1 });
+						const slots = generateSlotsFromWeekday(profile, { slotDuration: slotDuration || 30, defaultCapacity: (defaultCapacity ?? 1) });
 						processedWeekdays[dayKey] = slots;
 					}
 				}
@@ -134,7 +134,7 @@ router.put('/:id', [
 					for (const [dayKey, profile] of Object.entries(weekdays)) {
 						if (profile && profile.start && profile.end) {
 							// Генерируем слоты на основе профиля дня
-							const slots = generateSlotsFromWeekday(profile, { slotDuration: item.slotDuration || 30, defaultCapacity: item.defaultCapacity || 1 });
+							const slots = generateSlotsFromWeekday(profile, { slotDuration: item.slotDuration || 30, defaultCapacity: (item.defaultCapacity ?? 1) });
 							processedWeekdays[dayKey] = slots;
 						}
 					}
@@ -172,7 +172,7 @@ function generateSlotsFromWeekday(weekday, template) {
 		slots.push({
 			start: startTime,
 			end: endTime,
-			capacity: weekday.capacity || template.defaultCapacity || 1
+			capacity: (weekday.capacity ?? template.defaultCapacity ?? 1)
 		});
 	}
 	

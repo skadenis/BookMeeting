@@ -45,7 +45,7 @@ async function applyTemplateToDate(officeId, date, weekdaysTemplate, markAsCusto
 				start: s.start, 
 				end: s.end, 
 				available: true, 
-				capacity: s.capacity || 1 
+				capacity: (s.capacity ?? 1) 
 			});
 		}
 	}
@@ -294,6 +294,39 @@ router.post('/open-late', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Clear slots in a specific time interval within the day
+router.post('/clear-interval', async (req, res) => {
+    try {
+        const { office_id, date, from, to } = req.body;
+        if (!office_id || !date || !from || !to) return res.status(400).json({ error: 'Missing params' });
+
+        // Basic HH:mm validation
+        const isTime = (t) => /^\d{2}:\d{2}$/.test(String(t));
+        if (!isTime(from) || !isTime(to)) return res.status(400).json({ error: 'Invalid time format, expected HH:mm' });
+        if (from >= to) return res.status(400).json({ error: 'from must be earlier than to' });
+
+        const schedule = await models.Schedule.findOne({ where: { office_id, date } });
+        if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
+
+        // Remove all slots fully inside the interval [from, to]
+        const deleted = await models.Slot.destroy({ 
+            where: { 
+                schedule_id: schedule.id,
+                start: { [Op.gte]: from },
+                end:   { [Op.lte]: to }
+            }
+        });
+
+        schedule.isCustomized = true;
+        schedule.customizedAt = new Date();
+        await schedule.save();
+        await invalidateSlotsCache(office_id, date);
+        broadcastSlotsUpdated(office_id, date);
+
+        res.json({ success: true, message: 'Interval cleared', deleted });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Set working window for a day: regenerate from template, then trim by bounds
 router.post('/set-window', async (req, res) => {
     try {
@@ -334,7 +367,7 @@ router.post('/set-window', async (req, res) => {
         let slots = await models.Slot.findAll({ where: { schedule_id: schedule.id }, order: [['start','ASC']] });
 
         // Determine capacity baseline
-        const baseCapacity = slots.length > 0 ? (slots[slots.length-1].capacity || 1) : 1;
+        const baseCapacity = slots.length > 0 ? (slots[slots.length-1].capacity ?? 1) : 1;
 
         // Extend start side (optional): if open_from is earlier than first slot start, fill gaps forward until first slot
         if (open_from && slots.length > 0) {
@@ -624,7 +657,7 @@ router.post('/generate-week', [
 			if (items.length > 0) {
 				const schedule = await models.Schedule.create({ office_id, date: iso, isWorkingDay: true });
 				for (const s of items) {
-					await models.Slot.create({ schedule_id: schedule.id, start: s.start, end: s.end, available: true, capacity: s.capacity || 1 });
+					await models.Slot.create({ schedule_id: schedule.id, start: s.start, end: s.end, available: true, capacity: (s.capacity ?? 1) });
 				}
 			}
 		}
