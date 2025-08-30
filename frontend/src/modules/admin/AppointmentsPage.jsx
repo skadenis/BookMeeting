@@ -82,7 +82,7 @@ export default function AppointmentsPage() {
     showTotal: (total, range) => `${range[0]}-${range[1]} из ${total} встреч`
   })
   const [filters, setFilters] = useState({
-    dateRange: [dayjs().startOf('week'), dayjs().endOf('week')],
+    dateRange: [dayjs().startOf('day'), dayjs().add(1, 'month').endOf('day')],
     status: '',
     office: '',
     search: ''

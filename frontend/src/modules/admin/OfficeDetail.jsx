@@ -81,26 +81,23 @@ export default function OfficeDetail() {
     }
   }, [dayEditModal, selectedTplId])
 
+  const load = async () => {
+    setLoading(true)
+    try {
+      const off = await api.get('/admin/offices')
+      const o = (off?.data?.data || []).find(x => String(x.id) === String(id))
+      if (!o) { message.error('Офис не найден'); navigate('/admin'); return }
+      setOffice(o)
+      setEditOffice({ city: o.city || '', address: o.address || '', bitrixOfficeId: o.bitrixOfficeId ? String(o.bitrixOfficeId) : '' })
+      // load templates for quick apply
+      const t = await api.get('/admin/templates')
+      setTemplates(t?.data?.data || [])
+    } finally { setLoading(false) }
+  }
+
   useEffect(() => {
-    let mounted = true
-    const load = async () => {
-      setLoading(true)
-      try {
-        const off = await api.get('/admin/offices')
-        const o = (off?.data?.data || []).find(x => String(x.id) === String(id))
-        if (!o) { message.error('Офис не найден'); navigate('/admin'); return }
-        if (!mounted) return
-        setOffice(o)
-        setEditOffice({ city: o.city || '', address: o.address || '', bitrixOfficeId: o.bitrixOfficeId ? String(o.bitrixOfficeId) : '' })
-        // load templates for quick apply
-        const t = await api.get('/admin/templates')
-        if (!mounted) return
-        setTemplates(t?.data?.data || [])
-      } finally { setLoading(false) }
-    }
     load()
-    return () => { mounted = false }
-  }, [api, id, navigate])
+  }, [id])
 
   // removed inline template methods
 
@@ -176,7 +173,7 @@ export default function OfficeDetail() {
       <PageHeader
         title={`${office?.city || 'Офис'} • ${office?.address || 'Адрес не указан'}`}
         icon={<EnvironmentOutlined />}
-        onRefresh={loadOffice}
+        onRefresh={load}
         loading={loading}
       />
       <Tabs

@@ -37,18 +37,28 @@ router.get('/', [
     // Базовые условия
     const where = {};
     
+    // Принудительно показываем только будущие встречи (включая сегодняшние)
+    const today = dayjs().format('YYYY-MM-DD');
+    
     // Фильтр по датам
     if (start_date && end_date) {
+      const filterStartDate = start_date >= today ? start_date : today;
       where.date = {
-        [Op.between]: [start_date, end_date]
+        [Op.between]: [filterStartDate, end_date]
       };
     } else if (start_date) {
+      const filterStartDate = start_date >= today ? start_date : today;
       where.date = {
-        [Op.gte]: start_date
+        [Op.gte]: filterStartDate
       };
     } else if (end_date) {
       where.date = {
-        [Op.lte]: end_date
+        [Op.between]: [today, end_date]
+      };
+    } else {
+      // Если нет фильтра по датам, показываем только с сегодняшнего дня
+      where.date = {
+        [Op.gte]: today
       };
     }
     
@@ -235,10 +245,19 @@ router.get('/stats/overview', async (req, res, next) => {
   try {
     const { start_date, end_date } = req.query;
     
+    // Принудительно показываем только будущие встречи (включая сегодняшние)
+    const today = dayjs().format('YYYY-MM-DD');
+    
     let where = {};
     if (start_date && end_date) {
+      const filterStartDate = start_date >= today ? start_date : today;
       where.date = {
-        [Op.between]: [start_date, end_date]
+        [Op.between]: [filterStartDate, end_date]
+      };
+    } else {
+      // Если нет фильтра по датам, показываем статистику только с сегодняшнего дня
+      where.date = {
+        [Op.gte]: today
       };
     }
 

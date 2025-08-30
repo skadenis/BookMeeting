@@ -628,7 +628,7 @@ export default function TemplateEditPage() {
     <div style={{ padding: '24px' }}>
       {/* Заголовок и кнопка назад */}
       <PageHeader
-        title={`${id ? 'Редактирование' : 'Создание'} шаблона: ${template?.name || 'Новый шаблон'}`}
+        title={`${id ? 'Редактирование' : 'Создание'} шаблона: ${templateName || 'Новый шаблон'}`}
         icon={<FileTextOutlined />}
         extra={
           <Space>
