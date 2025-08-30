@@ -11,14 +11,26 @@ async function getAvailableSlots(officeId, date) {
 
 	const slots = await models.Slot.findAll({ where: { schedule_id: schedule.id, available: true }, order: [[ 'start', 'ASC' ]] });
 	const appointments = await models.Appointment.findAll({ where: { office_id: officeId, date, status: ['pending','confirmed'] } });
-	const countByTime = appointments.reduce((acc, a) => { acc[a.timeSlot] = (acc[a.timeSlot]||0)+1; return acc }, {});
+	// Support both "HH:MM-HH:MM" and "HH:MM" formats in timeSlot
+	const countByFull = {};
+	const countByStart = {};
+	for (const a of appointments) {
+		const ts = String(a.timeSlot || '').trim();
+		if (!ts) continue;
+		if (ts.includes('-')) {
+			const key = ts.replace(/\s+/g, '');
+			countByFull[key] = (countByFull[key] || 0) + 1;
+		} else {
+			countByStart[ts] = (countByStart[ts] || 0) + 1;
+		}
+	}
 	// Filter out past slots for the current day
 	const now = new Date();
 	const isToday = String(date) === new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().slice(0,10);
 	const available = slots
 		.map((s) => {
-			const key = `${s.start}-${s.end}`;
-			const used = countByTime[key] || 0;
+			const key = `${s.start}-${s.end}`.replace(/\s+/g, '');
+			const used = (countByFull[key] || 0) + (countByStart[s.start] || 0);
 			return { id: s.id, start: s.start, end: s.end, capacity: s.capacity, used, free: Math.max(0, s.capacity - used) };
 		})
 		.filter((x) => {
