@@ -13,7 +13,9 @@ import {
   Checkbox,
   Card,
   Statistic,
-  Typography
+  Typography,
+  Row,
+  Col
 } from 'antd'
 import {
   CalendarOutlined,
