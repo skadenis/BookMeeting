@@ -457,6 +457,22 @@ export default function OfficeDetail() {
                     if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd) || minStart>=maxEnd) return null
                     const rows = []
                     for (let t=minStart; t<maxEnd; t+=30) rows.push(toTime(t))
+                    // Color helpers: gradient by free/capacity from red (0 free) to green (all free)
+                    const getBgByLoad = (free, cap) => {
+                      if (cap <= 0) return 'linear-gradient(180deg, #fff7e6 0%, #fff2e8 100%)'
+                      const r = Math.max(0, Math.min(1, Number(free)/Number(cap))) // 0..1
+                      const hue = 0 + r * 120 // 0 red -> 120 green
+                      const light = 96 - (1 - r) * 18
+                      const top = Math.min(100, light + 4)
+                      return `linear-gradient(180deg, hsl(${Math.round(hue)}, 70%, ${Math.round(top)}%) 0%, hsl(${Math.round(hue)}, 70%, ${Math.round(light)}%) 100%)`
+                    }
+                    const getFgByLoad = (free, cap) => {
+                      if (cap <= 0) return '#d46b08'
+                      const r = Math.max(0, Math.min(1, Number(free)/Number(cap)))
+                      if (r >= 0.66) return '#0b2e13'
+                      if (r >= 0.33) return '#614700'
+                      return '#7f1d1d'
+                    }
                     return rows.map((t) => (
                       <React.Fragment key={`row-${t}`}>
                         {[0,1,2,3,4,5,6].map((i) => {
@@ -467,8 +483,8 @@ export default function OfficeDetail() {
                           const isBreak = has && cap === 0
                           const dateISO = toLocalISO(dayjs(previewStart).add(i,'day'))
                           const selected = has && isSlotSelected(dateISO, slot?.start, slot?.end, slot?.id)
-                          const bg = selected ? '#e6f4ff' : (has ? (isBreak ? '#fff2e8' : (free > 0 ? '#f6ffed' : '#fff1f0')) : '#fafafa')
-                          const fg = has ? (isBreak ? '#d46b08' : (free > 0 ? '#389e0d' : '#cf1322')) : '#999'
+                          const bg = selected ? '#e6f4ff' : (has ? getBgByLoad(free, cap) : '#fafafa')
+                          const fg = has ? getFgByLoad(free, cap) : '#999'
                           const baseStyle = { borderRight:'1px solid #eee', borderBottom:'1px solid #eee', padding:6, background: bg, color: fg, cursor: has ? 'pointer' : 'default', boxShadow: selected ? 'inset 0 0 0 2px #1677ff' : 'none' }
                           return <div key={`${i}-${t}`} style={baseStyle} onClick={() => {
                             if (!has) return
