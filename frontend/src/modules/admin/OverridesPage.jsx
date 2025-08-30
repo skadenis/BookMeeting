@@ -54,17 +54,17 @@ export default function OverridesPage() {
     }
 
     Modal.confirm({
-      title: 'Очистить все слоты?',
+      title: 'Закрыть день?',
       icon: <ExclamationCircleOutlined />,
       content: (
         <div>
-          <p>Вы уверены, что хотите <strong>удалить все слоты</strong> на {date.format('DD.MM.YYYY')}?</p>
+          <p>Вы уверены, что хотите <strong>закрыть день</strong> {date.format('DD.MM.YYYY')}?</p>
           <p style={{ color: '#ff4d4f', fontSize: '12px' }}>
             ⚠️ Это действие нельзя отменить. Все существующие записи на этот день будут отменены.
           </p>
         </div>
       ),
-      okText: 'Да, очистить все',
+      okText: 'Да, закрыть день',
       okButtonProps: { danger: true },
       cancelText: 'Отмена',
       onOk: async () => {
@@ -106,7 +106,7 @@ export default function OverridesPage() {
           onClick={clearAllSlots}
           disabled={!officeId || !date}
         >
-          Очистить все слоты
+          Закрыть день
         </Button>
         <Button type="primary" onClick={save}>Сохранить</Button>
       </Space>

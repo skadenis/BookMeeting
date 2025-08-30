@@ -45,7 +45,7 @@ async function applyTemplateToDate(officeId, date, weekdaysTemplate, markAsCusto
 				start: s.start, 
 				end: s.end, 
 				available: true, 
-				capacity: s.capacity || 1 
+				capacity: (s.capacity ?? 1) 
 			});
 		}
 	}
@@ -367,7 +367,7 @@ router.post('/set-window', async (req, res) => {
         let slots = await models.Slot.findAll({ where: { schedule_id: schedule.id }, order: [['start','ASC']] });
 
         // Determine capacity baseline
-        const baseCapacity = slots.length > 0 ? (slots[slots.length-1].capacity || 1) : 1;
+        const baseCapacity = slots.length > 0 ? (slots[slots.length-1].capacity ?? 1) : 1;
 
         // Extend start side (optional): if open_from is earlier than first slot start, fill gaps forward until first slot
         if (open_from && slots.length > 0) {
