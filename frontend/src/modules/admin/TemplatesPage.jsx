@@ -180,23 +180,44 @@ export default function TemplatesPage() {
                   {DOW.map(d => {
                     const weekday = template.weekdays?.[d.key]
                     if (!weekday) return null
-                    
-                    // Проверяем формат данных
+
+                    // Старый формат: массив слотов
                     if (Array.isArray(weekday)) {
-                      // Старый формат
+                      const working = weekday.filter(s => Number(s?.capacity ?? 1) > 0)
+                      if (working.length === 0) {
+                        return (
+                          <Tag key={d.key} color="red" style={{ marginBottom: '4px' }}>
+                            {d.short}: выходной
+                          </Tag>
+                        )
+                      }
+                      const start = working[0]?.start || weekday[0]?.start || '00:00'
+                      const end = working[working.length - 1]?.end || weekday[weekday.length - 1]?.end || '00:00'
                       return (
                         <Tag key={d.key} color="blue" style={{ marginBottom: '4px' }}>
-                          {d.short}: {weekday[0]?.start || '00:00'}-{weekday[weekday.length - 1]?.end || '00:00'} ({weekday.length} слотов)
-                        </Tag>
-                      )
-                    } else {
-                      // Новый формат
-                      return (
-                        <Tag key={d.key} color="green" style={{ marginBottom: '4px' }}>
-                          {d.short}: {weekday.start}-{weekday.end}
+                          {d.short}: {start}-{end} ({working.length} слотов)
                         </Tag>
                       )
                     }
+
+                    // Новый формат: профиль дня
+                    const cap = Number(weekday.capacity ?? template.defaultCapacity ?? 1)
+                    if (cap <= 0) {
+                      return (
+                        <Tag key={d.key} color="red" style={{ marginBottom: '4px' }}>
+                          {d.short}: выходной
+                        </Tag>
+                      )
+                    }
+                    const start = weekday.start || template.baseStartTime || '09:00'
+                    const end = weekday.end || template.baseEndTime || '18:00'
+                    const duration = template.slotDuration || 30
+                    const count = generateTimeSlots(start, end, duration).length
+                    return (
+                      <Tag key={d.key} color="green" style={{ marginBottom: '4px' }}>
+                        {d.short}: {start}-{end} ({count} слотов)
+                      </Tag>
+                    )
                   })}
                 </div>
               </div>
