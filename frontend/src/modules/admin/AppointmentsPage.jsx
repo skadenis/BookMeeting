@@ -52,14 +52,20 @@ const STATUS_COLORS = {
   pending: 'gold',
   confirmed: 'green',
   cancelled: 'red',
-  rescheduled: 'blue'
+  rescheduled: 'blue',
+  completed: 'cyan',
+  no_show: 'volcano',
+  expired: 'default'
 }
 
 const STATUS_LABELS = {
   pending: 'Ожидает подтверждения',
   confirmed: 'Подтверждена',
   cancelled: 'Отменена',
-  rescheduled: 'Перенесена'
+  rescheduled: 'Перенесена',
+  completed: 'Завершена успешно',
+  no_show: 'Не пришел на встречу',
+  expired: 'Просрочена'
 }
 
 export default function AppointmentsPage() {
@@ -574,6 +580,21 @@ export default function AppointmentsPage() {
       title: 'Перенесены',
       value: statistics.rescheduled,
       color: '#722ed1'
+    },
+    {
+      title: 'Завершены',
+      value: statistics.completed || 0,
+      color: '#13c2c2'
+    },
+    {
+      title: 'Не пришли',
+      value: statistics.no_show || 0,
+      color: '#ff4d4f'
+    },
+    {
+      title: 'Просрочены',
+      value: statistics.expired || 0,
+      color: '#8c8c8c'
     }
   ]
 

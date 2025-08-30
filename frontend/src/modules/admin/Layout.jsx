@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react'
 import { Layout, Menu, Modal, Form, Input, Button, message } from 'antd'
-import { BankOutlined, ScheduleOutlined, TeamOutlined, CalendarOutlined, SettingOutlined } from '@ant-design/icons'
+import { BankOutlined, ScheduleOutlined, TeamOutlined, CalendarOutlined, SettingOutlined, BarChartOutlined } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 const { Header, Sider, Content } = Layout
@@ -13,6 +13,7 @@ export default function AdminLayout() {
     if (location.pathname.includes('/admin/templates')) return 'templates'
     if (location.pathname.includes('/admin/appointments')) return 'appointments'
     if (location.pathname.includes('/admin/settings')) return 'settings'
+    if (location.pathname.includes('/admin/analytics')) return 'analytics'
     return 'offices'
   }, [location.pathname])
 
@@ -101,6 +102,7 @@ export default function AdminLayout() {
             { key: 'offices', icon: <BankOutlined />, label: 'Офисы' },
             { key: 'templates', icon: <ScheduleOutlined />, label: 'Шаблоны' },
             { key: 'appointments', icon: <CalendarOutlined />, label: 'Встречи' },
+            { key: 'analytics', icon: <BarChartOutlined />, label: 'Аналитика' },
             { key: 'users', icon: <TeamOutlined />, label: 'Пользователи' },
             { key: 'settings', icon: <SettingOutlined />, label: 'Настройки' },
           ]}

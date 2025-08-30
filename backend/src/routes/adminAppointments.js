@@ -256,7 +256,10 @@ router.get('/stats/overview', async (req, res, next) => {
       pending: 0,
       confirmed: 0,
       cancelled: 0,
-      rescheduled: 0
+      rescheduled: 0,
+      completed: 0,
+      no_show: 0,
+      expired: 0
     };
 
     stats.forEach(stat => {

@@ -167,6 +167,23 @@ async function start() {
 	// Minute tick: notify clients so they can filter past slots
 	setInterval(() => broadcastTimeTick(), 60_000).unref?.();
 
+	// Запускаем cron сервис для автоматической синхронизации
+	if (process.env.ENABLE_CRON !== 'false') {
+		const cronService = require('./services/cronService');
+		cronService.startAll();
+		
+		// Graceful shutdown для cron задач
+		process.on('SIGTERM', () => {
+			console.log('Received SIGTERM, stopping cron jobs...');
+			cronService.stopAll();
+		});
+		
+		process.on('SIGINT', () => {
+			console.log('Received SIGINT, stopping cron jobs...');
+			cronService.stopAll();
+		});
+	}
+
 	server.listen(PORT, () => {
 		console.log(`Backend listening on :${PORT}`);
 	});
