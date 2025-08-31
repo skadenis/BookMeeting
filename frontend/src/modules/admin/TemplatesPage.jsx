@@ -42,6 +42,10 @@ export default function TemplatesPage() {
   const [templates, setTemplates] = useState([])
   const [offices, setOffices] = useState([])
   const [loading, setLoading] = useState(false)
+  // Delete confirm state
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState('')
+  const [deletingTemplate, setDeletingTemplate] = useState(null)
   
   // Применение к офису - теперь для каждого шаблона отдельно
   const [templateSettings, setTemplateSettings] = useState({})
@@ -82,10 +86,19 @@ export default function TemplatesPage() {
     }
   }
 
-  const deleteTemplate = async (id) => {
+  const askDeleteTemplate = (template) => {
+    setDeletingTemplate(template)
+    setDeleteConfirm('')
+    setDeleteOpen(true)
+  }
+  const performDeleteTemplate = async () => {
+    if (!deletingTemplate) return
     try {
-      await api.delete(`/admin/templates/${id}`)
-      message.success('Шаблон удален')
+      await api.delete(`/admin/templates/${deletingTemplate.id}`)
+      message.success('Шаблон удалён')
+      setDeleteOpen(false)
+      setDeletingTemplate(null)
+      setDeleteConfirm('')
       loadTemplates()
     } catch (error) {
       message.error('Ошибка удаления шаблона')
@@ -154,7 +167,7 @@ export default function TemplatesPage() {
                   <Button size="small" icon={<EditOutlined />} onClick={() => editTemplate(template)}>
                     Изменить
                   </Button>
-                  <Button size="small" danger icon={<DeleteOutlined />} onClick={() => deleteTemplate(template.id)}>
+                  <Button size="small" danger icon={<DeleteOutlined />} onClick={() => askDeleteTemplate(template)}>
                     Удалить
                   </Button>
                 </Space>
@@ -259,6 +272,19 @@ export default function TemplatesPage() {
           </Col>
         ))}
       </Row>
+      <Modal
+        open={deleteOpen}
+        title="Удалить шаблон"
+        onCancel={() => { setDeleteOpen(false); setDeleteConfirm(''); setDeletingTemplate(null) }}
+        onOk={performDeleteTemplate}
+        okButtonProps={{ danger: true, disabled: (deleteConfirm.trim() !== (deletingTemplate?.name || '')) }}
+      >
+        <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+          <Text>Это действие необратимо. Для подтверждения введите точное название шаблона:</Text>
+          <Text code>{deletingTemplate?.name || ''}</Text>
+          <Input placeholder="Название шаблона" value={deleteConfirm} onChange={(e)=>setDeleteConfirm(e.target.value)} />
+        </div>
+      </Modal>
     </div>
   )
 }

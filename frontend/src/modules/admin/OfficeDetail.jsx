@@ -457,22 +457,6 @@ export default function OfficeDetail() {
                     if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd) || minStart>=maxEnd) return null
                     const rows = []
                     for (let t=minStart; t<maxEnd; t+=30) rows.push(toTime(t))
-                    // Minimalist encoding: thin left bar for critical states, subtle progress line, gentle background hues
-                    const leftAccent = (free, cap) => {
-                      if (cap <= 0) return '#fa8c16' // break
-                      if (Number(cap) > 0 && Number(free) === 0) return '#ef4444' // fully booked
-                      return '#e5e7eb' // neutral
-                    }
-                    const cellBg = (selected, free, cap, isBreak) => {
-                      if (selected) return '#f0f7ff'
-                      if (isBreak) return '#FFF7E6'
-                      if (cap <= 0) return '#ffffff'
-                      const r = Math.max(0, Math.min(1, Number(free)/Number(cap)))
-                      if (r === 0) return '#FFF1F0'   // very light red
-                      if (r < 0.5) return '#FFFBE6'    // very light amber
-                      if (r < 0.75) return '#F6FFED'   // very light green
-                      return '#F0FFFB'                 // near free, minty white
-                    }
                     return rows.map((t) => (
                       <React.Fragment key={`row-${t}`}>
                         {[0,1,2,3,4,5,6].map((i) => {
@@ -483,13 +467,9 @@ export default function OfficeDetail() {
                           const isBreak = has && cap === 0
                           const dateISO = toLocalISO(dayjs(previewStart).add(i,'day'))
                           const selected = has && isSlotSelected(dateISO, slot?.start, slot?.end, slot?.id)
-                          const accent = has ? leftAccent(free, cap) : '#e5e7eb'
-                          const bg = cellBg(selected, free, cap, isBreak)
-                          const fg = has ? (isBreak ? '#874d00' : (free===0 && cap>0 ? '#b91c1c' : '#1f2937')) : '#999'
-                          const baseStyle = { borderRight:'1px solid #f2f2f2', borderBottom:'1px solid #f2f2f2', padding:6, background: bg, color: fg, cursor: has ? 'pointer' : 'default', boxShadow: selected ? 'inset 0 0 0 2px #1677ff' : 'none', borderLeft:`4px solid ${accent}` }
-                          const ratio = (cap>0) ? Math.max(0, Math.min(1, Number(free)/Number(cap))) : 0
-                          const barTrack = { height:3, background:'#f1f5f9', borderRadius:2, overflow:'hidden', marginTop:4 }
-                          const barFill = { height:'100%', width: `${Math.round(ratio*100)}%`, background: (cap>0 && free===0) ? '#ef4444' : '#22c55e' }
+                          const bg = selected ? '#e6f4ff' : (has ? (isBreak ? '#fff2e8' : (free > 0 ? '#f6ffed' : '#fff1f0')) : '#fafafa')
+                          const fg = has ? (isBreak ? '#d46b08' : (free > 0 ? '#389e0d' : '#cf1322')) : '#999'
+                          const baseStyle = { borderRight:'1px solid #eee', borderBottom:'1px solid #eee', padding:6, background: bg, color: fg, cursor: has ? 'pointer' : 'default', boxShadow: selected ? 'inset 0 0 0 2px #1677ff' : 'none' }
                           return <div key={`${i}-${t}`} style={baseStyle} onClick={() => {
                             if (!has) return
                             const additive = (window.event && (window.event.metaKey || window.event.ctrlKey))
@@ -502,12 +482,7 @@ export default function OfficeDetail() {
                             setSelectedSlots([])
                             setEditSlot({ ...slot, date: dateISO2, office_id: id })
                             setEditCapacity(cap || 1)
-                          }}>{has ? (
-                            <>
-                              <div>{isBreak ? `${slot.start} • Перерыв` : `${slot.start} • ${free}/${cap}`}</div>
-                              {!isBreak && <div style={barTrack}><div style={barFill} /></div>}
-                            </>
-                          ) : '—'}</div>
+                          }}>{has ? (isBreak ? `${slot.start} • Перерыв` : `${slot.start} • ${free}/${cap}`) : '—'}</div>
                         })}
                       </React.Fragment>
                     ))
