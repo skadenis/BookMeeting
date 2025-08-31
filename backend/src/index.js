@@ -13,6 +13,7 @@ const slotsRouter = require('./routes/slots');
 const templatesRouter = require('./routes/templates');
 const appointmentsRouter = require('./routes/appointments');
 const adminAppointmentsRouter = require('./routes/adminAppointments');
+const syncServiceRouter = require('./routes/syncService');
 const customRouter = require('./routes/custom');
 const apiRouter = require('./routes/index');
 const authRouter = require('./routes/auth');
@@ -137,6 +138,8 @@ async function start() {
 	app.use('/api/admin/slots', adminAuthMiddleware, slotsRouter);
 	app.use('/api/admin/templates', adminAuthMiddleware, templatesRouter);
 	app.use('/api/admin/appointments', adminAuthMiddleware, adminAppointmentsRouter);
+	// Secure sync service under admin auth or X-Cron-Token (handled inside router)
+	app.use('/api/admin/sync', syncServiceRouter);
 
 	// Public routes (protected by bitrixAuthMiddleware)
 	app.use('/api', bitrixAuthMiddleware);
