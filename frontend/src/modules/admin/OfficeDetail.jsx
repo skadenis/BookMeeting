@@ -322,15 +322,29 @@ export default function OfficeDetail() {
                             cancelText: 'Отмена',
                             onOk: async () => {
                               try {
-                                // Удаляем выбранные слоты
-                                for (const slot of selectedSlots) {
-                                  if (slot.slotId) {
-                                    await api.delete(`/admin/slots/${slot.slotId}`)
-                                  }
+                                const ids = Array.from(new Set(
+                                  (selectedSlots || [])
+                                    .map(s => s.slotId)
+                                    .filter(Boolean)
+                                ))
+                                if (ids.length === 0) {
+                                  message.info('Нет выбранных слотов для удаления')
+                                  return
                                 }
+                                const results = await Promise.allSettled(
+                                  ids.map(id => api.delete(`/admin/slots/${id}`).catch(() => null))
+                                )
+                                const ok = results.filter(r => r.status === 'fulfilled').length
+                                const failed = ids.length - ok
                                 setSelectedSlots([])
                                 await loadPreview()
-                                message.success(`Удалено ${selectedSlots.length} слотов`)
+                                if (failed === 0) {
+                                  message.success(`Удалено ${ok} слота(ов)`)                 
+                                } else if (ok > 0) {
+                                  message.warning(`Удалено ${ok}, ошибок: ${failed}`)
+                                } else {
+                                  message.error('Не удалось удалить слоты')
+                                }
                               } catch (error) {
                                 console.error('Ошибка удаления слотов:', error)
                                 message.error('Не удалось удалить слоты')
