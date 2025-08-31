@@ -72,6 +72,25 @@ class CronService {
     
     const autoSyncJob = this.startAutoSync();
     const autoExpireJob = this.startAutoExpire();
+    // Синхронизация лидов для админской страницы (данные источника /admin/appointments/sync/bitrix24)
+    const leadsSyncJob = cron.schedule('*/10 * * * *', async () => {
+      try {
+        console.log('Running admin leads sync...');
+        const response = await axios.get(`${this.apiBaseUrl}/admin/appointments/sync/bitrix24`, {
+          timeout: 120000,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Cron-Token': process.env.CRON_TOKEN || 'internal-cron-token'
+          }
+        });
+        console.log('Admin leads sync done:', {
+          toCreate: response?.data?.data?.toCreate?.length || 0,
+          toUpdate: response?.data?.data?.toUpdate?.length || 0
+        });
+      } catch (error) {
+        console.error('Admin leads sync cron error:', error.message);
+      }
+    }, { scheduled: false, timezone: 'Europe/Minsk' });
     // Ежедневная чистка дублей в 03:30 по Минску
     const dedupeJob = cron.schedule('30 3 * * *', async () => {
       try {
@@ -91,11 +110,13 @@ class CronService {
     
     autoSyncJob.start();
     autoExpireJob.start();
+    leadsSyncJob.start();
     dedupeJob.start();
     
     console.log('Cron jobs started:');
     console.log('- Auto sync statuses: every 5 minutes');
     console.log('- Auto expire appointments: every hour');
+    console.log('- Admin leads sync: every 10 minutes');
     console.log('- Dedupe appointments: daily at 03:30');
   }
 
