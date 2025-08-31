@@ -167,9 +167,10 @@ router.post('/bulk', [
     const { appointments } = req.body;
     console.log(`Starting bulk creation of ${appointments.length} appointments`);
 
-    // Обрабатываем по частям, чтобы избежать таймаутов
+    // Обрабатываем по частям, чтобы избежать таймаутов и не создавать дубликаты
     const batchSize = 50;
     const createdAppointments = [];
+    const updatedAppointments = [];
     let processed = 0;
 
     for (let i = 0; i < appointments.length; i += batchSize) {
@@ -177,29 +178,48 @@ router.post('/bulk', [
       console.log(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(appointments.length / batchSize)} (${batch.length} items)`);
 
       try {
-        const batchResults = await models.Appointment.bulkCreate(
-          batch.map(apt => ({
-            bitrix_lead_id: apt.bitrix_lead_id,
-            office_id: apt.office_id,
-            date: apt.date,
-            timeSlot: apt.timeSlot,
-            status: apt.status || 'pending',
-            createdBy: 0 // Системный пользователь
-          }))
-        );
-        createdAppointments.push(...batchResults);
-        processed += batch.length;
+        for (const apt of batch) {
+          // Проверяем наличие дубликата по ключу (lead, office, date, time)
+          const existing = await models.Appointment.findOne({
+            where: {
+              bitrix_lead_id: apt.bitrix_lead_id,
+              office_id: apt.office_id,
+              date: apt.date,
+              timeSlot: apt.timeSlot
+            }
+          });
+
+          if (existing) {
+            // Обновим статус при необходимости (не трогаем прочие поля)
+            const newStatus = apt.status || 'pending';
+            if (newStatus && existing.status !== newStatus) {
+              existing.status = newStatus;
+              await existing.save();
+              updatedAppointments.push(existing);
+            }
+          } else {
+            const created = await models.Appointment.create({
+              bitrix_lead_id: apt.bitrix_lead_id,
+              office_id: apt.office_id,
+              date: apt.date,
+              timeSlot: apt.timeSlot,
+              status: apt.status || 'pending',
+              createdBy: 0
+            });
+            createdAppointments.push(created);
+          }
+          processed++;
+        }
         console.log(`Batch complete: ${processed}/${appointments.length} processed`);
       } catch (batchError) {
         console.error('Error in batch:', batchError);
-        // Продолжаем с следующей партией, но логируем ошибку
       }
     }
 
-    console.log(`Bulk creation complete: ${createdAppointments.length} appointments created`);
+    console.log(`Bulk creation complete: ${createdAppointments.length} created, ${updatedAppointments.length} updated`);
     res.json({
-      data: createdAppointments,
-      message: `Создано ${createdAppointments.length} встреч`
+      data: { created: createdAppointments.length, updated: updatedAppointments.length },
+      message: `Создано ${createdAppointments.length}, обновлено ${updatedAppointments.length}`
     });
 
   } catch (e) {
@@ -351,6 +371,31 @@ router.delete('/:id', [
   } catch (e) { 
     next(e); 
   }
+});
+
+// Удалить дубликаты встреч (утилита для админа). Группируем по lead+office+date+timeSlot и оставляем одну, остальные переводим в cancelled и удаляем.
+router.post('/dedupe', async (req, res, next) => {
+  try {
+    const { dry_run } = req.body || {};
+    // Получаем все встречи с bitrix_lead_id
+    const all = await models.Appointment.findAll({ where: { bitrix_lead_id: { [Op.not]: null } }, order: [['createdAt','ASC']] });
+    const keyMap = new Map();
+    const toDelete = [];
+    for (const a of all) {
+      const key = `${a.bitrix_lead_id}__${a.office_id}__${a.date}__${a.timeSlot}`;
+      if (!keyMap.has(key)) {
+        keyMap.set(key, a);
+      } else {
+        toDelete.push(a);
+      }
+    }
+    if (!dry_run) {
+      for (const d of toDelete) {
+        await d.destroy();
+      }
+    }
+    res.json({ data: { duplicates: toDelete.length, dry_run: !!dry_run } });
+  } catch (e) { next(e); }
 });
 
 // Получить статистику по встречам
