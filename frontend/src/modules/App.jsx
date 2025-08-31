@@ -258,6 +258,19 @@ export function App() {
   useEffect(() => { loadWeek() }, [apiInstance, officeId, weekStart])
   useEffect(() => { loadLeadAppt() }, [apiInstance, leadId])
 
+  // If there is an existing appointment for this lead, auto-select its office and week
+  useEffect(() => {
+    try {
+      const bookedOfficeId = leadAppt?.Office?.id || leadAppt?.office?.id || leadAppt?.office_id
+      if (bookedOfficeId && String(bookedOfficeId) !== String(officeId || '')) {
+        setOfficeId(bookedOfficeId)
+      }
+      if (leadAppt?.date) {
+        setWeekStart(startOfWeek(leadAppt.date))
+      }
+    } catch {}
+  }, [leadAppt])
+
   // Websocket live updates
   useEffect(() => {
     let ws
