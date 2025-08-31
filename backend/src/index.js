@@ -18,6 +18,7 @@ const customRouter = require('./routes/custom');
 const apiRouter = require('./routes/index');
 const authRouter = require('./routes/auth');
 const adminUsersRouter = require('./routes/adminUsers');
+const adminSettingsRouter = require('./routes/adminSettings');
 // const { seedIfEmpty } = require('./seed');
 
 dotenv.config();
