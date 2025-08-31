@@ -89,13 +89,17 @@ class CronService {
     
     autoSyncJob.start();
     autoExpireJob.start();
-    leadsSyncJob.start();
+    if (process.env.ENABLE_LEADS_SYNC === 'true') {
+      leadsSyncJob.start();
+    } else {
+      console.log('Leads sync job is disabled (ENABLE_LEADS_SYNC != "true")');
+    }
     dedupeJob.start();
     
     console.log('Cron jobs started:');
     console.log('- Auto sync statuses: every 5 minutes');
     console.log('- Auto expire appointments: every hour');
-    console.log('- Admin leads sync: every 10 minutes');
+    console.log(`- Admin leads sync: ${process.env.ENABLE_LEADS_SYNC === 'true' ? 'every 10 minutes' : 'disabled'}`);
     console.log('- Dedupe appointments: daily at 03:30');
   }
 
