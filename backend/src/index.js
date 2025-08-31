@@ -12,6 +12,7 @@ const officesRouter = require('./routes/offices');
 const slotsRouter = require('./routes/slots');
 const templatesRouter = require('./routes/templates');
 const appointmentsRouter = require('./routes/appointments');
+const adminAppointmentsRouter = require('./routes/adminAppointments');
 const customRouter = require('./routes/custom');
 const apiRouter = require('./routes/index');
 const authRouter = require('./routes/auth');
