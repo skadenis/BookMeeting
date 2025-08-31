@@ -61,6 +61,10 @@ class CronService {
     const leadsSyncJob = cron.schedule('*/10 * * * *', async () => {
       try {
         console.log('Running admin leads sync (direct)...');
+        if (!process.env.BITRIX_REST_URL) {
+          console.warn('Leads sync skipped: BITRIX_REST_URL is not set');
+          return;
+        }
         const analysis = await fetchAndAnalyzeBitrixLeads();
         console.log('Admin leads sync analyze:', { toCreate: analysis?.toCreate?.length || 0, toUpdate: analysis?.toUpdate?.length || 0 });
         const apply = await syncMissingAppointments({ applyUpdates: true });
