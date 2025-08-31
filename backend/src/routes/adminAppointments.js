@@ -147,6 +147,131 @@ router.get('/:id', [
 });
 
 // Обновить встречу
+// Place BULK endpoints BEFORE parametric ':id' routes to avoid '/bulk' being treated as ':id'
+// Bulk создание встреч для импорта из Bitrix24
+router.post('/bulk', [
+  body('appointments').isArray({ min: 1 }),
+  body('appointments.*.bitrix_lead_id').isString(),
+  body('appointments.*.office_id').isUUID(),
+  body('appointments.*.date').isISO8601(),
+  body('appointments.*.timeSlot').isString(),
+  body('appointments.*.status').optional().isIn(['pending', 'confirmed', 'cancelled', 'rescheduled']),
+], async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      console.error('Validation errors:', errors.array());
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { appointments } = req.body;
+    console.log(`Starting bulk creation of ${appointments.length} appointments`);
+
+    // Обрабатываем по частям, чтобы избежать таймаутов
+    const batchSize = 50;
+    const createdAppointments = [];
+    let processed = 0;
+
+    for (let i = 0; i < appointments.length; i += batchSize) {
+      const batch = appointments.slice(i, i + batchSize);
+      console.log(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(appointments.length / batchSize)} (${batch.length} items)`);
+
+      try {
+        const batchResults = await models.Appointment.bulkCreate(
+          batch.map(apt => ({
+            bitrix_lead_id: apt.bitrix_lead_id,
+            office_id: apt.office_id,
+            date: apt.date,
+            timeSlot: apt.timeSlot,
+            status: apt.status || 'pending',
+            createdBy: 0 // Системный пользователь
+          }))
+        );
+        createdAppointments.push(...batchResults);
+        processed += batch.length;
+        console.log(`Batch complete: ${processed}/${appointments.length} processed`);
+      } catch (batchError) {
+        console.error('Error in batch:', batchError);
+        // Продолжаем с следующей партией, но логируем ошибку
+      }
+    }
+
+    console.log(`Bulk creation complete: ${createdAppointments.length} appointments created`);
+    res.json({
+      data: createdAppointments,
+      message: `Создано ${createdAppointments.length} встреч`
+    });
+
+  } catch (e) {
+    console.error('Bulk creation error:', e);
+    next(e);
+  }
+});
+
+// Bulk обновление встреч для синхронизации из Bitrix24
+router.put('/bulk', [
+  body('appointments').isArray({ min: 1 }),
+  body('appointments.*.id').isUUID(),
+  body('appointments.*.date').optional().isISO8601(),
+  body('appointments.*.timeSlot').optional().isString(),
+  body('appointments.*.status').optional().isIn(['pending', 'confirmed', 'cancelled', 'rescheduled']),
+], async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      console.error('Validation errors:', errors.array());
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { appointments } = req.body;
+    console.log(`Starting bulk update of ${appointments.length} appointments`);
+
+    const updatedAppointments = [];
+    const batchSize = 50;
+    let processed = 0;
+
+    // Обрабатываем по частям
+    for (let i = 0; i < appointments.length; i += batchSize) {
+      const batch = appointments.slice(i, i + batchSize);
+      console.log(`Processing update batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(appointments.length / batchSize)} (${batch.length} items)`);
+
+      const batchPromises = batch.map(async (apt) => {
+        try {
+          const appointment = await models.Appointment.findByPk(apt.id);
+          if (appointment) {
+            if (apt.date !== undefined) appointment.date = apt.date;
+            if (apt.timeSlot !== undefined) appointment.timeSlot = apt.timeSlot;
+            if (apt.status !== undefined) appointment.status = apt.status;
+            await appointment.save();
+            return appointment;
+          }
+          return null;
+        } catch (error) {
+          console.error('Error updating appointment:', apt.id, error);
+          return null;
+        }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      const validResults = batchResults.filter(result => result !== null);
+      updatedAppointments.push(...validResults);
+
+      processed += batch.length;
+      console.log(`Update batch complete: ${processed}/${appointments.length} processed, ${validResults.length} updated`);
+    }
+
+    console.log(`Bulk update complete: ${updatedAppointments.length} appointments updated`);
+    res.json({
+      data: updatedAppointments,
+      message: `Обновлено ${updatedAppointments.length} встреч`
+    });
+
+  } catch (e) {
+    console.error('Bulk update error:', e);
+    next(e);
+  }
+});
+
 router.put('/:id', [
   param('id').isUUID(),
   body('status').optional().isIn(['pending', 'confirmed', 'cancelled', 'rescheduled']),
