@@ -756,14 +756,23 @@ router.delete('/:id', [
 
     // Находим слот
     const slot = await models.Slot.findByPk(id, {
-      include: [{ model: models.Schedule, attributes: ['office_id', 'date'] }]
+      include: [{ model: models.Schedule, attributes: ['id', 'office_id', 'date'] }]
     });
 
     if (!slot) {
       return res.status(404).json({ error: 'Слот не найден' });
     }
 
-    const schedule = slot.Schedule;
+    let schedule = slot && slot.Schedule ? slot.Schedule : null;
+    if (!schedule) {
+      const scheduleId = slot && slot.get ? slot.get('schedule_id') : slot?.schedule_id;
+      if (scheduleId) {
+        schedule = await models.Schedule.findByPk(scheduleId);
+      }
+    }
+    if (!schedule) {
+      return res.status(404).json({ error: 'Расписание для слота не найдено' });
+    }
 
     // Отменяем все записи в этом слоте
     await models.Appointment.update(
@@ -781,9 +790,7 @@ router.delete('/:id', [
     await slot.destroy();
 
     // Проверяем, остались ли еще слоты в этом расписании
-    const remainingSlots = await models.Slot.count({
-      where: { schedule_id: schedule.id }
-    });
+    const remainingSlots = await models.Slot.count({ where: { schedule_id: schedule.id } });
 
     // Если слотов больше нет, удаляем и расписание
     if (remainingSlots === 0) {
