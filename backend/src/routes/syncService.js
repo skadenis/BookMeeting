@@ -37,8 +37,7 @@ router.post('/auto-sync-statuses', allowCronOrAdmin, async (req, res, next) => {
     const appointmentsToCheck = await models.Appointment.findAll({
       where: {
         bitrix_lead_id: { [Op.not]: null },
-        status: { [Op.in]: ['pending', 'confirmed', 'rescheduled'] }, // Только активные статусы
-        date: { [Op.gte]: dayjs().subtract(7, 'days').format('YYYY-MM-DD') } // За последние 7 дней
+        status: { [Op.in]: ['pending', 'confirmed', 'rescheduled'] }
       },
       include: [{ model: models.Office, attributes: ['city', 'address'] }]
     });
@@ -104,6 +103,13 @@ router.post('/auto-sync-statuses', allowCronOrAdmin, async (req, res, next) => {
         await appointment.update({ status: 'cancelled' });
         updatedCount++;
         console.log(`Cancelled appointment ${appointment.id} due to external status: ${newStatus}`);
+      } else if (
+        // Если лида вообще нет в Bitrix (или нет поля STATUS_ID) → тоже отмена
+        newStatus === undefined || newStatus === null
+      ) {
+        await appointment.update({ status: 'cancelled' });
+        updatedCount++;
+        console.log(`Cancelled appointment ${appointment.id} (lead ${leadId} not found in Bitrix)`);
       } else if (isPastDue && ['pending', 'confirmed', 'rescheduled'].includes(appointment.status)) {
         // Встреча прошла, а в Bitrix нет признака завершения → считаем как неявку
         await appointment.update({ status: 'no_show' });
