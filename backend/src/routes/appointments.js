@@ -254,6 +254,24 @@ router.put('/:id', [
 				
 				const response = await axios.post(url, requestData);
 				console.log('✅ Ответ от Bitrix при подтверждении встречи:', response.status, response.data);
+			} else if (status === 'cancelled' && appointment.bitrix_lead_id) {
+				// Отмена встречи: переводим лид в IN_PROCESS и очищаем дату/время в кастомных полях
+				try {
+					const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
+					const requestData = {
+						id: Number(appointment.bitrix_lead_id),
+						fields: {
+							STATUS_ID: 'IN_PROCESS',
+							UF_CRM_1655460588: null, // дата встречи -> null
+							UF_CRM_1657019494: null  // время встречи -> null
+						}
+					};
+					console.log('📤 Отправляю запрос в Bitrix при отмене встречи:', JSON.stringify(requestData));
+					const r = await axios.post(url, requestData);
+					console.log('✅ Ответ от Bitrix при отмене встречи:', r.status, r.data);
+				} catch (e) {
+					console.error('Bitrix lead update failed on cancellation:', e?.response?.data || e?.message || e);
+				}
 			}
 		} catch (e) {
 			console.error('Bitrix lead update failed:', e?.response?.data || e?.message || e);
