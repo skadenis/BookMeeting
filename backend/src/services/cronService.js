@@ -4,7 +4,10 @@ const axios = require('axios');
 class CronService {
   constructor() {
     this.jobs = new Map();
-    this.apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:3000/api';
+    // prod-safe default to port 4000; override with API_BASE_URL
+    this.apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:4000/api';
+    this.cronToken = process.env.CRON_TOKEN || 'internal-cron-token';
+    this.adminBearer = process.env.CRON_ADMIN_TOKEN || '';
   }
 
   // Запуск автоматической синхронизации статусов каждые 5 минут
@@ -18,7 +21,7 @@ class CronService {
           headers: {
             'Content-Type': 'application/json',
             // Добавляем внутренний токен для cron задач
-            'X-Cron-Token': process.env.CRON_TOKEN || 'internal-cron-token'
+            'X-Cron-Token': this.cronToken
           }
         });
 
@@ -47,7 +50,7 @@ class CronService {
           timeout: 60000,
           headers: {
             'Content-Type': 'application/json',
-            'X-Cron-Token': process.env.CRON_TOKEN || 'internal-cron-token'
+            'X-Cron-Token': this.cronToken
           }
         });
 
@@ -80,7 +83,7 @@ class CronService {
           timeout: 120000,
           headers: {
             'Content-Type': 'application/json',
-            'X-Cron-Token': process.env.CRON_TOKEN || 'internal-cron-token'
+            ...(this.adminBearer ? { 'Authorization': `Bearer ${this.adminBearer}` } : {})
           }
         });
         console.log('Admin leads sync done:', {
@@ -99,7 +102,7 @@ class CronService {
           timeout: 60000,
           headers: {
             'Content-Type': 'application/json',
-            'X-Cron-Token': process.env.CRON_TOKEN || 'internal-cron-token'
+            'X-Cron-Token': this.cronToken
           }
         });
         console.log('Dedupe done:', response.data);
