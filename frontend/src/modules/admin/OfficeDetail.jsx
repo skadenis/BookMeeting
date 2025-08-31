@@ -503,9 +503,9 @@ export default function OfficeDetail() {
               // Prefer precise id-based updates if available
               const hasIds = selectedSlots.every(s => s.slotId)
               if (hasIds) {
-                await Promise.all(selectedSlots.map(s => api.post('/slots/capacity', { slot_id: s.slotId, capacity: editCapacity })))
+                await Promise.all(selectedSlots.map(s => api.get('/admin/slots/all', { params: { office_id: id, date: s.date, update_slot_id: s.slotId, new_capacity: editCapacity } })))
               } else {
-                await Promise.all(selectedSlots.map(s => api.get('/slots/all', { params: { office_id: id, date: s.date, update_slot_id: s.slotId, new_capacity: editCapacity } })))
+                await Promise.all(selectedSlots.map(s => api.get('/admin/slots/all', { params: { office_id: id, date: s.date, update_slot_id: s.slotId, new_capacity: editCapacity } })))
               }
               message.success('Изменения применены к выбранным слотам')
               setSelectedSlots([])
