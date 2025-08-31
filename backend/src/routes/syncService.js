@@ -3,7 +3,7 @@ const { models, Op } = require('../lib/db');
 const { adminAuthMiddleware } = require('../middleware/adminAuth');
 const dayjs = require('dayjs');
 const axios = require('axios');
-const { autoSyncStatuses, autoExpireAppointments, dedupeAppointments } = require('../services/syncTasks');
+const { autoSyncStatuses, autoExpireAppointments, dedupeAppointments, backfillLeadOffices } = require('../services/syncTasks');
 
 const router = Router();
 
@@ -131,3 +131,12 @@ router.post('/dedupe', allowCronOrAdmin, async (req, res, next) => {
 });
 
 module.exports = router;
+
+// Backfill Bitrix lead offices based on existing appointments
+router.post('/backfill-lead-offices', allowCronOrAdmin, async (req, res, next) => {
+  try {
+    const { start_date, end_date, office_id } = req.body || {};
+    const result = await backfillLeadOffices({ startDate: start_date, endDate: end_date, officeId: office_id });
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});

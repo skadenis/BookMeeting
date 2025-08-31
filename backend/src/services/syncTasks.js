@@ -399,4 +399,29 @@ async function syncMissingAppointments({ applyUpdates = true } = {}) {
 
 module.exports.syncMissingAppointments = syncMissingAppointments;
 
+// Backfill: for existing appointments with bitrix_lead_id, push office to Bitrix lead UF_CRM_1675255265
+async function backfillLeadOffices({ startDate, endDate, officeId } = {}) {
+  const where = { bitrix_lead_id: { [Op.not]: null } };
+  if (startDate && endDate) where.date = { [Op.between]: [startDate, endDate] };
+  if (officeId) where.office_id = officeId;
+
+  const list = await models.Appointment.findAll({ where, include: [{ model: models.Office, attributes: ['id','bitrixOfficeId'] }] });
+  let updated = 0, skipped = 0;
+  for (const appt of list) {
+    try {
+      const bxOfficeId = Number(appt?.Office?.bitrixOfficeId);
+      const leadId = Number(appt?.bitrix_lead_id);
+      if (!Number.isFinite(bxOfficeId) || bxOfficeId <= 0 || !Number.isFinite(leadId) || leadId <= 0) { skipped++; continue }
+      await axios.post(getBitrixRestUrl('crm.lead.update'), {
+        id: leadId,
+        fields: { UF_CRM_1675255265: bxOfficeId }
+      }, { timeout: 15000, headers: { 'Content-Type': 'application/json' } });
+      updated++;
+    } catch (e) { skipped++; }
+  }
+  return { scanned: list.length, updated, skipped };
+}
+
+module.exports.backfillLeadOffices = backfillLeadOffices;
+
 
