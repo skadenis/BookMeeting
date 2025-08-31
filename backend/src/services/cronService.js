@@ -72,13 +72,31 @@ class CronService {
     
     const autoSyncJob = this.startAutoSync();
     const autoExpireJob = this.startAutoExpire();
+    // Ежедневная чистка дублей в 03:30 по Минску
+    const dedupeJob = cron.schedule('30 3 * * *', async () => {
+      try {
+        console.log('Running daily dedupe...');
+        const response = await axios.post(`${this.apiBaseUrl}/admin/sync/dedupe`, { dry_run: false }, {
+          timeout: 60000,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Cron-Token': process.env.CRON_TOKEN || 'internal-cron-token'
+          }
+        });
+        console.log('Dedupe done:', response.data);
+      } catch (error) {
+        console.error('Dedupe cron error:', error.message);
+      }
+    }, { scheduled: false, timezone: 'Europe/Minsk' });
     
     autoSyncJob.start();
     autoExpireJob.start();
+    dedupeJob.start();
     
     console.log('Cron jobs started:');
     console.log('- Auto sync statuses: every 5 minutes');
     console.log('- Auto expire appointments: every hour');
+    console.log('- Dedupe appointments: daily at 03:30');
   }
 
   // Остановка всех cron задач

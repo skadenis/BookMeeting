@@ -259,4 +259,25 @@ router.post('/auto-expire', allowCronOrAdmin, async (req, res, next) => {
   }
 });
 
+// Удаление дублей встреч (для крона/админа)
+router.post('/dedupe', allowCronOrAdmin, async (req, res, next) => {
+  try {
+    const { dry_run } = req.body || {};
+    const all = await models.Appointment.findAll({
+      where: { bitrix_lead_id: { [Op.not]: null } },
+      order: [['createdAt','ASC']]
+    });
+    const keyMap = new Map();
+    const toDelete = [];
+    for (const a of all) {
+      const key = `${a.bitrix_lead_id}__${a.office_id}__${a.date}__${a.timeSlot}`;
+      if (!keyMap.has(key)) keyMap.set(key, a); else toDelete.push(a);
+    }
+    if (!dry_run) {
+      for (const d of toDelete) await d.destroy();
+    }
+    res.json({ data: { duplicates: toDelete.length, dry_run: !!dry_run } });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
