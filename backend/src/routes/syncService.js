@@ -3,6 +3,7 @@ const { models, Op } = require('../lib/db');
 const { adminAuthMiddleware } = require('../middleware/adminAuth');
 const dayjs = require('dayjs');
 const axios = require('axios');
+const { autoSyncStatuses, autoExpireAppointments, dedupeAppointments } = require('../services/syncTasks');
 
 const router = Router();
 
@@ -31,104 +32,8 @@ function allowCronOrAdmin(req, res, next) {
 // Автоматическая синхронизация статусов с Bitrix24
 router.post('/auto-sync-statuses', allowCronOrAdmin, async (req, res, next) => {
   try {
-    console.log('Starting automatic status sync with Bitrix24...');
-
-    // Получаем все встречи с bitrix_lead_id, которые не в финальном статусе
-    const appointmentsToCheck = await models.Appointment.findAll({
-      where: {
-        bitrix_lead_id: { [Op.not]: null },
-        status: { [Op.in]: ['pending', 'confirmed', 'rescheduled'] }
-      },
-      include: [{ model: models.Office, attributes: ['city', 'address'] }]
-    });
-
-    console.log(`Found ${appointmentsToCheck.length} appointments to check`);
-
-    if (appointmentsToCheck.length === 0) {
-      return res.json({
-        data: {
-          checked: 0,
-          updated: 0,
-          expired: 0,
-          message: 'Нет встреч для проверки'
-        }
-      });
-    }
-
-    // Получаем уникальные lead_id для запроса в Bitrix24
-    const leadIds = [...new Set(appointmentsToCheck.map(a => a.bitrix_lead_id))];
-    console.log(`Checking ${leadIds.length} unique leads in Bitrix24`);
-
-    // Запрашиваем статусы лидов из Bitrix24 — по одному lead'у (устойчивее, но больше запросов)
-    const leadStatusMap = {};
-    for (const id of leadIds) {
-      try {
-        const response = await axios.post('https://bitrix24.newhc.by/rest/15/qseod599og9fc16a/crm.lead.get', {
-          id: Number(id)
-        }, {
-          timeout: 15000,
-          headers: { 'Content-Type': 'application/json' }
-        });
-        const statusId = response?.data?.result?.STATUS_ID;
-        leadStatusMap[id] = BITRIX_STATUS_MAPPING[statusId] || (statusId ?? null);
-      } catch (error) {
-        console.error(`Error fetching lead ${id}:`, error.message);
-      }
-      // Небольшая пауза, чтобы не задушить Bitrix
-      await new Promise(r => setTimeout(r, 100));
-    }
-
-    let updatedCount = 0;
-    let noShowCount = 0;
-
-    // Обновляем статусы встреч
-    for (const appointment of appointmentsToCheck) {
-      const leadId = appointment.bitrix_lead_id;
-      const newStatus = leadStatusMap[leadId];
-
-      // Проверяем, прошла ли встреча
-      const appointmentDateTime = dayjs(`${appointment.date} ${appointment.timeSlot?.split('-')[1] || '23:59'}`);
-      const isPastDue = appointmentDateTime.isBefore(dayjs().subtract(2, 'hours')); // 2 часа буфер
-
-      // Если статус в Bitrix один из "рабочих" — маппим и обновляем
-      if (newStatus && ['pending','confirmed','completed','no_show','cancelled','rescheduled'].includes(newStatus) && newStatus !== appointment.status) {
-        // Статус изменился в Bitrix24 (включая CONVERTED -> completed)
-        await appointment.update({ status: newStatus });
-        updatedCount++;
-        console.log(`Updated appointment ${appointment.id}: ${appointment.status} -> ${newStatus}`);
-      } else if (
-        // Если Bitrix вернул другой статус (не из 2,37,CONVERTED) — считаем отменой
-        newStatus && !['pending','confirmed','completed','no_show','cancelled','rescheduled'].includes(newStatus)
-      ) {
-        await appointment.update({ status: 'cancelled' });
-        updatedCount++;
-        console.log(`Cancelled appointment ${appointment.id} due to external status: ${newStatus}`);
-      } else if (
-        // Если лида вообще нет в Bitrix (или нет поля STATUS_ID) → тоже отмена
-        newStatus === undefined || newStatus === null
-      ) {
-        await appointment.update({ status: 'cancelled' });
-        updatedCount++;
-        console.log(`Cancelled appointment ${appointment.id} (lead ${leadId} not found in Bitrix)`);
-      } else if (isPastDue && ['pending', 'confirmed', 'rescheduled'].includes(appointment.status)) {
-        // Встреча прошла, а в Bitrix нет признака завершения → считаем как неявку
-        await appointment.update({ status: 'no_show' });
-        noShowCount++;
-        console.log(`Marked appointment ${appointment.id} as no_show (past due without conversion)`);
-      }
-    }
-
-    console.log(`Status sync complete: ${updatedCount} updated, ${noShowCount} marked as no_show`);
-
-    res.json({
-      data: {
-        checked: appointmentsToCheck.length,
-        updated: updatedCount,
-        no_show: noShowCount,
-        message: `Проверено ${appointmentsToCheck.length} встреч, обновлено ${updatedCount}, неявок ${noShowCount}`
-      }
-    });
-
+    const result = await autoSyncStatuses();
+    res.json({ data: { ...result, message: `Проверено ${result.checked}, обновлено ${result.updated}, неявок ${result.no_show}` } });
   } catch (e) {
     console.error('Auto sync error:', e);
     next(e);
@@ -208,51 +113,8 @@ router.get('/completed-stats', async (req, res, next) => {
 // Автоматическое истечение просроченных встреч
 router.post('/auto-expire', allowCronOrAdmin, async (req, res, next) => {
   try {
-    console.log('Starting automatic appointment expiration...');
-
-    // Находим встречи, которые прошли более 2 часов назад и еще в статусе pending/confirmed
-    const cutoffTime = dayjs().subtract(2, 'hours');
-    
-    const expiredAppointments = await models.Appointment.findAll({
-      where: {
-        status: { [Op.in]: ['pending', 'confirmed'] },
-        [Op.and]: [
-          models.Appointment.sequelize.where(
-            models.Appointment.sequelize.fn(
-              'CONCAT',
-              models.Appointment.sequelize.col('date'),
-              ' ',
-              models.Appointment.sequelize.fn(
-                'SPLIT_PART',
-                models.Appointment.sequelize.col('timeSlot'),
-                '-',
-                2
-              )
-            ),
-            { [Op.lt]: cutoffTime.format('YYYY-MM-DD HH:mm') }
-          )
-        ]
-      }
-    });
-
-    console.log(`Found ${expiredAppointments.length} expired appointments`);
-
-    let expiredCount = 0;
-    for (const appointment of expiredAppointments) {
-      await appointment.update({ status: 'expired' });
-      expiredCount++;
-    }
-
-    console.log(`Expired ${expiredCount} appointments`);
-
-    res.json({
-      data: {
-        checked: expiredAppointments.length,
-        expired: expiredCount,
-        message: `Помечено как просроченные: ${expiredCount} встреч`
-      }
-    });
-
+    const result = await autoExpireAppointments();
+    res.json({ data: { ...result, message: `Помечено как просроченные: ${result.expired} встреч` } });
   } catch (e) {
     console.error('Auto expire error:', e);
     next(e);
@@ -263,20 +125,8 @@ router.post('/auto-expire', allowCronOrAdmin, async (req, res, next) => {
 router.post('/dedupe', allowCronOrAdmin, async (req, res, next) => {
   try {
     const { dry_run } = req.body || {};
-    const all = await models.Appointment.findAll({
-      where: { bitrix_lead_id: { [Op.not]: null } },
-      order: [['createdAt','ASC']]
-    });
-    const keyMap = new Map();
-    const toDelete = [];
-    for (const a of all) {
-      const key = `${a.bitrix_lead_id}__${a.office_id}__${a.date}__${a.timeSlot}`;
-      if (!keyMap.has(key)) keyMap.set(key, a); else toDelete.push(a);
-    }
-    if (!dry_run) {
-      for (const d of toDelete) await d.destroy();
-    }
-    res.json({ data: { duplicates: toDelete.length, dry_run: !!dry_run } });
+    const result = await dedupeAppointments({ dryRun: !!dry_run });
+    res.json({ data: result });
   } catch (e) { next(e); }
 });
 

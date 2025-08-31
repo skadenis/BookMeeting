@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const axios = require('axios');
+const { autoSyncStatuses, autoExpireAppointments, dedupeAppointments, fetchAndAnalyzeBitrixLeads } = require('./syncTasks');
 
 class CronService {
   constructor() {
@@ -14,18 +15,8 @@ class CronService {
   startAutoSync() {
     const job = cron.schedule('*/5 * * * *', async () => {
       try {
-        console.log('Running automatic status sync...');
-        
-        const response = await axios.post(`${this.apiBaseUrl}/admin/sync/auto-sync-statuses`, {}, {
-          timeout: 120000, // 2 минуты таймаут
-          headers: {
-            'Content-Type': 'application/json',
-            // Добавляем внутренний токен для cron задач
-            'X-Cron-Token': this.cronToken
-          }
-        });
-
-        const result = response.data.data;
+        console.log('Running automatic status sync (direct)...');
+        const result = await autoSyncStatuses();
         console.log(`Auto sync completed: ${result.updated} updated, ${result.no_show} marked as no_show`);
         
       } catch (error) {
@@ -44,17 +35,8 @@ class CronService {
   startAutoExpire() {
     const job = cron.schedule('0 * * * *', async () => {
       try {
-        console.log('Running automatic appointment expiration...');
-        
-        const response = await axios.post(`${this.apiBaseUrl}/admin/sync/auto-expire`, {}, {
-          timeout: 60000,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Cron-Token': this.cronToken
-          }
-        });
-
-        const result = response.data.data;
+        console.log('Running automatic appointment expiration (direct)...');
+        const result = await autoExpireAppointments();
         console.log(`Auto expire completed: ${result.expired} appointments expired`);
         
       } catch (error) {
@@ -78,17 +60,11 @@ class CronService {
     // Синхронизация лидов для админской страницы (данные источника /admin/appointments/sync/bitrix24)
     const leadsSyncJob = cron.schedule('*/10 * * * *', async () => {
       try {
-        console.log('Running admin leads sync...');
-        const response = await axios.get(`${this.apiBaseUrl}/admin/appointments/sync/bitrix24`, {
-          timeout: 120000,
-          headers: {
-            'Content-Type': 'application/json',
-            ...(this.adminBearer ? { 'Authorization': `Bearer ${this.adminBearer}` } : {})
-          }
-        });
+        console.log('Running admin leads sync (direct)...');
+        const analysis = await fetchAndAnalyzeBitrixLeads();
         console.log('Admin leads sync done:', {
-          toCreate: response?.data?.data?.toCreate?.length || 0,
-          toUpdate: response?.data?.data?.toUpdate?.length || 0
+          toCreate: analysis?.toCreate?.length || 0,
+          toUpdate: analysis?.toUpdate?.length || 0
         });
       } catch (error) {
         console.error('Admin leads sync cron error:', error.message);
@@ -98,14 +74,8 @@ class CronService {
     const dedupeJob = cron.schedule('30 3 * * *', async () => {
       try {
         console.log('Running daily dedupe...');
-        const response = await axios.post(`${this.apiBaseUrl}/admin/sync/dedupe`, { dry_run: false }, {
-          timeout: 60000,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Cron-Token': this.cronToken
-          }
-        });
-        console.log('Dedupe done:', response.data);
+        const result = await dedupeAppointments({ dryRun: false });
+        console.log('Dedupe done:', result);
       } catch (error) {
         console.error('Dedupe cron error:', error.message);
       }
