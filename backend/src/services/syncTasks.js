@@ -263,4 +263,112 @@ module.exports = {
   fetchAndAnalyzeBitrixLeads
 };
 
+// Create or update appointments in DB based on Bitrix leads
+async function syncMissingAppointments({ applyUpdates = true } = {}) {
+  const analysis = await fetchAndAnalyzeBitrixLeads();
+
+  // Lazy imports to avoid circular deps at module load
+  const { invalidateSlotsCache } = require('./slotsService');
+  const { broadcastSlotsUpdated } = require('../lib/ws');
+
+  let created = 0;
+  let updated = 0;
+  const invalidOfficeRefs = [];
+
+  // Helper: resolve local office UUID by provided office ref (uuid or Bitrix numeric)
+  async function resolveOfficeId(officeRef) {
+    if (!officeRef) return null;
+    const ref = String(officeRef);
+    const uuidLike = /^[0-9a-fA-F-]{36}$/i.test(ref);
+    if (uuidLike) {
+      const office = await models.Office.findByPk(ref);
+      if (office) return office.id;
+    }
+    const numeric = Number(ref);
+    if (Number.isFinite(numeric)) {
+      const office = await models.Office.findOne({ where: { bitrixOfficeId: numeric } });
+      if (office) return office.id;
+    }
+    return null;
+  }
+
+  // Create new ones
+  for (const group of (analysis.toCreate || [])) {
+    for (const lead of group.leads || []) {
+      try {
+        const localOfficeId = await resolveOfficeId(lead.office_id);
+        if (!localOfficeId) {
+          invalidOfficeRefs.push({ officeRef: lead.office_id, bitrix_lead_id: lead.bitrix_lead_id });
+          continue;
+        }
+        const exists = await models.Appointment.findOne({
+          where: {
+            bitrix_lead_id: lead.bitrix_lead_id,
+            office_id: localOfficeId,
+            date: lead.date,
+            timeSlot: lead.timeSlot
+          }
+        });
+        if (exists) {
+          // Keep for potential update step below
+          continue;
+        }
+        await models.Appointment.create({
+          bitrix_lead_id: lead.bitrix_lead_id,
+          office_id: localOfficeId,
+          date: lead.date,
+          timeSlot: lead.timeSlot,
+          status: lead.status || 'pending',
+          createdBy: 0
+        });
+        await invalidateSlotsCache(localOfficeId, lead.date);
+        broadcastSlotsUpdated(localOfficeId, lead.date);
+        created++;
+      } catch (e) {
+        console.error('Service: failed to create appointment from lead', lead?.bitrix_lead_id, e?.message || e);
+      }
+    }
+  }
+
+  // Apply updates to existing appointments if requested
+  if (applyUpdates) {
+    for (const group of (analysis.toUpdate || [])) {
+      for (const lead of group.leads || []) {
+        try {
+          const appt = await models.Appointment.findByPk(lead.id);
+          if (!appt) continue;
+          const prev = { office_id: appt.office_id, date: appt.date };
+          if (lead.status !== undefined) appt.status = lead.status;
+          if (lead.date !== undefined) appt.date = lead.date;
+          if (lead.timeSlot !== undefined) appt.timeSlot = lead.timeSlot;
+          // Re-resolve office in case Bitrix office changed
+          const localOfficeId = await resolveOfficeId(lead.office_id);
+          if (localOfficeId) appt.office_id = localOfficeId;
+          await appt.save();
+          // Invalidate caches for old and new dates
+          if (prev.office_id && prev.date) {
+            await invalidateSlotsCache(prev.office_id, prev.date);
+            broadcastSlotsUpdated(prev.office_id, prev.date);
+          }
+          if (appt.office_id && appt.date) {
+            await invalidateSlotsCache(appt.office_id, appt.date);
+            broadcastSlotsUpdated(appt.office_id, appt.date);
+          }
+          updated++;
+        } catch (e) {
+          console.error('Service: failed to update appointment from lead', lead?.id, e?.message || e);
+        }
+      }
+    }
+  }
+
+  return {
+    created,
+    updated,
+    invalidOfficeRefs
+  };
+}
+
+module.exports.syncMissingAppointments = syncMissingAppointments;
+
 

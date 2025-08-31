@@ -1,6 +1,6 @@
 const cron = require('node-cron');
 const axios = require('axios');
-const { autoSyncStatuses, autoExpireAppointments, dedupeAppointments, fetchAndAnalyzeBitrixLeads } = require('./syncTasks');
+const { autoSyncStatuses, autoExpireAppointments, dedupeAppointments, fetchAndAnalyzeBitrixLeads, syncMissingAppointments } = require('./syncTasks');
 
 class CronService {
   constructor() {
@@ -62,10 +62,9 @@ class CronService {
       try {
         console.log('Running admin leads sync (direct)...');
         const analysis = await fetchAndAnalyzeBitrixLeads();
-        console.log('Admin leads sync done:', {
-          toCreate: analysis?.toCreate?.length || 0,
-          toUpdate: analysis?.toUpdate?.length || 0
-        });
+        console.log('Admin leads sync analyze:', { toCreate: analysis?.toCreate?.length || 0, toUpdate: analysis?.toUpdate?.length || 0 });
+        const apply = await syncMissingAppointments({ applyUpdates: true });
+        console.log('Admin leads sync applied:', apply);
       } catch (error) {
         console.error('Admin leads sync cron error:', error.message);
       }
