@@ -13,8 +13,7 @@ const BITRIX_STATUS_MAPPING = {
 };
 
 function getBitrixRestUrl(method) {
-  const fallback = 'https://bitrix24.newhc.by/rest/15/qx461meaiqb86ff5';
-  const base = String(process.env.BITRIX_REST_URL || fallback).replace(/\/+$/, '');
+  const base = String(process.env.BITRIX_REST_URL).replace(/\/+$/, '');
   const path = String(method || '').replace(/^\/+/, '');
   return `${base}/${path}`;
 }
