@@ -7,9 +7,9 @@ class CronService {
     this.apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:3000/api';
   }
 
-  // Запуск автоматической синхронизации статусов каждые 10 минут
+  // Запуск автоматической синхронизации статусов каждые 5 минут
   startAutoSync() {
-    const job = cron.schedule('*/10 * * * *', async () => {
+    const job = cron.schedule('*/5 * * * *', async () => {
       try {
         console.log('Running automatic status sync...');
         
@@ -77,7 +77,7 @@ class CronService {
     autoExpireJob.start();
     
     console.log('Cron jobs started:');
-    console.log('- Auto sync statuses: every 10 minutes');
+    console.log('- Auto sync statuses: every 5 minutes');
     console.log('- Auto expire appointments: every hour');
   }
 
