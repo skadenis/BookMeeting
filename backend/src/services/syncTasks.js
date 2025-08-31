@@ -323,6 +323,19 @@ async function syncMissingAppointments({ applyUpdates = true } = {}) {
         });
         await invalidateSlotsCache(localOfficeId, lead.date);
         broadcastSlotsUpdated(localOfficeId, lead.date);
+        // Keep Bitrix lead's office field in sync
+        try {
+          const office = await models.Office.findByPk(localOfficeId);
+          const bxOfficeId = Number(office?.bitrixOfficeId);
+          if (Number.isFinite(bxOfficeId) && bxOfficeId > 0) {
+            await axios.post(getBitrixRestUrl('crm.lead.update'), {
+              id: Number(lead.bitrix_lead_id),
+              fields: { UF_CRM_1675255265: bxOfficeId }
+            }, { timeout: 15000, headers: { 'Content-Type': 'application/json' } });
+          }
+        } catch (e) {
+          console.warn('Service: failed to sync lead office field for', lead?.bitrix_lead_id, e?.message || e);
+        }
         created++;
       } catch (e) {
         console.error('Service: failed to create appointment from lead', lead?.bitrix_lead_id, e?.message || e);
@@ -353,6 +366,21 @@ async function syncMissingAppointments({ applyUpdates = true } = {}) {
           if (appt.office_id && appt.date) {
             await invalidateSlotsCache(appt.office_id, appt.date);
             broadcastSlotsUpdated(appt.office_id, appt.date);
+          }
+          // Sync Bitrix lead's office field after update as well
+          try {
+            if (appt.office_id) {
+              const office = await models.Office.findByPk(appt.office_id);
+              const bxOfficeId = Number(office?.bitrixOfficeId);
+              if (Number.isFinite(bxOfficeId) && bxOfficeId > 0 && appt.bitrix_lead_id) {
+                await axios.post(getBitrixRestUrl('crm.lead.update'), {
+                  id: Number(appt.bitrix_lead_id),
+                  fields: { UF_CRM_1675255265: bxOfficeId }
+                }, { timeout: 15000, headers: { 'Content-Type': 'application/json' } });
+              }
+            }
+          } catch (e) {
+            console.warn('Service: failed to sync lead office field (update)', appt?.bitrix_lead_id, e?.message || e);
           }
           updated++;
         } catch (e) {
