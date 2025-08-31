@@ -402,7 +402,7 @@ router.post('/dedupe', async (req, res, next) => {
 // Получить статистику по встречам
 router.get('/stats/overview', async (req, res, next) => {
   try {
-    const { start_date, end_date } = req.query;
+    const { start_date, end_date, status, office_id, search } = req.query;
     
     // Принудительно показываем только будущие встречи (включая сегодняшние)
     const today = dayjs().format('YYYY-MM-DD');
@@ -418,6 +418,22 @@ router.get('/stats/overview', async (req, res, next) => {
       where.date = {
         [Op.gte]: today
       };
+    }
+
+    // Фильтр по статусу
+    if (status) where.status = status;
+
+    // Фильтр по офису
+    if (office_id) where.office_id = office_id;
+
+    // Поиск по lead/deal/contact ID (числовой)
+    if (search && !isNaN(search)) {
+      const num = Number(search);
+      where[Op.or] = [
+        { bitrix_lead_id: num },
+        { bitrix_deal_id: num },
+        { bitrix_contact_id: num }
+      ];
     }
 
     const stats = await models.Appointment.findAll({

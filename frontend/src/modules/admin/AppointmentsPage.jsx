@@ -218,6 +218,18 @@ export default function AppointmentsPage() {
         params.end_date = filters.dateRange[1].format('YYYY-MM-DD')
       }
 
+      if (filters.status) {
+        params.status = filters.status
+      }
+
+      if (filters.office) {
+        params.office_id = filters.office
+      }
+
+      if (filters.search) {
+        params.search = filters.search
+      }
+
       const response = await api.get('/admin/appointments/stats/overview', { params })
       setStatistics(response.data.data || {
         total: 0,
