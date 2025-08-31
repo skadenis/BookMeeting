@@ -60,39 +60,24 @@ router.post('/auto-sync-statuses', allowCronOrAdmin, async (req, res, next) => {
     const leadIds = [...new Set(appointmentsToCheck.map(a => a.bitrix_lead_id))];
     console.log(`Checking ${leadIds.length} unique leads in Bitrix24`);
 
-    // Запрашиваем статусы лидов из Bitrix24
-    const bitrixLeads = [];
-    const batchSize = 50; // Bitrix24 лимит
-
-    for (let i = 0; i < leadIds.length; i += batchSize) {
-      const batch = leadIds.slice(i, i + batchSize);
-      
+    // Запрашиваем статусы лидов из Bitrix24 — по одному lead'у (устойчивее, но больше запросов)
+    const leadStatusMap = {};
+    for (const id of leadIds) {
       try {
-        const response = await axios.post('https://bitrix24.newhc.by/rest/15/qseod599og9fc16a/crm.lead.list', {
-          "SELECT": ["ID", "STATUS_ID"],
-          "FILTER": {
-            "ID": batch
-          }
+        const response = await axios.post('https://bitrix24.newhc.by/rest/15/qseod599og9fc16a/crm.lead.get', {
+          id: Number(id)
         }, {
-          timeout: 30000,
+          timeout: 15000,
           headers: { 'Content-Type': 'application/json' }
         });
-
-        if (response.data.result) {
-          bitrixLeads.push(...response.data.result);
-        }
+        const statusId = response?.data?.result?.STATUS_ID;
+        leadStatusMap[id] = BITRIX_STATUS_MAPPING[statusId] || (statusId ?? null);
       } catch (error) {
-        console.error(`Error fetching batch ${i}-${i + batchSize}:`, error.message);
+        console.error(`Error fetching lead ${id}:`, error.message);
       }
+      // Небольшая пауза, чтобы не задушить Bitrix
+      await new Promise(r => setTimeout(r, 100));
     }
-
-    console.log(`Retrieved ${bitrixLeads.length} leads from Bitrix24`);
-
-    // Создаем маппинг lead_id -> статус Bitrix
-    const leadStatusMap = bitrixLeads.reduce((acc, lead) => {
-      acc[lead.ID] = BITRIX_STATUS_MAPPING[lead.STATUS_ID] || null;
-      return acc;
-    }, {});
 
     let updatedCount = 0;
     let noShowCount = 0;
@@ -106,11 +91,19 @@ router.post('/auto-sync-statuses', allowCronOrAdmin, async (req, res, next) => {
       const appointmentDateTime = dayjs(`${appointment.date} ${appointment.timeSlot?.split('-')[1] || '23:59'}`);
       const isPastDue = appointmentDateTime.isBefore(dayjs().subtract(2, 'hours')); // 2 часа буфер
 
-      if (newStatus && newStatus !== appointment.status) {
+      // Если статус в Bitrix один из "рабочих" — маппим и обновляем
+      if (newStatus && ['pending','confirmed','completed','no_show','cancelled','rescheduled'].includes(newStatus) && newStatus !== appointment.status) {
         // Статус изменился в Bitrix24 (включая CONVERTED -> completed)
         await appointment.update({ status: newStatus });
         updatedCount++;
         console.log(`Updated appointment ${appointment.id}: ${appointment.status} -> ${newStatus}`);
+      } else if (
+        // Если Bitrix вернул другой статус (не из 2,37,CONVERTED) — считаем отменой
+        newStatus && !['pending','confirmed','completed','no_show','cancelled','rescheduled'].includes(newStatus)
+      ) {
+        await appointment.update({ status: 'cancelled' });
+        updatedCount++;
+        console.log(`Cancelled appointment ${appointment.id} due to external status: ${newStatus}`);
       } else if (isPastDue && ['pending', 'confirmed', 'rescheduled'].includes(appointment.status)) {
         // Встреча прошла, а в Bitrix нет признака завершения → считаем как неявку
         await appointment.update({ status: 'no_show' });
