@@ -472,6 +472,9 @@ router.get('/stats/overview', async (req, res, next) => {
 // Синхронизация с Bitrix24
 router.get('/sync/bitrix24', async (req, res, next) => {
   try {
+    if (!process.env.BITRIX_REST_URL) {
+      return res.status(503).json({ error: 'BITRIX_REST_URL is not configured on server' });
+    }
     const analysis = await fetchAndAnalyzeBitrixLeads();
     res.json({ data: analysis });
 
@@ -479,8 +482,9 @@ router.get('/sync/bitrix24', async (req, res, next) => {
     console.error('Sync complete error:', e);
     if (e.response) {
       // Ошибка от сервера Bitrix24
-      console.error('Bitrix24 API error:', e.response.status, e.response.data)
-      return next(new Error(`Bitrix24 API error: ${e.response.status} - ${JSON.stringify(e.response.data)}`))
+      const status = Number(e.response.status) || 502;
+      const payload = e.response.data || { error: 'Bitrix error' };
+      return res.status(502).json({ error: 'Bitrix24 credentials invalid or expired', details: payload });
     } else if (e.code === 'ECONNABORTED') {
       // Таймаут
       console.error('Bitrix24 API timeout')
