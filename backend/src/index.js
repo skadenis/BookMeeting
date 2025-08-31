@@ -135,7 +135,7 @@ async function start() {
 	app.use('/api/admin/offices', adminAuthMiddleware, officesRouter);
 	app.use('/api/admin/slots', adminAuthMiddleware, slotsRouter);
 	app.use('/api/admin/templates', adminAuthMiddleware, templatesRouter);
-	app.use('/api/admin/appointments', adminAuthMiddleware, appointmentsRouter);
+	app.use('/api/admin/appointments', adminAuthMiddleware, adminAppointmentsRouter);
 
 	// Public routes (protected by bitrixAuthMiddleware)
 	app.use('/api', bitrixAuthMiddleware);
