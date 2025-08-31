@@ -60,6 +60,9 @@ class CronService {
     // Синхронизация лидов для админской страницы (данные источника /admin/appointments/sync/bitrix24)
     const leadsSyncJob = cron.schedule('*/10 * * * *', async () => {
       try {
+        if (process.env.ENABLE_LEADS_SYNC !== 'true') {
+          return; // feature is disabled unless explicitly enabled
+        }
         console.log('Running admin leads sync (direct)...');
         if (!process.env.BITRIX_REST_URL) {
           console.warn('Leads sync skipped: BITRIX_REST_URL is not set');

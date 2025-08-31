@@ -135,7 +135,7 @@ async function dedupeAppointments({ dryRun = false } = {}) {
 async function fetchAndAnalyzeBitrixLeads() {
   console.log('Service: Starting Bitrix24 leads fetch & analyze...');
   if (!process.env.BITRIX_REST_URL) {
-    throw new Error('BITRIX_REST_URL is not configured');
+    return { totalBitrixLeads: 0, toCreate: [], toUpdate: [], createCount: 0, updateCount: 0, allLeads: [] };
   }
   const allLeads = [];
   let start = 0;
