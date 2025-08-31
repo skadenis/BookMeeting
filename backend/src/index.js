@@ -138,6 +138,8 @@ async function start() {
 	app.use('/api/admin/slots', adminAuthMiddleware, slotsRouter);
 	app.use('/api/admin/templates', adminAuthMiddleware, templatesRouter);
 	app.use('/api/admin/appointments', adminAuthMiddleware, adminAppointmentsRouter);
+	// Admin settings (public + private endpoints inside router). Mount explicitly to bypass bitrixAuth
+	app.use('/api/admin/settings', adminSettingsRouter);
 	// Secure sync service under admin auth or X-Cron-Token (handled inside router)
 	app.use('/api/admin/sync', syncServiceRouter);
 

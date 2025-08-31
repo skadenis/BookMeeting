@@ -5,11 +5,10 @@ const { adminAuthMiddleware } = require('../middleware/adminAuth');
 
 const router = Router();
 
-// Middleware для проверки админских прав
-router.use(adminAuthMiddleware);
+// Не вешаем глобально, чтобы '/public' был доступен без админ-авторизации
 
 // Получить настройки системы
-router.get('/', async (req, res, next) => {
+router.get('/', adminAuthMiddleware, async (req, res, next) => {
   try {
     // Получаем все настройки из базы данных
     const settings = await models.Setting.findAll();
@@ -36,7 +35,7 @@ router.get('/', async (req, res, next) => {
 // Обновить настройки системы
 router.put('/', [
   body('max_booking_days').isInt({ min: 1, max: 365 }).withMessage('Период записи должен быть от 1 до 365 дней'),
-], async (req, res, next) => {
+], adminAuthMiddleware, async (req, res, next) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {

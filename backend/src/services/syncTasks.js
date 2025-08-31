@@ -13,7 +13,8 @@ const BITRIX_STATUS_MAPPING = {
 };
 
 function getBitrixRestUrl(method) {
-  const base = process.env.BITRIX_REST_URL || 'https://bitrix24.newhc.by/rest/15/qseod599og9fc16a';
+  const base = process.env.BITRIX_REST_URL;
+  if (!base) throw new Error('BITRIX_REST_URL env is not set');
   return `${base}/${method}`;
 }
 
