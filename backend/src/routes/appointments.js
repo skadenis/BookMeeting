@@ -30,7 +30,7 @@ async function ensureLeadStage(leadId, targetStageId, currentStageId = null) {
 		if (String(currentStageId) === '2' && String(targetStageId) === '2') {
 			console.log(`🔄 Перевожу лид ${leadId} из стадии "2" в "IN_PROCESS" перед назначением встречи`);
 			
-			const updateStageUrl = `${process.env.BITRIX_REST_URL}/crm.lead.update`;
+			const updateStageUrl = `${(process.env.BITRIX_REST_URL || 'https://bitrix24.newhc.by/rest/15/qx461meaiqb86ff5').replace(/\/+$/, '')}/crm.lead.update`;
 			await axios.post(updateStageUrl, {
 				id: Number(leadId),
 				fields: { STATUS_ID: 'IN_PROCESS' }
@@ -43,7 +43,7 @@ async function ensureLeadStage(leadId, targetStageId, currentStageId = null) {
 		if (String(currentStageId) === '2' && String(targetStageId) === '37') {
 			console.log(`🔄 Перевожу лид ${leadId} из стадии "2" в "IN_PROCESS" перед подтверждением встречи`);
 			
-			const updateStageUrl = `${process.env.BITRIX_REST_URL}/crm.lead.update`;
+			const updateStageUrl = `${(process.env.BITRIX_REST_URL || 'https://bitrix24.newhc.by/rest/15/qx461meaiqb86ff5').replace(/\/+$/, '')}/crm.lead.update`;
 			await axios.post(updateStageUrl, {
 				id: Number(leadId),
 				fields: { STATUS_ID: 'IN_PROCESS' }
@@ -152,7 +152,7 @@ router.post('/', [
 				const dateParts = String(appointment.date || '').split('-'); // YYYY-MM-DD
 				const dateRu = (dateParts.length === 3) ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : '';
 
-				const url = `${process.env.BITRIX_REST_URL}/crm.lead.update`;
+				const url = `${(process.env.BITRIX_REST_URL || 'https://bitrix24.newhc.by/rest/15/qx461meaiqb86ff5').replace(/\/+$/, '')}/crm.lead.update`;
 				const requestData = {
 					id: Number(appointment.bitrix_lead_id),
 					fields: {
@@ -234,7 +234,7 @@ router.put('/:id', [
 				const dateParts = String(appointment.date || '').split('-'); // YYYY-MM-DD
 				const dateRu = (dateParts.length === 3) ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : '';
 
-				const url = `${process.env.BITRIX_REST_URL}/crm.lead.update`;
+				const url = `${(process.env.BITRIX_REST_URL || 'https://bitrix24.newhc.by/rest/15/qx461meaiqb86ff5').replace(/\/+$/, '')}/crm.lead.update`;
 				const requestData = {
 					id: Number(appointment.bitrix_lead_id),
 					fields: {

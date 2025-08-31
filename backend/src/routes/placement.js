@@ -45,7 +45,8 @@ router.get('/lead', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Missing lead id' });
     }
 
-    const url = `${process.env.BITRIX_REST_URL}/crm.lead.get`;
+    const base = (process.env.BITRIX_REST_URL || 'https://bitrix24.newhc.by/rest/15/qx461meaiqb86ff5').replace(/\/+$/, '');
+    const url = `${base}/crm.lead.get`;
     const response = await axios.post(url, { id });
     const lead = response?.data?.result || null;
     return res.json({ ok: true, lead, raw: response?.data });
@@ -73,7 +74,8 @@ router.post('/lead/update-office', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'office_bitrix_id not provided or office not found' });
     }
 
-    const url = `${process.env.BITRIX_REST_URL}/crm.lead.update`;
+    const base = (process.env.BITRIX_REST_URL || 'https://bitrix24.newhc.by/rest/15/qx461meaiqb86ff5').replace(/\/+$/, '');
+    const url = `${base}/crm.lead.update`;
     const payload = {
       id: Number(leadId),
       fields: {

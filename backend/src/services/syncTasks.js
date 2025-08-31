@@ -13,9 +13,10 @@ const BITRIX_STATUS_MAPPING = {
 };
 
 function getBitrixRestUrl(method) {
-  const base = process.env.BITRIX_REST_URL;
-  if (!base) throw new Error('BITRIX_REST_URL env is not set');
-  return `${base}/${method}`;
+  const fallback = 'https://bitrix24.newhc.by/rest/15/qx461meaiqb86ff5';
+  const base = String(process.env.BITRIX_REST_URL || fallback).replace(/\/+$/, '');
+  const path = String(method || '').replace(/^\/+/, '');
+  return `${base}/${path}`;
 }
 
 async function autoSyncStatuses() {
@@ -134,9 +135,6 @@ async function dedupeAppointments({ dryRun = false } = {}) {
 
 async function fetchAndAnalyzeBitrixLeads() {
   console.log('Service: Starting Bitrix24 leads fetch & analyze...');
-  if (!process.env.BITRIX_REST_URL) {
-    return { totalBitrixLeads: 0, toCreate: [], toUpdate: [], createCount: 0, updateCount: 0, allLeads: [] };
-  }
   const allLeads = [];
   let start = 0;
   let pageCount = 0;
