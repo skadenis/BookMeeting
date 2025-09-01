@@ -104,14 +104,14 @@ async function autoExpireAppointments() {
     }
   });
 
-  let expiredCount = 0;
+  let noShowCount = 0;
   for (const appointment of expiredAppointments) {
-    await appointment.update({ status: 'expired' });
-    expiredCount++;
+    await appointment.update({ status: 'no_show' });
+    noShowCount++;
   }
 
-  console.log(`Service: expired ${expiredCount} appointments`);
-  return { checked: expiredAppointments.length, expired: expiredCount };
+  console.log(`Service: marked ${noShowCount} appointments as no_show`);
+  return { checked: expiredAppointments.length, no_show: noShowCount };
 }
 
 async function dedupeAppointments({ dryRun = false } = {}) {
@@ -269,7 +269,7 @@ module.exports = {
   autoExpireAppointments,
   dedupeAppointments,
   fetchAndAnalyzeBitrixLeads,
-  checkCancelledLeads
+  checkNoShowLeads
 };
 
 // Create or update appointments in DB based on Bitrix leads
@@ -437,19 +437,19 @@ async function backfillLeadOffices({ startDate, endDate, officeId } = {}) {
 
 module.exports.backfillLeadOffices = backfillLeadOffices;
 
-// Проверка отмененных лидов за последние дни и восстановление статуса
-async function checkCancelledLeads({ daysBack = 3 } = {}) {
-  console.log(`Service: Starting cancelled leads check for last ${daysBack} days...`);
+// Проверка лидов со статусом "не пришел" за последние дни и восстановление статуса
+async function checkNoShowLeads({ daysBack = 3 } = {}) {
+  console.log(`Service: Starting no-show leads check for last ${daysBack} days...`);
   
   const startDate = dayjs().subtract(daysBack, 'day').format('YYYY-MM-DD');
   const endDate = dayjs().format('YYYY-MM-DD');
   
   console.log(`Service: Checking period from ${startDate} to ${endDate}`);
   
-  // Получаем отмененные встречи за последние дни
-  const cancelledAppointments = await models.Appointment.findAll({
+  // Получаем встречи со статусом "не пришел" за последние дни
+  const noShowAppointments = await models.Appointment.findAll({
     where: {
-      status: 'cancelled',
+      status: 'no_show',
       date: {
         [Op.between]: [startDate, endDate]
       },
@@ -460,9 +460,9 @@ async function checkCancelledLeads({ daysBack = 3 } = {}) {
     attributes: ['id', 'bitrix_lead_id', 'date', 'timeSlot', 'office_id']
   });
   
-  console.log(`Service: Found ${cancelledAppointments.length} cancelled appointments to check`);
+  console.log(`Service: Found ${noShowAppointments.length} no-show appointments to check`);
   
-  if (cancelledAppointments.length === 0) {
+  if (noShowAppointments.length === 0) {
     return { checked: 0, restored: 0, errors: 0 };
   }
   
@@ -471,7 +471,7 @@ async function checkCancelledLeads({ daysBack = 3 } = {}) {
   let errors = 0;
   
   // Группируем по bitrix_lead_id для массовой проверки
-  const leadIds = [...new Set(cancelledAppointments.map(apt => apt.bitrix_lead_id))];
+  const leadIds = [...new Set(noShowAppointments.map(apt => apt.bitrix_lead_id))];
   
   try {
     // Получаем актуальные статусы лидов из Bitrix24
@@ -491,8 +491,8 @@ async function checkCancelledLeads({ daysBack = 3 } = {}) {
       leadMap.set(lead.ID, lead);
     });
     
-    // Проверяем каждый отмененный appointment
-    for (const appointment of cancelledAppointments) {
+    // Проверяем каждый appointment со статусом "не пришел"
+    for (const appointment of noShowAppointments) {
       try {
         checked++;
         const lead = leadMap.get(appointment.bitrix_lead_id);
@@ -504,9 +504,9 @@ async function checkCancelledLeads({ daysBack = 3 } = {}) {
         
         const bitrixStatus = BITRIX_STATUS_MAPPING[lead.STATUS_ID] || 'pending';
         
-        // Если статус в Bitrix24 не отменен, восстанавливаем appointment
-        if (bitrixStatus !== 'cancelled') {
-          console.log(`Service: Restoring appointment ${appointment.id} for lead ${appointment.bitrix_lead_id} from cancelled to ${bitrixStatus}`);
+        // Если статус в Bitrix24 активный (не отменен и не "не пришел"), восстанавливаем appointment
+        if (['pending', 'confirmed', 'completed', 'rescheduled'].includes(bitrixStatus)) {
+          console.log(`Service: Restoring appointment ${appointment.id} for lead ${appointment.bitrix_lead_id} from no_show to ${bitrixStatus}`);
           
           appointment.status = bitrixStatus;
           await appointment.save();
@@ -521,7 +521,7 @@ async function checkCancelledLeads({ daysBack = 3 } = {}) {
           restored++;
         }
       } catch (error) {
-        console.error(`Service: Error checking cancelled appointment ${appointment.id}:`, error.message);
+        console.error(`Service: Error checking no-show appointment ${appointment.id}:`, error.message);
         errors++;
       }
     }
@@ -531,7 +531,7 @@ async function checkCancelledLeads({ daysBack = 3 } = {}) {
     errors++;
   }
   
-  console.log(`Service: Cancelled leads check complete: ${checked} checked, ${restored} restored, ${errors} errors`);
+  console.log(`Service: No-show leads check complete: ${checked} checked, ${restored} restored, ${errors} errors`);
   
   return { checked, restored, errors };
 }

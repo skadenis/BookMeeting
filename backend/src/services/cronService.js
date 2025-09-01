@@ -87,22 +87,22 @@ class CronService {
       }
     }, { scheduled: false, timezone: 'Europe/Minsk' });
     
-    // Проверка отмененных лидов каждые 30 минут
-    const cancelledLeadsJob = cron.schedule('*/30 * * * *', async () => {
+    // Проверка лидов со статусом "не пришел" каждые 30 минут
+    const noShowLeadsJob = cron.schedule('*/30 * * * *', async () => {
       try {
         if (process.env.ENABLE_LEADS_SYNC !== 'true') {
           return; // feature is disabled unless explicitly enabled
         }
-        console.log('Running cancelled leads check...');
+        console.log('Running no-show leads check...');
         if (!process.env.BITRIX_REST_URL) {
-          console.warn('Cancelled leads check skipped: BITRIX_REST_URL is not set');
+          console.warn('No-show leads check skipped: BITRIX_REST_URL is not set');
           return;
         }
-        const { checkCancelledLeads } = require('./syncTasks');
-        const result = await checkCancelledLeads({ daysBack: 3 });
-        console.log('Cancelled leads check done:', result);
+        const { checkNoShowLeads } = require('./syncTasks');
+        const result = await checkNoShowLeads({ daysBack: 3 });
+        console.log('No-show leads check done:', result);
       } catch (error) {
-        console.error('Cancelled leads check cron error:', error.message);
+        console.error('No-show leads check cron error:', error.message);
       }
     }, { scheduled: false, timezone: 'Europe/Minsk' });
     
@@ -110,14 +110,14 @@ class CronService {
     autoExpireJob.start();
     leadsSyncJob.start();
     dedupeJob.start();
-    cancelledLeadsJob.start();
+    noShowLeadsJob.start();
     
     console.log('Cron jobs started:');
     console.log('- Auto sync statuses: every 5 minutes');
     console.log('- Auto expire appointments: every hour');
     console.log('- Admin leads sync: every minute (DEBUG MODE)');
     console.log('- Dedupe appointments: daily at 03:30');
-    console.log('- Cancelled leads check: every 30 minutes');
+    console.log('- No-show leads check: every 30 minutes');
   }
 
   // Остановка всех cron задач
