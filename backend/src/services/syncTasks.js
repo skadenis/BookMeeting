@@ -247,6 +247,13 @@ async function fetchAndAnalyzeBitrixLeads() {
   const updateList = Object.entries(groupedToUpdate).map(([officeId, leads]) => ({ officeId, leads, count: leads.length, actionType: 'update' }));
 
   console.log(`Service: analyze complete: ${createList.length} office groups to create, ${updateList.length} to update`);
+  console.log(`Service: detailed analysis - toCreate: ${toCreate.length} leads, toUpdate: ${toUpdate.length} leads`);
+  if (toCreate.length > 0) {
+    console.log(`Service: leads to create:`, toCreate.map(l => ({ bitrix_lead_id: l.bitrix_lead_id, office_id: l.office_id, date: l.date, timeSlot: l.timeSlot })));
+  }
+  if (toUpdate.length > 0) {
+    console.log(`Service: leads to update:`, toUpdate.map(l => ({ id: l.id, bitrix_lead_id: l.bitrix_lead_id, office_id: l.office_id, date: l.date, timeSlot: l.timeSlot })));
+  }
   return {
     totalBitrixLeads: allLeads.length,
     toCreate: createList,
@@ -294,7 +301,9 @@ async function syncMissingAppointments({ applyUpdates = true } = {}) {
   }
 
   // Create new ones
+  console.log(`Service: Starting bulk creation of ${analysis.toCreate?.reduce((sum, group) => sum + (group.leads?.length || 0), 0) || 0} appointments`);
   for (const group of (analysis.toCreate || [])) {
+    console.log(`Service: Processing group for office ${group.officeId} with ${group.leads?.length || 0} leads`);
     for (const lead of group.leads || []) {
       try {
         const localOfficeId = await resolveOfficeId(lead.office_id);
