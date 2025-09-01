@@ -324,6 +324,7 @@ async function syncMissingAppointments({ applyUpdates = true } = {}) {
         });
         await invalidateSlotsCache(localOfficeId, lead.date);
         broadcastSlotsUpdated(localOfficeId, lead.date);
+        console.log(`Service: Created appointment for lead ${lead.bitrix_lead_id}, invalidated cache for office ${localOfficeId}, date ${lead.date}`);
         // Keep Bitrix lead's office field in sync
         try {
           const office = await models.Office.findByPk(localOfficeId);
@@ -368,6 +369,7 @@ async function syncMissingAppointments({ applyUpdates = true } = {}) {
             await invalidateSlotsCache(appt.office_id, appt.date);
             broadcastSlotsUpdated(appt.office_id, appt.date);
           }
+          console.log(`Service: Updated appointment ${lead.id} for lead ${lead.bitrix_lead_id}, invalidated cache for office ${appt.office_id}, date ${appt.date}`);
           // Sync Bitrix lead's office field after update as well
           try {
             if (appt.office_id) {
