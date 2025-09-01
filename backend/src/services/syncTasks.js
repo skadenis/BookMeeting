@@ -268,7 +268,8 @@ module.exports = {
   autoSyncStatuses,
   autoExpireAppointments,
   dedupeAppointments,
-  fetchAndAnalyzeBitrixLeads
+  fetchAndAnalyzeBitrixLeads,
+  checkCancelledLeads
 };
 
 // Create or update appointments in DB based on Bitrix leads
@@ -435,5 +436,104 @@ async function backfillLeadOffices({ startDate, endDate, officeId } = {}) {
 }
 
 module.exports.backfillLeadOffices = backfillLeadOffices;
+
+// Проверка отмененных лидов за последние дни и восстановление статуса
+async function checkCancelledLeads({ daysBack = 3 } = {}) {
+  console.log(`Service: Starting cancelled leads check for last ${daysBack} days...`);
+  
+  const startDate = dayjs().subtract(daysBack, 'day').format('YYYY-MM-DD');
+  const endDate = dayjs().format('YYYY-MM-DD');
+  
+  console.log(`Service: Checking period from ${startDate} to ${endDate}`);
+  
+  // Получаем отмененные встречи за последние дни
+  const cancelledAppointments = await models.Appointment.findAll({
+    where: {
+      status: 'cancelled',
+      date: {
+        [Op.between]: [startDate, endDate]
+      },
+      bitrix_lead_id: {
+        [Op.not]: null
+      }
+    },
+    attributes: ['id', 'bitrix_lead_id', 'date', 'timeSlot', 'office_id']
+  });
+  
+  console.log(`Service: Found ${cancelledAppointments.length} cancelled appointments to check`);
+  
+  if (cancelledAppointments.length === 0) {
+    return { checked: 0, restored: 0, errors: 0 };
+  }
+  
+  let checked = 0;
+  let restored = 0;
+  let errors = 0;
+  
+  // Группируем по bitrix_lead_id для массовой проверки
+  const leadIds = [...new Set(cancelledAppointments.map(apt => apt.bitrix_lead_id))];
+  
+  try {
+    // Получаем актуальные статусы лидов из Bitrix24
+    const response = await axios.post(getBitrixRestUrl('crm.lead.list'), {
+      filter: {
+        ID: leadIds,
+        '>DATE_CREATE': dayjs().subtract(daysBack + 1, 'day').format('YYYY-MM-DD')
+      },
+      select: ['ID', 'STATUS_ID', 'UF_CRM_1655460588', 'UF_CRM_1657019494']
+    }, { timeout: 30000, headers: { 'Content-Type': 'application/json' } });
+    
+    const leads = response.data?.result || [];
+    console.log(`Service: Retrieved ${leads.length} leads from Bitrix24`);
+    
+    const leadMap = new Map();
+    leads.forEach(lead => {
+      leadMap.set(lead.ID, lead);
+    });
+    
+    // Проверяем каждый отмененный appointment
+    for (const appointment of cancelledAppointments) {
+      try {
+        checked++;
+        const lead = leadMap.get(appointment.bitrix_lead_id);
+        
+        if (!lead) {
+          console.log(`Service: Lead ${appointment.bitrix_lead_id} not found in Bitrix24, skipping`);
+          continue;
+        }
+        
+        const bitrixStatus = BITRIX_STATUS_MAPPING[lead.STATUS_ID] || 'pending';
+        
+        // Если статус в Bitrix24 не отменен, восстанавливаем appointment
+        if (bitrixStatus !== 'cancelled') {
+          console.log(`Service: Restoring appointment ${appointment.id} for lead ${appointment.bitrix_lead_id} from cancelled to ${bitrixStatus}`);
+          
+          appointment.status = bitrixStatus;
+          await appointment.save();
+          
+          // Инвалидируем кеш
+          const { invalidateSlotsCache } = require('./slotsService');
+          const { broadcastSlotsUpdated } = require('../lib/ws');
+          
+          await invalidateSlotsCache(appointment.office_id, appointment.date);
+          broadcastSlotsUpdated(appointment.office_id, appointment.date);
+          
+          restored++;
+        }
+      } catch (error) {
+        console.error(`Service: Error checking cancelled appointment ${appointment.id}:`, error.message);
+        errors++;
+      }
+    }
+    
+  } catch (error) {
+    console.error('Service: Error fetching leads from Bitrix24:', error.message);
+    errors++;
+  }
+  
+  console.log(`Service: Cancelled leads check complete: ${checked} checked, ${restored} restored, ${errors} errors`);
+  
+  return { checked, restored, errors };
+}
 
 

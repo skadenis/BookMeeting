@@ -87,16 +87,37 @@ class CronService {
       }
     }, { scheduled: false, timezone: 'Europe/Minsk' });
     
+    // Проверка отмененных лидов каждые 30 минут
+    const cancelledLeadsJob = cron.schedule('*/30 * * * *', async () => {
+      try {
+        if (process.env.ENABLE_LEADS_SYNC !== 'true') {
+          return; // feature is disabled unless explicitly enabled
+        }
+        console.log('Running cancelled leads check...');
+        if (!process.env.BITRIX_REST_URL) {
+          console.warn('Cancelled leads check skipped: BITRIX_REST_URL is not set');
+          return;
+        }
+        const { checkCancelledLeads } = require('./syncTasks');
+        const result = await checkCancelledLeads({ daysBack: 3 });
+        console.log('Cancelled leads check done:', result);
+      } catch (error) {
+        console.error('Cancelled leads check cron error:', error.message);
+      }
+    }, { scheduled: false, timezone: 'Europe/Minsk' });
+    
     autoSyncJob.start();
     autoExpireJob.start();
     leadsSyncJob.start();
     dedupeJob.start();
+    cancelledLeadsJob.start();
     
     console.log('Cron jobs started:');
     console.log('- Auto sync statuses: every 5 minutes');
     console.log('- Auto expire appointments: every hour');
     console.log('- Admin leads sync: every minute (DEBUG MODE)');
     console.log('- Dedupe appointments: daily at 03:30');
+    console.log('- Cancelled leads check: every 30 minutes');
   }
 
   // Остановка всех cron задач
