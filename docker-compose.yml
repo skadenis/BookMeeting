@@ -36,7 +36,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       BITRIX_DEV_MODE: "true"
-      BITRIX_REST_URL: "https://bitrix24.newhc.by/rest/15/qx461meaiqb86ff5"
+      BITRIX_REST_URL: ${BITRIX_REST_URL}
       CORS_ORIGIN: "http://localhost:8088,http://localhost:5173,http://localhost:5174"
     ports:
       - "4400:4000"   # внешний 4400 -> внутренний 4000

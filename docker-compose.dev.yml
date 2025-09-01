@@ -12,7 +12,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       BITRIX_DEV_MODE: "true"
-      BITRIX_REST_URL: "https://bitrix24.newhc.by/rest/15/qx461meaiqb86ff5"
+      BITRIX_REST_URL: ${BITRIX_REST_URL}
       CORS_ORIGIN: "http://localhost:5173"
     command: npm run dev
     volumes:

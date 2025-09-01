@@ -80,11 +80,13 @@ async function bitrixAuthMiddleware(req, res, next) {
         console.log('  - Query params:', req.query);
 
         // В продакшене для публичных эндпоинтов разрешаем запросы без строгой авторизации
-        // Публичные эндпоинты: /offices, /slots (GET), /templates (GET)
+        // Публичные эндпоинты: /offices, /slots (GET), /templates (GET), /bitrix/lead (GET), /appointments (GET)
         const isPublicEndpoint = (
             (req.method === 'GET' && req.url.startsWith('/offices')) ||
             (req.method === 'GET' && req.url.startsWith('/slots')) ||
-            (req.method === 'GET' && req.url.startsWith('/templates'))
+            (req.method === 'GET' && req.url.startsWith('/templates')) ||
+            (req.method === 'GET' && req.url.startsWith('/bitrix/lead')) ||
+            (req.method === 'GET' && req.url.startsWith('/appointments'))
         );
 
         if (isPublicEndpoint && (!token && !domain)) {
