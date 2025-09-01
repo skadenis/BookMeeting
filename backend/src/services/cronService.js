@@ -58,7 +58,7 @@ class CronService {
     const autoSyncJob = this.startAutoSync();
     const autoExpireJob = this.startAutoExpire();
     // Синхронизация лидов для админской страницы (данные источника /admin/appointments/sync/bitrix24)
-    const leadsSyncJob = cron.schedule('*/10 * * * *', async () => {
+    const leadsSyncJob = cron.schedule('* * * * *', async () => {
       try {
         if (process.env.ENABLE_LEADS_SYNC !== 'true') {
           return; // feature is disabled unless explicitly enabled
@@ -95,7 +95,7 @@ class CronService {
     console.log('Cron jobs started:');
     console.log('- Auto sync statuses: every 5 minutes');
     console.log('- Auto expire appointments: every hour');
-    console.log('- Admin leads sync: every 10 minutes');
+    console.log('- Admin leads sync: every minute (DEBUG MODE)');
     console.log('- Dedupe appointments: daily at 03:30');
   }
 
