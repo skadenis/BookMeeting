@@ -335,19 +335,6 @@ async function syncMissingAppointments({ applyUpdates = true } = {}) {
         await invalidateSlotsCache(localOfficeId, lead.date);
         broadcastSlotsUpdated(localOfficeId, lead.date);
         console.log(`Service: Created appointment for lead ${lead.bitrix_lead_id}, invalidated cache for office ${localOfficeId}, date ${lead.date}`);
-        // Keep Bitrix lead's office field in sync
-        try {
-          const office = await models.Office.findByPk(localOfficeId);
-          const bxOfficeId = Number(office?.bitrixOfficeId);
-          if (Number.isFinite(bxOfficeId) && bxOfficeId > 0) {
-            await axios.post(getBitrixRestUrl('crm.lead.update'), {
-              id: Number(lead.bitrix_lead_id),
-              fields: { UF_CRM_1675255265: bxOfficeId }
-            }, { timeout: 15000, headers: { 'Content-Type': 'application/json' } });
-          }
-        } catch (e) {
-          console.warn('Service: failed to sync lead office field for', lead?.bitrix_lead_id, e?.message || e);
-        }
         created++;
       } catch (e) {
         console.error('Service: failed to create appointment from lead', lead?.bitrix_lead_id, e?.message || e);
@@ -380,21 +367,6 @@ async function syncMissingAppointments({ applyUpdates = true } = {}) {
             broadcastSlotsUpdated(appt.office_id, appt.date);
           }
           console.log(`Service: Updated appointment ${lead.id} for lead ${lead.bitrix_lead_id}, invalidated cache for office ${appt.office_id}, date ${appt.date}`);
-          // Sync Bitrix lead's office field after update as well
-          try {
-            if (appt.office_id) {
-              const office = await models.Office.findByPk(appt.office_id);
-              const bxOfficeId = Number(office?.bitrixOfficeId);
-              if (Number.isFinite(bxOfficeId) && bxOfficeId > 0 && appt.bitrix_lead_id) {
-                await axios.post(getBitrixRestUrl('crm.lead.update'), {
-                  id: Number(appt.bitrix_lead_id),
-                  fields: { UF_CRM_1675255265: bxOfficeId }
-                }, { timeout: 15000, headers: { 'Content-Type': 'application/json' } });
-              }
-            }
-          } catch (e) {
-            console.warn('Service: failed to sync lead office field (update)', appt?.bitrix_lead_id, e?.message || e);
-          }
           updated++;
         } catch (e) {
           console.error('Service: failed to update appointment from lead', lead?.id, e?.message || e);
@@ -412,30 +384,7 @@ async function syncMissingAppointments({ applyUpdates = true } = {}) {
 
 module.exports.syncMissingAppointments = syncMissingAppointments;
 
-// Backfill: for existing appointments with bitrix_lead_id, push office to Bitrix lead UF_CRM_1675255265
-async function backfillLeadOffices({ startDate, endDate, officeId } = {}) {
-  const where = { bitrix_lead_id: { [Op.not]: null } };
-  if (startDate && endDate) where.date = { [Op.between]: [startDate, endDate] };
-  if (officeId) where.office_id = officeId;
-
-  const list = await models.Appointment.findAll({ where, include: [{ model: models.Office, attributes: ['id','bitrixOfficeId'] }] });
-  let updated = 0, skipped = 0;
-  for (const appt of list) {
-    try {
-      const bxOfficeId = Number(appt?.Office?.bitrixOfficeId);
-      const leadId = Number(appt?.bitrix_lead_id);
-      if (!Number.isFinite(bxOfficeId) || bxOfficeId <= 0 || !Number.isFinite(leadId) || leadId <= 0) { skipped++; continue }
-      await axios.post(getBitrixRestUrl('crm.lead.update'), {
-        id: leadId,
-        fields: { UF_CRM_1675255265: bxOfficeId }
-      }, { timeout: 15000, headers: { 'Content-Type': 'application/json' } });
-      updated++;
-    } catch (e) { skipped++; }
-  }
-  return { scanned: list.length, updated, skipped };
-}
-
-module.exports.backfillLeadOffices = backfillLeadOffices;
+// Backfill function removed - no longer automatically updating Bitrix office fields
 
 // Проверка лидов со статусом "не пришел" за последние дни и восстановление статуса
 async function checkNoShowLeads({ daysBack = 3 } = {}) {
