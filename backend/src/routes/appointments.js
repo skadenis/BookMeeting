@@ -131,14 +131,14 @@ router.post('/', [
 			createdBy: (req.bitrix && req.bitrix.userId) || 0,
 		});
 		
-		// If appointment created with lead_id — push updates to Bitrix lead
-		try {
-			console.log('🔍 Проверяю условия для отправки в Bitrix при создании встречи:');
-			console.log('  - bitrix_lead_id:', appointment.bitrix_lead_id);
-			console.log('  - req.bitrix:', req.bitrix);
-			console.log('  - req.bitrix.userId:', req.bitrix?.userId);
-			
-			if (appointment.bitrix_lead_id) {
+		// If appointment created with lead_id — push updates to Bitrix lead (только на проде)
+		if (process.env.NODE_ENV === 'production' && appointment.bitrix_lead_id) {
+			try {
+				console.log('🔍 Проверяю условия для отправки в Bitrix при создании встречи:');
+				console.log('  - bitrix_lead_id:', appointment.bitrix_lead_id);
+				console.log('  - req.bitrix:', req.bitrix);
+				console.log('  - req.bitrix.userId:', req.bitrix?.userId);
+				
 				// Проверяем и изменяем стадию лида при необходимости
 				await ensureLeadStage(appointment.bitrix_lead_id, '2');
 
@@ -172,9 +172,11 @@ router.post('/', [
 				
 				const response = await axios.post(url, requestData);
 				console.log('✅ Ответ от Bitrix при создании встречи:', response.status, response.data);
+			} catch (e) {
+				console.error('Bitrix lead update failed on appointment creation:', e?.response?.data || e?.message || e);
 			}
-		} catch (e) {
-			console.error('Bitrix lead update failed on appointment creation:', e?.response?.data || e?.message || e);
+		} else if (appointment.bitrix_lead_id) {
+			console.log('🚫 Локальная разработка: пропускаю отправку в Bitrix при создании встречи');
 		}
 		
 		await invalidateSlotsCache(office_id, newDate);
@@ -217,7 +219,7 @@ router.put('/:id', [
 			console.log('  - req.bitrix:', req.bitrix);
 			console.log('  - req.bitrix.userId:', req.bitrix?.userId);
 			
-			if (status === 'confirmed' && appointment.bitrix_lead_id) {
+			if (status === 'confirmed' && appointment.bitrix_lead_id && process.env.NODE_ENV === 'production') {
 				// Проверяем и изменяем стадию лида при необходимости
 				await ensureLeadStage(appointment.bitrix_lead_id, '37');
 
@@ -254,7 +256,9 @@ router.put('/:id', [
 				
 				const response = await axios.post(url, requestData);
 				console.log('✅ Ответ от Bitrix при подтверждении встречи:', response.status, response.data);
-			} else if (status === 'cancelled' && appointment.bitrix_lead_id) {
+			} else if (status === 'confirmed' && appointment.bitrix_lead_id) {
+				console.log('🚫 Локальная разработка: пропускаю отправку в Bitrix при подтверждении встречи');
+			} else if (status === 'cancelled' && appointment.bitrix_lead_id && process.env.NODE_ENV === 'production') {
 				// Отмена встречи: переводим лид в IN_PROCESS и очищаем дату/время в кастомных полях
 				try {
 					const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
@@ -272,6 +276,8 @@ router.put('/:id', [
 				} catch (e) {
 					console.error('Bitrix lead update failed on cancellation:', e?.response?.data || e?.message || e);
 				}
+			} else if (status === 'cancelled' && appointment.bitrix_lead_id) {
+				console.log('🚫 Локальная разработка: пропускаю отправку в Bitrix при отмене встречи');
 			}
 		} catch (e) {
 			console.error('Bitrix lead update failed:', e?.response?.data || e?.message || e);

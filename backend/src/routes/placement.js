@@ -74,16 +74,21 @@ router.post('/lead/update-office', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'office_bitrix_id not provided or office not found' });
     }
 
-    const base = String(process.env.BITRIX_REST_URL).replace(/\/+$/, '');
-    const url = `${base}/crm.lead.update`;
-    const payload = {
-      id: Number(leadId),
-      fields: {
-        UF_CRM_1675255265: Number(officeBitrixId),
-      },
-    };
-    const response = await axios.post(url, payload);
-    return res.json({ ok: true, result: response?.data });
+    if (process.env.NODE_ENV === 'production') {
+      const base = String(process.env.BITRIX_REST_URL).replace(/\/+$/, '');
+      const url = `${base}/crm.lead.update`;
+      const payload = {
+        id: Number(leadId),
+        fields: {
+          UF_CRM_1675255265: Number(officeBitrixId),
+        },
+      };
+      const response = await axios.post(url, payload);
+      return res.json({ ok: true, result: response?.data });
+    } else {
+      console.log('🚫 Локальная разработка: пропускаю отправку в Bitrix при размещении лида');
+      return res.json({ ok: true, result: { message: 'Local development - Bitrix update skipped' } });
+    }
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.response?.data || e.message });
   }
