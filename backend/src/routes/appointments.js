@@ -205,6 +205,31 @@ router.put('/:id', [
 		const oldDate = appointment.date;
 		const oldOfficeId = appointment.office_id || (appointment.Office && appointment.Office.id);
 
+		// Проверка ограничения на подтверждение встречи (только за 24 часа до начала)
+		if (status === 'confirmed') {
+			const appointmentDateTime = new Date(`${appointment.date}T${appointment.timeSlot.split('-')[0]}:00`);
+			const now = new Date();
+			const hoursUntilAppointment = (appointmentDateTime - now) / (1000 * 60 * 60);
+			
+			console.log('🔍 Проверка ограничения на подтверждение встречи:');
+			console.log('  - Дата встречи:', appointment.date);
+			console.log('  - Время начала:', appointment.timeSlot.split('-')[0]);
+			console.log('  - Полная дата/время встречи:', appointmentDateTime.toISOString());
+			console.log('  - Текущее время:', now.toISOString());
+			console.log('  - Часов до встречи:', hoursUntilAppointment.toFixed(2));
+			
+			if (hoursUntilAppointment > 24) {
+				console.log('❌ Отклонено: до встречи более 24 часов');
+				return res.status(400).json({ 
+					error: 'Appointment confirmation too early',
+					message: 'Встречу можно подтвердить только за 24 часа до начала',
+					hoursUntilAppointment: Math.round(hoursUntilAppointment * 100) / 100
+				});
+			}
+			
+			console.log('✅ Разрешено: до встречи менее 24 часов');
+		}
+
 		if (status) appointment.status = status;
 		if (date) appointment.date = String(date).slice(0, 10);
 		if (time_slot) appointment.timeSlot = time_slot;

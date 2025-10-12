@@ -400,9 +400,18 @@ export function App() {
   }
 
   const updateAppointmentStatus = async (id, status) => {
-    await apiInstance.put(`/appointments/${id}`, { status })
-    await loadWeek()
-    await loadLeadAppt()
+    try {
+      await apiInstance.put(`/appointments/${id}`, { status })
+      await loadWeek()
+      await loadLeadAppt()
+    } catch (e) {
+      console.error('Update appointment status failed', e)
+      if (e?.response?.data?.message) {
+        message.error(e.response.data.message)
+      } else {
+        message.error('Не удалось обновить статус встречи. Попробуйте ещё раз')
+      }
+    }
   }
 
   const goToday = () => setWeekStart(startOfWeek(new Date()))
@@ -416,6 +425,17 @@ export function App() {
       const endTime = end || start || '00:00'
       const dt = dayjs(`${appt.date} ${endTime}`, 'YYYY-MM-DD HH:mm')
       return dt.isBefore(dayjs())
+    } catch { return false }
+  }
+
+  const canConfirmAppointment = (appt) => {
+    try {
+      if (!appt) return false
+      const [start] = String(appt.timeSlot||'').split('-')
+      const appointmentDateTime = dayjs(`${appt.date} ${start}`, 'YYYY-MM-DD HH:mm')
+      const now = dayjs()
+      const hoursUntilAppointment = appointmentDateTime.diff(now, 'hour', true)
+      return hoursUntilAppointment <= 24 && hoursUntilAppointment > 0
     } catch { return false }
   }
 
@@ -501,12 +521,19 @@ export function App() {
               </Space>
               <Divider style={{ margin:'8px 0' }} />
               <Space>
-                {leadAppt.status !== 'confirmed' && <Button type="primary" size="large" onClick={() => Modal.confirm({
+                {leadAppt.status !== 'confirmed' && canConfirmAppointment(leadAppt) && <Button type="primary" size="large" onClick={() => Modal.confirm({
                   title: (<span><CheckCircleOutlined style={{ color:'#52c41a', marginRight:8 }} />Подтвердить встречу?</span>),
                   content: 'Вы уверены, что хотите подтвердить эту встречу?',
                   okText:'Да, подтвердить', cancelText:'Нет', okButtonProps:{ type:'primary' },
                   onOk: () => updateAppointmentStatus(leadAppt.id, 'confirmed')
                 })}>Подтвердить</Button>}
+                {leadAppt.status !== 'confirmed' && !canConfirmAppointment(leadAppt) && (
+                  <Tooltip title="Встречу можно подтвердить только за 24 часа до начала">
+                    <Button type="primary" size="large" disabled>
+                      Подтвердить (заблокировано)
+                    </Button>
+                  </Tooltip>
+                )}
                 <Button size="large" danger onClick={() => Modal.confirm({
                   title: (<span><ExclamationCircleOutlined style={{ color:'#faad14', marginRight:8 }} />Подтвердите отмену</span>),
                   content: 'Вы уверены, что хотите отменить встречу?',
