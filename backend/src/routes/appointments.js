@@ -158,7 +158,7 @@ router.post('/', [
 					fields: {
 						STATUS_ID: 2, // Статус "Назначена встреча"
 						UF_CRM_1675255265: officeBitrixId ? Number(officeBitrixId) : null,
-						UF_CRM_1725483092: Number(req.bitrix?.userId || 0) || null,
+						UF_CRM_1725483052: Number(req.bitrix?.userId || 0) || null,
 						UF_CRM_1655460588: dateRu || null,
 						UF_CRM_1657019494: startTime || null,
 					},
@@ -167,7 +167,7 @@ router.post('/', [
 				console.log('📤 Отправляю запрос в Bitrix при создании встречи:');
 				console.log('  - URL:', url);
 				console.log('  - user_id из req.bitrix.userId:', req.bitrix?.userId);
-				console.log('  - user_id который отправляется в UF_CRM_1725483092:', Number(req.bitrix?.userId || 0) || null);
+				console.log('  - user_id который отправляется в UF_CRM_1725483052:', Number(req.bitrix?.userId || 0) || null);
 				console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
 				
 				const response = await axios.post(url, requestData);
