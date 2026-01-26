@@ -21,7 +21,9 @@ async function ensureLeadStage(leadId, targetStageId, currentStageId = null) {
 		console.log(`🔍 Проверяю стадию лида ${leadId}: текущая = ${currentStageId}, целевая = ${targetStageId}`);
 
 		// Если лид уже в целевой стадии, ничего не делаем
-		if (String(currentStageId) === String(targetStageId)) {
+		// Исключение: для стадии "2" (Назначена встреча) нужно сначала перевести в IN_PROCESS,
+		// иначе автоматизация Битрикса часто не срабатывает.
+		if (String(currentStageId) === String(targetStageId) && String(targetStageId) !== '2') {
 			console.log(`✅ Лид ${leadId} уже в целевой стадии ${targetStageId}`);
 			return;
 		}
@@ -79,6 +81,7 @@ router.post('/', [
 	body('date').isISO8601(),
 	body('time_slot').isString().notEmpty(),
 	body('lead_id').optional().isInt(),
+	body('user_id').optional().isInt(),
 	body('deal_id').optional().isInt(),
 	body('contact_id').optional().isInt(),
 ], async (req, res, next) => {
@@ -153,12 +156,25 @@ router.post('/', [
 				const dateRu = (dateParts.length === 3) ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : '';
 
 				const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
+				const refererUserId = (() => {
+					try {
+						const ref = req.headers.referer || req.headers.referrer;
+						if (!ref) return null;
+						const url = new URL(ref);
+						const raw = url.searchParams.get('user_id') || url.searchParams.get('USER_ID') || url.searchParams.get('userId');
+						const n = Number(raw);
+						return Number.isFinite(n) && n > 0 ? n : null;
+					} catch {
+						return null;
+					}
+				})();
+				const resolvedUserId = Number(req.bitrix?.userId || req.query.user_id || req.body.user_id || refererUserId || 0) || null;
 				const requestData = {
 					id: Number(appointment.bitrix_lead_id),
 					fields: {
 						STATUS_ID: 2, // Статус "Назначена встреча"
 						UF_CRM_1675255265: officeBitrixId ? Number(officeBitrixId) : null,
-						UF_CRM_1725483052: Number(req.bitrix?.userId || 0) || null,
+						UF_CRM_1725483052: resolvedUserId,
 						UF_CRM_1655460588: dateRu || null,
 						UF_CRM_1657019494: startTime || null,
 					},
@@ -167,7 +183,9 @@ router.post('/', [
 				console.log('📤 Отправляю запрос в Bitrix при создании встречи:');
 				console.log('  - URL:', url);
 				console.log('  - user_id из req.bitrix.userId:', req.bitrix?.userId);
-				console.log('  - user_id который отправляется в UF_CRM_1725483052:', Number(req.bitrix?.userId || 0) || null);
+				console.log('  - user_id из query/body:', req.query?.user_id, req.body?.user_id);
+				console.log('  - user_id из referer:', refererUserId);
+				console.log('  - user_id который отправляется в UF_CRM_1725483052:', resolvedUserId);
 				console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
 				
 				const response = await axios.post(url, requestData);

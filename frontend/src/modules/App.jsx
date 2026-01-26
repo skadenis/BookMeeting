@@ -12,6 +12,7 @@ function useBitrixContext() {
   const [token, setToken] = useState(null)
   const [domain, setDomain] = useState(null)
   const [leadId, setLeadId] = useState(undefined)
+  const [userId, setUserId] = useState(undefined)
 
   const extractParam = (name) => {
     try {
@@ -33,10 +34,13 @@ function useBitrixContext() {
       const qAuth = extractParam('AUTH_ID') || extractParam('auth') || extractParam('access_token')
       const qDomain = extractParam('DOMAIN') || extractParam('domain')
       const qLead = extractParam('lead_id') || extractParam('leadId') || extractParam('LEAD_ID')
+      const qUser = extractParam('user_id') || extractParam('userId') || extractParam('USER_ID')
       if (qAuth) { sessionStorage.setItem('bx.AUTH_ID', qAuth); setToken(qAuth) }
       if (qDomain) { sessionStorage.setItem('bx.DOMAIN', qDomain); setDomain(qDomain) }
       const idNum = Number(qLead)
       if (Number.isFinite(idNum) && idNum > 0) { sessionStorage.setItem('bx.LEAD_ID', String(idNum)); setLeadId(idNum) }
+      const userNum = Number(qUser)
+      if (Number.isFinite(userNum) && userNum > 0) { sessionStorage.setItem('bx.USER_ID', String(userNum)); setUserId(userNum) }
     } catch {}
   }, [])
 
@@ -45,10 +49,13 @@ function useBitrixContext() {
     const sAuth = sessionStorage.getItem('bx.AUTH_ID')
     const sDomain = sessionStorage.getItem('bx.DOMAIN')
     const sLead = sessionStorage.getItem('bx.LEAD_ID')
+    const sUser = sessionStorage.getItem('bx.USER_ID')
     if (sAuth && !token) setToken(sAuth)
     if (sDomain && !domain) setDomain(sDomain)
     const n = Number(sLead)
     if (!leadId && Number.isFinite(n) && n > 0) setLeadId(n)
+    const u = Number(sUser)
+    if (!userId && Number.isFinite(u) && u > 0) setUserId(u)
   }, [])
 
   useEffect(() => {
@@ -81,7 +88,7 @@ function useBitrixContext() {
     }
   }, [])
 
-  return { token, domain, leadId }
+  return { token, domain, leadId, userId }
 }
 
 function startOfWeek(date) {

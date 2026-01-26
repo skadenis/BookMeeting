@@ -32,6 +32,14 @@ function getDomain() {
 	}
 }
 
+function getUserId() {
+	try {
+		return sessionStorage.getItem('bx.USER_ID') || null
+	} catch {
+		return null
+	}
+}
+
 const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
 
 export const apiClient = axios.create({ baseURL })
@@ -53,6 +61,10 @@ apiClient.interceptors.request.use((config) => {
 	const domain = getDomain()
 	if (token) config.headers.Authorization = `Bearer ${token}`
 	if (domain) config.headers['X-Bitrix-Domain'] = domain
+	const userId = getUserId()
+	if (userId) {
+		config.params = { ...(config.params || {}), user_id: userId }
+	}
 	const appToken = getPublicToken()
 	const appId = getPublicId()
 	if (appId && appToken) {
