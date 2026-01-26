@@ -60,10 +60,50 @@ async function ensureLeadStage(leadId, targetStageId, currentStageId = null) {
 	}
 }
 
+function resolveUserId(req) {
+	try {
+		const referer = req.headers.referer || req.headers.referrer;
+		let refererUserId = null;
+		if (referer) {
+			const url = new URL(referer);
+			const raw = url.searchParams.get('user_id')
+				|| url.searchParams.get('USER_ID')
+				|| url.searchParams.get('userId');
+			const n = Number(raw);
+			refererUserId = Number.isFinite(n) && n > 0 ? n : null;
+		}
+		return Number(req.bitrix?.userId || req.query.user_id || req.body.user_id || refererUserId || 0) || null;
+	} catch {
+		return Number(req.bitrix?.userId || req.query.user_id || req.body.user_id || 0) || null;
+	}
+}
+
+function resolveLeadId(req) {
+	try {
+		const referer = req.headers.referer || req.headers.referrer;
+		let refererLeadId = null;
+		if (referer) {
+			const url = new URL(referer);
+			const raw = url.searchParams.get('lead_id')
+				|| url.searchParams.get('LEAD_ID')
+				|| url.searchParams.get('leadId');
+			const n = Number(raw);
+			refererLeadId = Number.isFinite(n) && n > 0 ? n : null;
+		}
+		return Number(req.bitrix?.leadId || req.query.lead_id || refererLeadId || 0) || null;
+	} catch {
+		return Number(req.bitrix?.leadId || req.query.lead_id || 0) || null;
+	}
+}
+
 router.get('/', [query('lead_id').optional().isInt()], async (req, res, next) => {
 	try {
 		const where = {};
-		if (req.query.lead_id) where.bitrix_lead_id = Number(req.query.lead_id);
+		const resolvedLeadId = resolveLeadId(req);
+		if (!resolvedLeadId) {
+			return res.json({ data: [] });
+		}
+		where.bitrix_lead_id = resolvedLeadId;
 		// Показываем встречи начиная с понедельника текущей недели (PostgreSQL)
 		where.date = { [Op.gte]: Sequelize.literal("DATE_TRUNC('week', CURRENT_DATE)") };
 		where.status = ['pending','confirmed'];
@@ -156,19 +196,7 @@ router.post('/', [
 				const dateRu = (dateParts.length === 3) ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : '';
 
 				const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
-				const refererUserId = (() => {
-					try {
-						const ref = req.headers.referer || req.headers.referrer;
-						if (!ref) return null;
-						const url = new URL(ref);
-						const raw = url.searchParams.get('user_id') || url.searchParams.get('USER_ID') || url.searchParams.get('userId');
-						const n = Number(raw);
-						return Number.isFinite(n) && n > 0 ? n : null;
-					} catch {
-						return null;
-					}
-				})();
-				const resolvedUserId = Number(req.bitrix?.userId || req.query.user_id || req.body.user_id || refererUserId || 0) || null;
+				const resolvedUserId = resolveUserId(req);
 				const requestData = {
 					id: Number(appointment.bitrix_lead_id),
 					fields: {
@@ -184,7 +212,7 @@ router.post('/', [
 				console.log('  - URL:', url);
 				console.log('  - user_id из req.bitrix.userId:', req.bitrix?.userId);
 				console.log('  - user_id из query/body:', req.query?.user_id, req.body?.user_id);
-				console.log('  - user_id из referer:', refererUserId);
+				console.log('  - user_id из referer:', req.headers?.referer || req.headers?.referrer);
 				console.log('  - user_id который отправляется в UF_CRM_1725483052:', resolvedUserId);
 				console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
 				
@@ -211,6 +239,7 @@ router.put('/:id', [
 	body('date').optional().isISO8601(),
 	body('time_slot').optional().isString().notEmpty(),
 	body('office_id').optional().isString().notEmpty(),
+	body('user_id').optional().isInt(),
 ], async (req, res, next) => {
 	try {
 		const errors = validationResult(req);
@@ -280,12 +309,13 @@ router.put('/:id', [
 				const dateRu = (dateParts.length === 3) ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : '';
 
 				const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
+				const resolvedUserId = resolveUserId(req);
 				const requestData = {
 					id: Number(appointment.bitrix_lead_id),
 					fields: {
 						STATUS_ID: 37, // Статус "Встреча подтверждена"
 						UF_CRM_1675255265: officeBitrixId ? Number(officeBitrixId) : null,
-						UF_CRM_1725483092: Number(req.bitrix?.userId || 0) || null,
+						UF_CRM_1725483092: resolvedUserId,
 						UF_CRM_1655460588: dateRu || null,
 						UF_CRM_1657019494: startTime || null,
 					},
@@ -294,7 +324,9 @@ router.put('/:id', [
 				console.log('📤 Отправляю запрос в Bitrix при подтверждении встречи:');
 				console.log('  - URL:', url);
 				console.log('  - user_id из req.bitrix.userId:', req.bitrix?.userId);
-				console.log('  - user_id который отправляется в UF_CRM_1725483092:', Number(req.bitrix?.userId || 0) || null);
+				console.log('  - user_id из query/body:', req.query?.user_id, req.body?.user_id);
+				console.log('  - user_id из referer:', req.headers?.referer || req.headers?.referrer);
+				console.log('  - user_id который отправляется в UF_CRM_1725483092:', resolvedUserId);
 				console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
 				
 				const response = await axios.post(url, requestData);
