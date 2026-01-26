@@ -68,6 +68,19 @@ export async function bitrixAuthMiddleware(req: Request, res: Response, next: Ne
 		const contactId = req.query.contact_id ? Number(req.query.contact_id) : undefined;
 		const userId = req.query.user_id ? Number(req.query.user_id) : undefined;
 
+		const isWebSocket = String(req.headers.upgrade || '').toLowerCase() === 'websocket' || req.url.startsWith('/ws');
+		if (isWebSocket) {
+			req.bitrix = {
+				userId: userId || 0,
+				domain: domain || 'ws',
+				leadId,
+				dealId,
+				contactId,
+				accessToken: token || 'ws',
+			};
+			return next();
+		}
+
 		if (process.env.BITRIX_DEV_MODE === 'true') {
 			const devToken = token || process.env.VITE_DEV_BITRIX_TOKEN || 'dev-token';
 			

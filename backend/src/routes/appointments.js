@@ -174,61 +174,63 @@ router.post('/', [
 			createdBy: (req.bitrix && req.bitrix.userId) || 0,
 		});
 		
-		// If appointment created with lead_id — push updates to Bitrix lead (только на проде)
-		if (process.env.NODE_ENV === 'production' && appointment.bitrix_lead_id) {
-			try {
-				console.log('🔍 Проверяю условия для отправки в Bitrix при создании встречи:');
-				console.log('  - bitrix_lead_id:', appointment.bitrix_lead_id);
-				console.log('  - req.bitrix:', req.bitrix);
-				console.log('  - req.bitrix.userId:', req.bitrix?.userId);
-				
-				// Проверяем и изменяем стадию лида при необходимости
-				await ensureLeadStage(appointment.bitrix_lead_id, '2');
-
-				// Resolve office Bitrix ID
-				let officeBitrixId = null;
-				if (office.bitrixOfficeId) {
-					officeBitrixId = office.bitrixOfficeId;
-				}
-
-				const [startTime] = String(appointment.timeSlot || '').split('-');
-				const dateParts = String(appointment.date || '').split('-'); // YYYY-MM-DD
-				const dateRu = (dateParts.length === 3) ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : '';
-
-				const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
-				const resolvedUserId = resolveUserId(req);
-				const requestData = {
-					id: Number(appointment.bitrix_lead_id),
-					fields: {
-						STATUS_ID: 2, // Статус "Назначена встреча"
-						UF_CRM_1675255265: officeBitrixId ? Number(officeBitrixId) : null,
-						UF_CRM_1725483052: resolvedUserId,
-						UF_CRM_1655460588: dateRu || null,
-						UF_CRM_1657019494: startTime || null,
-					},
-				};
-				
-				console.log('📤 Отправляю запрос в Bitrix при создании встречи:');
-				console.log('  - URL:', url);
-				console.log('  - user_id из req.bitrix.userId:', req.bitrix?.userId);
-				console.log('  - user_id из query/body:', req.query?.user_id, req.body?.user_id);
-				console.log('  - user_id из referer:', req.headers?.referer || req.headers?.referrer);
-				console.log('  - user_id который отправляется в UF_CRM_1725483052:', resolvedUserId);
-				console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
-				
-				const response = await axios.post(url, requestData);
-				console.log('✅ Ответ от Bitrix при создании встречи:', response.status, response.data);
-			} catch (e) {
-				console.error('Bitrix lead update failed on appointment creation:', e?.response?.data || e?.message || e);
-			}
-		} else if (appointment.bitrix_lead_id) {
-			console.log('🚫 Локальная разработка: пропускаю отправку в Bitrix при создании встречи');
-		}
+		const shouldUpdateBitrix = process.env.NODE_ENV === 'production' && appointment.bitrix_lead_id;
+		const resolvedUserId = shouldUpdateBitrix ? resolveUserId(req) : null;
+		const officeBitrixId = office?.bitrixOfficeId ? Number(office.bitrixOfficeId) : null;
+		const [startTime] = String(appointment.timeSlot || '').split('-');
+		const dateParts = String(appointment.date || '').split('-'); // YYYY-MM-DD
+		const dateRu = (dateParts.length === 3) ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : '';
+		const reqUserIdFromQuery = req.query?.user_id;
+		const reqUserIdFromBody = req.body?.user_id;
+		const reqUserIdFromBitrix = req.bitrix?.userId;
+		const reqReferer = req.headers?.referer || req.headers?.referrer;
 		
 		await invalidateSlotsCache(office_id, newDate);
 		broadcastSlotsUpdated(office_id, newDate);
 		broadcastAppointmentUpdated(appointment);
 		res.status(201).json({ data: await models.Appointment.findByPk(appointment.id, { include: [{ model: models.Office }] }) });
+
+		// Bitrix update is async to avoid slowing down booking
+		if (shouldUpdateBitrix) {
+			setImmediate(async () => {
+				try {
+					console.log('🔍 Проверяю условия для отправки в Bitrix при создании встречи:');
+					console.log('  - bitrix_lead_id:', appointment.bitrix_lead_id);
+					console.log('  - req.bitrix:', req.bitrix);
+					console.log('  - req.bitrix.userId:', reqUserIdFromBitrix);
+					
+					// Проверяем и изменяем стадию лида при необходимости
+					await ensureLeadStage(appointment.bitrix_lead_id, '2');
+
+					const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
+					const requestData = {
+						id: Number(appointment.bitrix_lead_id),
+						fields: {
+							STATUS_ID: 2, // Статус "Назначена встреча"
+							UF_CRM_1675255265: officeBitrixId || null,
+							UF_CRM_1725483052: resolvedUserId,
+							UF_CRM_1655460588: dateRu || null,
+							UF_CRM_1657019494: startTime || null,
+						},
+					};
+					
+					console.log('📤 Отправляю запрос в Bitrix при создании встречи:');
+					console.log('  - URL:', url);
+					console.log('  - user_id из req.bitrix.userId:', reqUserIdFromBitrix);
+					console.log('  - user_id из query/body:', reqUserIdFromQuery, reqUserIdFromBody);
+					console.log('  - user_id из referer:', reqReferer);
+					console.log('  - user_id который отправляется в UF_CRM_1725483052:', resolvedUserId);
+					console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
+					
+					const response = await axios.post(url, requestData);
+					console.log('✅ Ответ от Bitrix при создании встречи:', response.status, response.data);
+				} catch (e) {
+					console.error('Bitrix lead update failed on appointment creation:', e?.response?.data || e?.message || e);
+				}
+			});
+		} else if (appointment.bitrix_lead_id) {
+			console.log('🚫 Локальная разработка: пропускаю отправку в Bitrix при создании встречи');
+		}
 
 	} catch (e) { next(e); }
 });
@@ -282,60 +284,82 @@ router.put('/:id', [
 		if (time_slot) appointment.timeSlot = time_slot;
 		if (office_id) appointment.office_id = office_id;
 		await appointment.save();
+		const shouldUpdateConfirmed = status === 'confirmed' && appointment.bitrix_lead_id && process.env.NODE_ENV === 'production';
+		const shouldUpdateCancelled = status === 'cancelled' && appointment.bitrix_lead_id && process.env.NODE_ENV === 'production';
+		const resolvedUserId = shouldUpdateConfirmed ? resolveUserId(req) : null;
+		const reqUserIdFromQuery = req.query?.user_id;
+		const reqUserIdFromBody = req.body?.user_id;
+		const reqUserIdFromBitrix = req.bitrix?.userId;
+		const reqReferer = req.headers?.referer || req.headers?.referrer;
 
-		// If appointment confirmed — push updates to Bitrix lead
-		try {
-			console.log('🔍 Проверяю условия для отправки в Bitrix:');
-			console.log('  - status:', status);
-			console.log('  - bitrix_lead_id:', appointment.bitrix_lead_id);
-			console.log('  - req.bitrix:', req.bitrix);
-			console.log('  - req.bitrix.userId:', req.bitrix?.userId);
-			
-			if (status === 'confirmed' && appointment.bitrix_lead_id && process.env.NODE_ENV === 'production') {
-				// Проверяем и изменяем стадию лида при необходимости
-				await ensureLeadStage(appointment.bitrix_lead_id, '37');
+		await invalidateSlotsCache(oldOfficeId, oldDate);
+		await invalidateSlotsCache(appointment.office_id, appointment.date);
+		broadcastSlotsUpdated(oldOfficeId, oldDate);
+		broadcastSlotsUpdated(appointment.office_id, appointment.date);
+		broadcastAppointmentUpdated(appointment);
 
-				// Resolve office Bitrix ID
-				let officeBitrixId = null;
-				if (appointment.Office && appointment.Office.bitrixOfficeId) {
-					officeBitrixId = appointment.Office.bitrixOfficeId;
-				} else if (appointment.office_id) {
-					const off = await models.Office.findByPk(appointment.office_id);
-					officeBitrixId = off ? (off.bitrixOfficeId || null) : null;
-				}
+		res.json({ data: await models.Appointment.findByPk(id, { include: [{ model: models.Office }] }) });
 
-				const [startTime] = String(appointment.timeSlot || '').split('-');
-				const dateParts = String(appointment.date || '').split('-'); // YYYY-MM-DD
-				const dateRu = (dateParts.length === 3) ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : '';
-
-				const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
-				const resolvedUserId = resolveUserId(req);
-				const requestData = {
-					id: Number(appointment.bitrix_lead_id),
-					fields: {
-						STATUS_ID: 37, // Статус "Встреча подтверждена"
-						UF_CRM_1675255265: officeBitrixId ? Number(officeBitrixId) : null,
-						UF_CRM_1725483092: resolvedUserId,
-						UF_CRM_1655460588: dateRu || null,
-						UF_CRM_1657019494: startTime || null,
-					},
-				};
-				
-				console.log('📤 Отправляю запрос в Bitrix при подтверждении встречи:');
-				console.log('  - URL:', url);
-				console.log('  - user_id из req.bitrix.userId:', req.bitrix?.userId);
-				console.log('  - user_id из query/body:', req.query?.user_id, req.body?.user_id);
-				console.log('  - user_id из referer:', req.headers?.referer || req.headers?.referrer);
-				console.log('  - user_id который отправляется в UF_CRM_1725483092:', resolvedUserId);
-				console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
-				
-				const response = await axios.post(url, requestData);
-				console.log('✅ Ответ от Bitrix при подтверждении встречи:', response.status, response.data);
-			} else if (status === 'confirmed' && appointment.bitrix_lead_id) {
-				console.log('🚫 Локальная разработка: пропускаю отправку в Bitrix при подтверждении встречи');
-			} else if (status === 'cancelled' && appointment.bitrix_lead_id && process.env.NODE_ENV === 'production') {
-				// Отмена встречи: переводим лид в IN_PROCESS и очищаем дату/время в кастомных полях
+		// Bitrix updates are async to keep response fast
+		if (shouldUpdateConfirmed) {
+			setImmediate(async () => {
 				try {
+					console.log('🔍 Проверяю условия для отправки в Bitrix:');
+					console.log('  - status:', status);
+					console.log('  - bitrix_lead_id:', appointment.bitrix_lead_id);
+					console.log('  - req.bitrix:', req.bitrix);
+					console.log('  - req.bitrix.userId:', reqUserIdFromBitrix);
+					
+					// Проверяем и изменяем стадию лида при необходимости
+					await ensureLeadStage(appointment.bitrix_lead_id, '37');
+
+					// Resolve office Bitrix ID
+					let officeBitrixId = null;
+					if (appointment.Office && appointment.Office.bitrixOfficeId) {
+						officeBitrixId = appointment.Office.bitrixOfficeId;
+					} else if (appointment.office_id) {
+						const off = await models.Office.findByPk(appointment.office_id);
+						officeBitrixId = off ? (off.bitrixOfficeId || null) : null;
+					}
+
+					const [startTime] = String(appointment.timeSlot || '').split('-');
+					const dateParts = String(appointment.date || '').split('-'); // YYYY-MM-DD
+					const dateRu = (dateParts.length === 3) ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : '';
+
+					const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
+					const requestData = {
+						id: Number(appointment.bitrix_lead_id),
+						fields: {
+							STATUS_ID: 37, // Статус "Встреча подтверждена"
+							UF_CRM_1675255265: officeBitrixId ? Number(officeBitrixId) : null,
+							UF_CRM_1725483092: resolvedUserId,
+							UF_CRM_1655460588: dateRu || null,
+							UF_CRM_1657019494: startTime || null,
+						},
+					};
+					
+					console.log('📤 Отправляю запрос в Bitrix при подтверждении встречи:');
+					console.log('  - URL:', url);
+					console.log('  - user_id из req.bitrix.userId:', reqUserIdFromBitrix);
+					console.log('  - user_id из query/body:', reqUserIdFromQuery, reqUserIdFromBody);
+					console.log('  - user_id из referer:', reqReferer);
+					console.log('  - user_id который отправляется в UF_CRM_1725483092:', resolvedUserId);
+					console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
+					
+					const response = await axios.post(url, requestData);
+					console.log('✅ Ответ от Bitrix при подтверждении встречи:', response.status, response.data);
+				} catch (e) {
+					console.error('Bitrix lead update failed on confirmation:', e?.response?.data || e?.message || e);
+				}
+			});
+		} else if (status === 'confirmed' && appointment.bitrix_lead_id) {
+			console.log('🚫 Локальная разработка: пропускаю отправку в Bitrix при подтверждении встречи');
+		}
+
+		if (shouldUpdateCancelled) {
+			setImmediate(async () => {
+				try {
+					// Отмена встречи: переводим лид в IN_PROCESS и очищаем дату/время в кастомных полях
 					const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
 					const requestData = {
 						id: Number(appointment.bitrix_lead_id),
@@ -351,20 +375,10 @@ router.put('/:id', [
 				} catch (e) {
 					console.error('Bitrix lead update failed on cancellation:', e?.response?.data || e?.message || e);
 				}
-			} else if (status === 'cancelled' && appointment.bitrix_lead_id) {
-				console.log('🚫 Локальная разработка: пропускаю отправку в Bitrix при отмене встречи');
-			}
-		} catch (e) {
-			console.error('Bitrix lead update failed:', e?.response?.data || e?.message || e);
+			});
+		} else if (status === 'cancelled' && appointment.bitrix_lead_id) {
+			console.log('🚫 Локальная разработка: пропускаю отправку в Bitrix при отмене встречи');
 		}
-
-		await invalidateSlotsCache(oldOfficeId, oldDate);
-		await invalidateSlotsCache(appointment.office_id, appointment.date);
-		broadcastSlotsUpdated(oldOfficeId, oldDate);
-		broadcastSlotsUpdated(appointment.office_id, appointment.date);
-		broadcastAppointmentUpdated(appointment);
-
-		res.json({ data: await models.Appointment.findByPk(id, { include: [{ model: models.Office }] }) });
 
 	} catch (e) { next(e); }
 });
