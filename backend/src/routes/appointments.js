@@ -96,6 +96,21 @@ function resolveLeadId(req) {
 	}
 }
 
+function normalizeDateString(value) {
+	if (!value) return null;
+	const raw = String(value).trim();
+	if (!raw) return null;
+	const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+	if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+	const ruMatch = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})/);
+	if (ruMatch) return `${ruMatch[3]}-${ruMatch[2]}-${ruMatch[1]}`;
+	const parsed = new Date(raw);
+	if (!Number.isNaN(parsed.getTime())) {
+		return parsed.toISOString().slice(0, 10);
+	}
+	return null;
+}
+
 router.get('/', [query('lead_id').optional().isInt()], async (req, res, next) => {
 	try {
 		const where = {};
@@ -199,19 +214,30 @@ router.post('/', [
 					console.log('  - req.bitrix:', req.bitrix);
 					console.log('  - req.bitrix.userId:', reqUserIdFromBitrix);
 					
+					const getLeadUrl = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.get`;
+					const leadResponse = await axios.post(getLeadUrl, { id: Number(appointment.bitrix_lead_id) });
+					const lead = leadResponse?.data?.result || {};
+					const leadMeetingDateRaw = lead?.UF_CRM_1655460588 ?? null;
+					const leadEmployeeId = lead?.UF_CRM_1725483052 ?? null;
+					const leadMeetingDate = normalizeDateString(leadMeetingDateRaw);
+					const isSameDayMeeting = Boolean(leadMeetingDate && leadMeetingDate === newDate);
+
 					// Проверяем и изменяем стадию лида при необходимости
 					await ensureLeadStage(appointment.bitrix_lead_id, '2');
 
 					const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
+					const fields = {
+						STATUS_ID: 2, // Статус "Назначена встреча"
+						UF_CRM_1675255265: officeBitrixId || null,
+						UF_CRM_1655460588: dateRu || null,
+						UF_CRM_1657019494: startTime || null,
+					};
+					if (!isSameDayMeeting) {
+						fields.UF_CRM_1725483052 = resolvedUserId;
+					}
 					const requestData = {
 						id: Number(appointment.bitrix_lead_id),
-						fields: {
-							STATUS_ID: 2, // Статус "Назначена встреча"
-							UF_CRM_1675255265: officeBitrixId || null,
-							UF_CRM_1725483052: resolvedUserId,
-							UF_CRM_1655460588: dateRu || null,
-							UF_CRM_1657019494: startTime || null,
-						},
+						fields,
 					};
 					
 					console.log('📤 Отправляю запрос в Bitrix при создании встречи:');
@@ -219,7 +245,15 @@ router.post('/', [
 					console.log('  - user_id из req.bitrix.userId:', reqUserIdFromBitrix);
 					console.log('  - user_id из query/body:', reqUserIdFromQuery, reqUserIdFromBody);
 					console.log('  - user_id из referer:', reqReferer);
-					console.log('  - user_id который отправляется в UF_CRM_1725483052:', resolvedUserId);
+					console.log('  - дата встречи лида (сырое):', leadMeetingDateRaw);
+					console.log('  - дата встречи лида (нормализовано):', leadMeetingDate);
+					console.log('  - сотрудник лида (текущее значение):', leadEmployeeId);
+					console.log('  - обновляем ли сотрудника лида:', !isSameDayMeeting);
+					if (!isSameDayMeeting) {
+						console.log('  - user_id который отправляется в UF_CRM_1725483052:', resolvedUserId);
+					} else {
+						console.log('  - UF_CRM_1725483052 не отправляется: встреча в тот же день');
+					}
 					console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
 					
 					const response = await axios.post(url, requestData);
