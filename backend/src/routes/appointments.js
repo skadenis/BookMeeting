@@ -111,6 +111,21 @@ function normalizeDateString(value) {
 	return null;
 }
 
+function dayDiffUTC(dateA, dateB) {
+	const toUtcMs = (value) => {
+		const parts = String(value || '').split('-');
+		if (parts.length !== 3) return null;
+		const [y, m, d] = parts.map(Number);
+		if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+		return Date.UTC(y, m - 1, d);
+	};
+	const a = toUtcMs(dateA);
+	const b = toUtcMs(dateB);
+	if (a === null || b === null) return null;
+	const MS_PER_DAY = 24 * 60 * 60 * 1000;
+	return Math.abs((a - b) / MS_PER_DAY);
+}
+
 router.get('/', [query('lead_id').optional().isInt()], async (req, res, next) => {
 	try {
 		const where = {};
@@ -219,7 +234,8 @@ router.post('/', [
 					const lead = leadResponse?.data?.result || {};
 					const leadMeetingDateRaw = lead?.UF_CRM_1655460588 ?? null;
 					const leadMeetingDate = normalizeDateString(leadMeetingDateRaw);
-					const isSameDayMeeting = Boolean(leadMeetingDate && leadMeetingDate === newDate);
+					const leadDayDiff = dayDiffUTC(leadMeetingDate, newDate);
+					const isWithinOneDayMeeting = leadDayDiff !== null && leadDayDiff <= 1;
 
 					// Проверяем и изменяем стадию лида при необходимости
 					await ensureLeadStage(appointment.bitrix_lead_id, '2');
@@ -231,7 +247,7 @@ router.post('/', [
 						UF_CRM_1655460588: dateRu || null,
 						UF_CRM_1657019494: startTime || null,
 					};
-					if (!isSameDayMeeting) {
+					if (!isWithinOneDayMeeting) {
 						fields.UF_CRM_1725483052 = resolvedUserId;
 					}
 					const requestData = {
@@ -246,11 +262,12 @@ router.post('/', [
 					console.log('  - user_id из referer:', reqReferer);
 					console.log('  - дата встречи лида (сырое):', leadMeetingDateRaw);
 					console.log('  - дата встречи лида (нормализовано):', leadMeetingDate);
-					console.log('  - обновляем ли сотрудника лида:', !isSameDayMeeting);
-					if (!isSameDayMeeting) {
+					console.log('  - разница по дням:', leadDayDiff);
+					console.log('  - обновляем ли сотрудника лида:', !isWithinOneDayMeeting);
+					if (!isWithinOneDayMeeting) {
 						console.log('  - user_id который отправляется в UF_CRM_1725483052:', resolvedUserId);
 					} else {
-						console.log('  - UF_CRM_1725483052 не отправляется: встреча в тот же день');
+						console.log('  - UF_CRM_1725483052 не отправляется: встреча в пределах ±1 дня');
 					}
 					console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
 					
