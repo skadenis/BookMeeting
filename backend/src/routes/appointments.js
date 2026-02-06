@@ -218,31 +218,20 @@ router.post('/', [
 					const leadResponse = await axios.post(getLeadUrl, { id: Number(appointment.bitrix_lead_id) });
 					const lead = leadResponse?.data?.result || {};
 					const leadMeetingDateRaw = lead?.UF_CRM_1655460588 ?? null;
-					const leadEmployeeId = lead?.UF_CRM_1725483052 ?? null;
-					const leadStatusId = lead?.STATUS_ID ?? null;
 					const leadMeetingDate = normalizeDateString(leadMeetingDateRaw);
 					const isSameDayMeeting = Boolean(leadMeetingDate && leadMeetingDate === newDate);
-					const skipStageUpdate = isSameDayMeeting;
 
 					// Проверяем и изменяем стадию лида при необходимости
-					if (!skipStageUpdate) {
-						await ensureLeadStage(appointment.bitrix_lead_id, '2', leadStatusId);
-					}
+					await ensureLeadStage(appointment.bitrix_lead_id, '2');
 
 					const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
 					const fields = {
+						STATUS_ID: 2, // Статус "Назначена встреча"
 						UF_CRM_1675255265: officeBitrixId || null,
 						UF_CRM_1655460588: dateRu || null,
 						UF_CRM_1657019494: startTime || null,
 					};
-					if (!skipStageUpdate) {
-						fields.STATUS_ID = 2; // Статус "Назначена встреча"
-					}
-					if (isSameDayMeeting) {
-						if (leadEmployeeId !== null && leadEmployeeId !== undefined && String(leadEmployeeId).trim() !== '') {
-							fields.UF_CRM_1725483052 = leadEmployeeId;
-						}
-					} else {
+					if (!isSameDayMeeting) {
 						fields.UF_CRM_1725483052 = resolvedUserId;
 					}
 					const requestData = {
@@ -257,16 +246,11 @@ router.post('/', [
 					console.log('  - user_id из referer:', reqReferer);
 					console.log('  - дата встречи лида (сырое):', leadMeetingDateRaw);
 					console.log('  - дата встречи лида (нормализовано):', leadMeetingDate);
-					console.log('  - сотрудник лида (текущее значение):', leadEmployeeId);
-					console.log('  - стадия лида (текущее значение):', leadStatusId);
-					console.log('  - обновляем ли стадию лида:', !skipStageUpdate);
 					console.log('  - обновляем ли сотрудника лида:', !isSameDayMeeting);
 					if (!isSameDayMeeting) {
 						console.log('  - user_id который отправляется в UF_CRM_1725483052:', resolvedUserId);
-					} else if (fields.UF_CRM_1725483052 !== undefined) {
-						console.log('  - UF_CRM_1725483052 сохраняется:', leadEmployeeId);
 					} else {
-						console.log('  - UF_CRM_1725483052 не отправляется: нет текущего значения');
+						console.log('  - UF_CRM_1725483052 не отправляется: встреча в тот же день');
 					}
 					console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
 					
