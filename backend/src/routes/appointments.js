@@ -247,8 +247,8 @@ router.post('/', [
 						UF_CRM_1655460588: dateRu || null,
 						UF_CRM_1657019494: startTime || null,
 					};
-					if (!isWithinOneDayMeeting) {
-						fields.UF_CRM_1725483052 = resolvedUserId;
+					if (!isWithinOneDayMeeting && resolvedUserId) {
+						fields.ASSIGNED_BY_ID = resolvedUserId;
 					}
 					const requestData = {
 						id: Number(appointment.bitrix_lead_id),
@@ -263,11 +263,13 @@ router.post('/', [
 					console.log('  - дата встречи лида (сырое):', leadMeetingDateRaw);
 					console.log('  - дата встречи лида (нормализовано):', leadMeetingDate);
 					console.log('  - разница по дням:', leadDayDiff);
-					console.log('  - обновляем ли сотрудника лида:', !isWithinOneDayMeeting);
-					if (!isWithinOneDayMeeting) {
-						console.log('  - user_id который отправляется в UF_CRM_1725483052:', resolvedUserId);
+					console.log('  - обновляем ли ответственного (ASSIGNED_BY_ID):', !isWithinOneDayMeeting && !!resolvedUserId);
+					if (!isWithinOneDayMeeting && resolvedUserId) {
+						console.log('  - user_id → ASSIGNED_BY_ID:', resolvedUserId);
+					} else if (isWithinOneDayMeeting) {
+						console.log('  - ASSIGNED_BY_ID не меняется: встреча в пределах ±1 дня');
 					} else {
-						console.log('  - UF_CRM_1725483052 не отправляется: встреча в пределах ±1 дня');
+						console.log('  - ASSIGNED_BY_ID не меняется: user_id не определён');
 					}
 					console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
 					
