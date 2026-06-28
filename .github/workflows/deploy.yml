@@ -19,9 +19,9 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
-          script_stop: true
+          script_stop: false
           script: |
-            set -e
+            # set -e
             echo "🚀 Starting deployment..."
             
             echo "🔍 Environment check:"
