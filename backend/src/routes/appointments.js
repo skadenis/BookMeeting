@@ -8,13 +8,33 @@ const { broadcastSlotsUpdated, broadcastAppointmentUpdated } = require('../lib/w
 
 const router = Router();
 
+// Bitrix REST can hang for minutes under load; without a cap these calls never settle
+const BITRIX_READ_TIMEOUT_MS = 10000;
+const BITRIX_WRITE_TIMEOUT_MS = 20000;
+
+// Bitrix updates run detached from the response, so a transient failure would otherwise
+// silently leave the lead on the old stage. Retry before giving up.
+async function postToBitrixWithRetry(url, data, { attempts = 3, timeout = BITRIX_WRITE_TIMEOUT_MS } = {}) {
+	let lastError;
+	for (let attempt = 1; attempt <= attempts; attempt++) {
+		try {
+			return await axios.post(url, data, { timeout });
+		} catch (e) {
+			lastError = e;
+			console.error(`Bitrix call failed (attempt ${attempt}/${attempts}) ${url}:`, e?.response?.data || e?.message || e);
+			if (attempt < attempts) await new Promise(r => setTimeout(r, 1000 * attempt));
+		}
+	}
+	throw lastError;
+}
+
 // Вспомогательная функция для проверки и изменения стадии лида в Битриксе
 async function ensureLeadStage(leadId, targetStageId, currentStageId = null) {
 	try {
 		// Если текущая стадия не передана, получаем её из Битрикса
 		if (!currentStageId) {
 			const getLeadUrl = `${process.env.BITRIX_REST_URL}/crm.lead.get`;
-			const getLeadResponse = await axios.post(getLeadUrl, { id: Number(leadId) });
+			const getLeadResponse = await axios.post(getLeadUrl, { id: Number(leadId) }, { timeout: BITRIX_READ_TIMEOUT_MS });
 			currentStageId = getLeadResponse.data.result.STATUS_ID;
 		}
 
@@ -33,7 +53,7 @@ async function ensureLeadStage(leadId, targetStageId, currentStageId = null) {
 			console.log(`🔄 Перевожу лид ${leadId} из стадии "2" в "IN_PROCESS" перед назначением встречи`);
 			
 			const updateStageUrl = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
-			await axios.post(updateStageUrl, {
+			await postToBitrixWithRetry(updateStageUrl, {
 				id: Number(leadId),
 				fields: { STATUS_ID: 'IN_PROCESS' }
 			});
@@ -46,7 +66,7 @@ async function ensureLeadStage(leadId, targetStageId, currentStageId = null) {
 			console.log(`🔄 Перевожу лид ${leadId} из стадии "2" в "IN_PROCESS" перед подтверждением встречи`);
 			
 			const updateStageUrl = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
-			await axios.post(updateStageUrl, {
+			await postToBitrixWithRetry(updateStageUrl, {
 				id: Number(leadId),
 				fields: { STATUS_ID: 'IN_PROCESS' }
 			});
@@ -230,7 +250,7 @@ router.post('/', [
 					console.log('  - req.bitrix.userId:', reqUserIdFromBitrix);
 					
 					const getLeadUrl = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.get`;
-					const leadResponse = await axios.post(getLeadUrl, { id: Number(appointment.bitrix_lead_id) });
+					const leadResponse = await axios.post(getLeadUrl, { id: Number(appointment.bitrix_lead_id) }, { timeout: BITRIX_READ_TIMEOUT_MS });
 					const lead = leadResponse?.data?.result || {};
 					const leadMeetingDateRaw = lead?.UF_CRM_1655460588 ?? null;
 					const leadMeetingDate = normalizeDateString(leadMeetingDateRaw);
@@ -238,7 +258,8 @@ router.post('/', [
 					const isWithinOneDayMeeting = leadDayDiff !== null && leadDayDiff <= 1;
 
 					// Проверяем и изменяем стадию лида при необходимости
-					await ensureLeadStage(appointment.bitrix_lead_id, '2');
+					// (стадию берём из уже загруженного лида, чтобы не делать второй запрос в Битрикс)
+					await ensureLeadStage(appointment.bitrix_lead_id, '2', lead?.STATUS_ID || null);
 
 					const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
 					const fields = {
@@ -273,7 +294,7 @@ router.post('/', [
 					}
 					console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
 					
-					const response = await axios.post(url, requestData);
+					const response = await postToBitrixWithRetry(url, requestData);
 					console.log('✅ Ответ от Bitrix при создании встречи:', response.status, response.data);
 				} catch (e) {
 					console.error('Bitrix lead update failed on appointment creation:', e?.response?.data || e?.message || e);
@@ -397,7 +418,7 @@ router.put('/:id', [
 					console.log('  - user_id который отправляется в UF_CRM_1725483092:', resolvedUserId);
 					console.log('  - Полные данные запроса:', JSON.stringify(requestData, null, 2));
 					
-					const response = await axios.post(url, requestData);
+					const response = await postToBitrixWithRetry(url, requestData);
 					console.log('✅ Ответ от Bitrix при подтверждении встречи:', response.status, response.data);
 				} catch (e) {
 					console.error('Bitrix lead update failed on confirmation:', e?.response?.data || e?.message || e);
@@ -421,7 +442,7 @@ router.put('/:id', [
 						}
 					};
 					console.log('📤 Отправляю запрос в Bitrix при отмене встречи:', JSON.stringify(requestData));
-					const r = await axios.post(url, requestData);
+					const r = await postToBitrixWithRetry(url, requestData);
 					console.log('✅ Ответ от Bitrix при отмене встречи:', r.status, r.data);
 				} catch (e) {
 					console.error('Bitrix lead update failed on cancellation:', e?.response?.data || e?.message || e);

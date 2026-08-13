@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import api from '../api/client'
 import dayjs from 'dayjs'
 import 'dayjs/locale/ru'
@@ -153,7 +153,9 @@ export function App() {
   const [availableWeek, setAvailableWeek] = useState([[],[],[],[],[],[],[]])
   const [leadAppt, setLeadAppt] = useState(null)
   const [settings, setSettings] = useState({ max_booking_days: 7 })
-  
+  // Bumped on the server's minute tick so past slots grey out without refetching
+  const [, setNowTick] = useState(0)
+
   const [autoSelectAttempted, setAutoSelectAttempted] = useState(false)
 
   
@@ -176,26 +178,26 @@ export function App() {
       })
   }, [apiInstance])
 
-  // Auto-select office from Bitrix lead field UF_CRM_1675255265
+  // Read the office of the lead (Bitrix field UF_CRM_1675255265) once per lead.
+  // Matching it against the office list is done by the guard effect below, so this
+  // must not depend on `offices`/`officeId` — that re-issued the slow Bitrix call
+  // every time the office changed.
   useEffect(() => {
-    async function fetchLeadAndAutoselect() {
+    let cancelled = false
+    async function fetchLeadOffice() {
+      if (!leadId) { setLeadLoading(false); return }
+      setLeadLoading(true)
       try {
-        if (!leadId) return
-        setLeadLoading(true)
         const r = await apiInstance.get('/bitrix/lead', { params: { id: leadId } })
-        const bxIdRaw = r?.data?.lead?.UF_CRM_1675255265
-        const bxId = Number(bxIdRaw)
-        const validBxId = Number.isFinite(bxId) && bxId > 0 ? bxId : null
-        setLeadOfficeBitrixId(validBxId)
-        if (validBxId && offices?.length && !officeId) {
-          const matched = offices.find(o => Number(o.bitrixOfficeId) === validBxId)
-          if (matched) setOfficeId(matched.id)
-        }
-      } catch (e) { /* silent */ }
-      finally { setLeadLoading(false) }
+        if (cancelled) return
+        const bxId = Number(r?.data?.lead?.UF_CRM_1675255265)
+        setLeadOfficeBitrixId(Number.isFinite(bxId) && bxId > 0 ? bxId : null)
+      } catch (e) { /* silent: the office can still be picked manually */ }
+      finally { if (!cancelled) setLeadLoading(false) }
     }
-    fetchLeadAndAutoselect()
-  }, [api, leadId, offices, officeId])
+    fetchLeadOffice()
+    return () => { cancelled = true }
+  }, [apiInstance, leadId])
 
   // Final guard: attempt auto-select once both lead and offices are known,
   // and only then allow showing the office modal if nothing selected.
@@ -251,18 +253,35 @@ export function App() {
     setLoading(true)
     try {
       const days = [...Array(7)].map((_,i) => toLocalISO(addDays(weekStart,i)))
-      const [allSlots, available] = await Promise.all([
-        Promise.all(days.map(d => apiInstance.get('/slots/all', { params: { office_id: officeId, date: d } }).then(r=>r.data.data)) ),
-        Promise.all(days.map(d => apiInstance.get('/slots', { params: { office_id: officeId, date: d } }).then(r=>r.data.data)) ),
-      ])
+      const allSlots = await Promise.all(
+        days.map(d => apiInstance.get('/slots/all', { params: { office_id: officeId, date: d } }).then(r=>r.data.data))
+      )
       // Ensure ordering by time for stable visual
       const byTime = (a,b) => a.start.localeCompare(b.start)
-      setAllSlotsWeek(allSlots.map(list => (list||[]).slice().sort(byTime)))
-      setAvailableWeek(available.map(list => (list||[]).slice().sort(byTime)))
+      const sorted = allSlots.map(list => (list||[]).slice().sort(byTime))
+      setAllSlotsWeek(sorted)
+      // /slots/all already reports free capacity per slot, so a second round of requests is not needed
+      setAvailableWeek(sorted.map(list => list.filter(s => Number(s.free) > 0)))
+    } catch (e) {
+      console.error('Failed to load week', e)
+      message.error('Не удалось загрузить слоты. Обновите страницу')
     } finally { setLoading(false) }
   }
 
   useEffect(() => { loadWeek() }, [apiInstance, officeId, weekStart])
+
+  // Websocket events fire in bursts; coalesce them into one reload and always
+  // use the current week rather than the one captured when the socket opened
+  const loadWeekRef = useRef(loadWeek)
+  useEffect(() => { loadWeekRef.current = loadWeek })
+  const reloadTimerRef = useRef(null)
+  const scheduleWeekReload = useCallback(() => {
+    if (reloadTimerRef.current) return
+    reloadTimerRef.current = setTimeout(() => {
+      reloadTimerRef.current = null
+      loadWeekRef.current()
+    }, 500)
+  }, [])
   useEffect(() => { loadLeadAppt() }, [apiInstance, leadId])
 
   // If there is an existing appointment for this lead, auto-select its office and week
@@ -302,7 +321,7 @@ export function App() {
           if (msg.type === 'slots.updated') {
             // If update concerns selected office and week window, refresh
             if (officeId && msg.office_id && String(msg.office_id) === String(officeId)) {
-              loadWeek()
+              scheduleWeekReload()
             }
           } else if (msg.type === 'appointment.updated') {
             // If appointment concerns our lead, refresh banner
@@ -311,17 +330,20 @@ export function App() {
               loadLeadAppt()
             } else {
               // Also refresh available slots since appointment affects capacity
-              if (officeId) loadWeek()
+              if (officeId) scheduleWeekReload()
             }
           } else if (msg.type === 'time.tick') {
-            // Periodic time tick: refresh today to hide past slots
-            if (officeId) loadWeek()
+            // Past slots are derived from the clock at render time, so a re-render is
+            // enough — refetching the whole week here made every open tab storm the API
+            setNowTick(Date.now())
           }
         } catch {}
       }
     } catch {}
     return () => { try { ws && ws.close() } catch {} }
-  }, [officeId, leadId])
+  }, [officeId, leadId, scheduleWeekReload])
+
+  useEffect(() => () => { if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current) }, [])
 
   const dayHeaderBadge = (dayIdx) => {
     const all = allSlotsWeek[dayIdx] || []
@@ -398,8 +420,10 @@ export function App() {
         lead_id: leadId,
       })
       message.success('Встреча забронирована')
-      await loadWeek()
-      await loadLeadAppt()
+      // Не ждём перезагрузку сетки: antd держит диалог открытым, пока не
+      // завершится этот промис, и оператор смотрел на спиннер всё это время
+      scheduleWeekReload()
+      loadLeadAppt()
     } catch (e) {
       console.error('Create appointment failed', e)
       message.error('Не удалось забронировать. Попробуйте ещё раз')
@@ -409,8 +433,9 @@ export function App() {
   const updateAppointmentStatus = async (id, status) => {
     try {
       await apiInstance.put(`/appointments/${id}`, { status })
-      await loadWeek()
-      await loadLeadAppt()
+      // Как и при создании: не держим диалог подтверждения открытым на время перезагрузки
+      scheduleWeekReload()
+      loadLeadAppt()
     } catch (e) {
       console.error('Update appointment status failed', e)
       if (e?.response?.data?.message) {
@@ -446,7 +471,10 @@ export function App() {
     } catch { return false }
   }
 
-  const bootstrapping = officesLoading || leadLoading
+  // Only the office list gates the first paint. Waiting on the Bitrix lead here used to
+  // freeze the whole widget for as long as Bitrix took to answer; the office modal still
+  // waits for it via autoSelectAttempted, so nothing is auto-selected prematurely.
+  const bootstrapping = officesLoading
 
   if (!publicOk) {
     return (
