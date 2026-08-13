@@ -4,6 +4,10 @@ const { models } = require('../lib/db');
 
 const router = Router();
 
+// Bitrix REST can hang for minutes under load; without a cap the widget waits on it forever
+const BITRIX_READ_TIMEOUT_MS = 10000;
+const BITRIX_WRITE_TIMEOUT_MS = 20000;
+
 // GET /api/bitrix/lead-id - resolves lead id using Bitrix placement.info if needed
 router.get('/lead-id', async (req, res) => {
   try {
@@ -24,7 +28,7 @@ router.get('/lead-id', async (req, res) => {
     }
 
     const url = `https://${domain}/rest/placement.info.json?auth=${encodeURIComponent(String(token))}`;
-    const r = await axios.post(url, {});
+    const r = await axios.post(url, {}, { timeout: BITRIX_READ_TIMEOUT_MS });
     const entityId = Number(r?.data?.result?.entityId);
     if (Number.isFinite(entityId) && entityId > 0) {
       return res.json({ ok: true, source: 'placement', lead_id: entityId, raw: r.data });
@@ -47,7 +51,7 @@ router.get('/lead', async (req, res) => {
 
     const base = String(process.env.BITRIX_REST_URL).replace(/\/+$/, '');
     const url = `${base}/crm.lead.get`;
-    const response = await axios.post(url, { id });
+    const response = await axios.post(url, { id }, { timeout: BITRIX_READ_TIMEOUT_MS });
     const lead = response?.data?.result || null;
     return res.json({ ok: true, lead, raw: response?.data });
   } catch (e) {
@@ -83,7 +87,7 @@ router.post('/lead/update-office', async (req, res) => {
           UF_CRM_1675255265: Number(officeBitrixId),
         },
       };
-      const response = await axios.post(url, payload);
+      const response = await axios.post(url, payload, { timeout: BITRIX_WRITE_TIMEOUT_MS });
       return res.json({ ok: true, result: response?.data });
     } else {
       console.log('🚫 Локальная разработка: пропускаю отправку в Bitrix при размещении лида');

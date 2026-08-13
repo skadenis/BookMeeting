@@ -100,7 +100,11 @@ async function start() {
 		app.options('*', cors(corsOptions)); // handle preflight
 	}
 	app.use(express.json());
-	app.use(rateLimit({ windowMs: 60_000, max: 300 }));
+	// Whole offices sit behind a single NAT address, so the per-IP budget covers many operators at once
+	app.use(rateLimit({
+		windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000),
+		max: Number(process.env.RATE_LIMIT_MAX || 1200),
+	}));
 
 	// Health check endpoint (read-only)
 	app.get('/api/health', async (req, res) => {

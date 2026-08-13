@@ -18,41 +18,65 @@ function getBitrixRestUrl(method) {
   return `${base}/${path}`;
 }
 
+const LOCAL_STATUSES = ['pending','confirmed','completed','no_show','cancelled','rescheduled'];
+
+// Fetch STATUS_ID for many leads at once. Returns a Map(leadId -> STATUS_ID);
+// leads whose batch request failed are simply absent from the map.
+async function fetchLeadStatuses(leadIds) {
+  const statusById = new Map();
+  for (let i = 0; i < leadIds.length; i += 50) {
+    const chunk = leadIds.slice(i, i + 50);
+    try {
+      const response = await axios.post(getBitrixRestUrl('crm.lead.list'), {
+        filter: { ID: chunk.map(Number) },
+        select: ['ID', 'STATUS_ID']
+      }, { timeout: 15000, headers: { 'Content-Type': 'application/json' } });
+      for (const lead of response?.data?.result || []) {
+        statusById.set(Number(lead.ID), lead.STATUS_ID);
+      }
+    } catch (error) {
+      console.error(`Service: error fetching lead batch ${i / 50 + 1}:`, error.message);
+    }
+  }
+  return statusById;
+}
+
 async function autoSyncStatuses() {
   console.log('Starting automatic status sync with Bitrix24 (service)...');
 
+  // Only today's appointments: older ones are already settled in the CRM and
+  // re-syncing them would overwrite decisions made there.
+  const today = dayjs().format('YYYY-MM-DD');
   const appointmentsToCheck = await models.Appointment.findAll({
     where: {
       bitrix_lead_id: { [Op.not]: null },
+      date: today,
       status: { [Op.in]: ['pending', 'confirmed', 'rescheduled'] }
     },
     include: [{ model: models.Office, attributes: ['city', 'address'] }]
   });
 
-  const leadIds = [...new Set(appointmentsToCheck.map(a => a.bitrix_lead_id))];
-  console.log(`Service: checking ${leadIds.length} unique leads in Bitrix24`);
+  const leadIds = [...new Set(appointmentsToCheck.map(a => Number(a.bitrix_lead_id)))];
+  console.log(`Service: checking ${leadIds.length} unique leads for ${today} in Bitrix24`);
 
-  const leadStatusMap = {};
-  for (const id of leadIds) {
-    try {
-      const response = await axios.post(getBitrixRestUrl('crm.lead.get'), { id: Number(id) }, {
-        timeout: 15000,
-        headers: { 'Content-Type': 'application/json' }
-      });
-      const statusId = response?.data?.result?.STATUS_ID;
-      leadStatusMap[id] = BITRIX_STATUS_MAPPING[statusId] || (statusId ?? null);
-    } catch (error) {
-      console.error(`Service: error fetching lead ${id}:`, error.message);
-    }
-    await new Promise(r => setTimeout(r, 100));
-  }
+  const statusById = await fetchLeadStatuses(leadIds);
 
   let updatedCount = 0;
   let noShowCount = 0;
+  let skippedCount = 0;
 
   for (const appointment of appointmentsToCheck) {
-    const leadId = appointment.bitrix_lead_id;
-    const newStatus = leadStatusMap[leadId];
+    const leadId = Number(appointment.bitrix_lead_id);
+
+    // Bitrix did not answer for this lead — leave the appointment alone.
+    // Treating a network failure as "no status" used to cancel live bookings.
+    if (!statusById.has(leadId)) {
+      skippedCount++;
+      continue;
+    }
+
+    const bitrixStatus = statusById.get(leadId);
+    const newStatus = BITRIX_STATUS_MAPPING[bitrixStatus] || bitrixStatus;
 
     const endPart = appointment.timeSlot && String(appointment.timeSlot).includes('-')
       ? String(appointment.timeSlot).split('-')[1]
@@ -60,26 +84,27 @@ async function autoSyncStatuses() {
     const appointmentDateTime = dayjs(`${appointment.date} ${endPart}`);
     const isPastDue = appointmentDateTime.isBefore(dayjs().subtract(2, 'hours'));
 
-    if (newStatus && ['pending','confirmed','completed','no_show','cancelled','rescheduled'].includes(newStatus) && newStatus !== appointment.status) {
-      await appointment.update({ status: newStatus });
-      updatedCount++;
-    } else if (newStatus && !['pending','confirmed','completed','no_show','cancelled','rescheduled'].includes(newStatus)) {
+    if (LOCAL_STATUSES.includes(newStatus)) {
+      if (newStatus !== appointment.status) {
+        await appointment.update({ status: newStatus });
+        updatedCount++;
+      } else if (isPastDue && ['pending', 'confirmed', 'rescheduled'].includes(appointment.status)) {
+        await appointment.update({ status: 'no_show' });
+        noShowCount++;
+      }
+    } else {
+      // Lead left the meeting stages in Bitrix (IN_PROCESS, JUNK, ...) — the meeting no longer stands
       await appointment.update({ status: 'cancelled' });
       updatedCount++;
-    } else if (newStatus === undefined || newStatus === null) {
-      await appointment.update({ status: 'cancelled' });
-      updatedCount++;
-    } else if (isPastDue && ['pending', 'confirmed', 'rescheduled'].includes(appointment.status)) {
-      await appointment.update({ status: 'no_show' });
-      noShowCount++;
     }
   }
 
-  console.log(`Service status sync complete: ${updatedCount} updated, ${noShowCount} marked as no_show`);
+  console.log(`Service status sync complete: ${updatedCount} updated, ${noShowCount} marked as no_show, ${skippedCount} skipped (no Bitrix answer)`);
   return {
     checked: appointmentsToCheck.length,
     updated: updatedCount,
-    no_show: noShowCount
+    no_show: noShowCount,
+    skipped: skippedCount
   };
 }
 
