@@ -420,8 +420,10 @@ export function App() {
         lead_id: leadId,
       })
       message.success('Встреча забронирована')
-      await loadWeek()
-      await loadLeadAppt()
+      // Не ждём перезагрузку сетки: antd держит диалог открытым, пока не
+      // завершится этот промис, и оператор смотрел на спиннер всё это время
+      scheduleWeekReload()
+      loadLeadAppt()
     } catch (e) {
       console.error('Create appointment failed', e)
       message.error('Не удалось забронировать. Попробуйте ещё раз')
@@ -431,8 +433,9 @@ export function App() {
   const updateAppointmentStatus = async (id, status) => {
     try {
       await apiInstance.put(`/appointments/${id}`, { status })
-      await loadWeek()
-      await loadLeadAppt()
+      // Как и при создании: не держим диалог подтверждения открытым на время перезагрузки
+      scheduleWeekReload()
+      loadLeadAppt()
     } catch (e) {
       console.error('Update appointment status failed', e)
       if (e?.response?.data?.message) {
