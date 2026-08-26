@@ -28,3 +28,5 @@ yarn-error.log*
 # Misc
 .turbo/
 .cache/
+# graphify
+graphify-out/

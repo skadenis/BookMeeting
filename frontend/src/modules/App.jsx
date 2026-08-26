@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import api from '../api/client'
 import dayjs from 'dayjs'
+import { evaluateConfirmWindow, confirmBlockedHint, isAppointmentFinished, parseBusinessDateTime, businessToday } from './confirmWindow'
 import 'dayjs/locale/ru'
 import { Layout, Row, Col, Card, Button, Select, Tag, Space, Modal, Typography, Divider, Tooltip, Descriptions, message, Spin } from 'antd'
 import { CalendarOutlined, EnvironmentOutlined, ClockCircleOutlined, ExclamationCircleOutlined, CheckCircleOutlined } from '@ant-design/icons'
@@ -71,20 +72,24 @@ function useBitrixContext() {
             // Не перезатираем leadId, если он уже пришёл из query-параметра
             setLeadId(prev => {
               if (Number.isFinite(prev) && prev > 0) return prev
-              return Number.isFinite(id) && id > 0 ? id : 135624
+              // Раньше здесь стоял литерал 135624 — реальный ID лида из CRM,
+              // оставшийся от отладки. Если placement.info ничего не вернул,
+              // виджет молча начинал работать с чужим лидом: запись клиента
+              // прикреплялась к нему, а его прежняя встреча отменялась.
+              return Number.isFinite(id) && id > 0 ? id : null
             })
           })
         } else {
-          setLeadId(prev => (Number.isFinite(prev) && prev > 0 ? prev : 135624))
+          setLeadId(prev => (Number.isFinite(prev) && prev > 0 ? prev : null))
         }
       } catch {
-        setLeadId(prev => (Number.isFinite(prev) && prev > 0 ? prev : 135624))
+        setLeadId(prev => (Number.isFinite(prev) && prev > 0 ? prev : null))
       }
     } else {
       setToken(import.meta.env.VITE_DEV_BITRIX_TOKEN || null)
       setDomain(import.meta.env.VITE_DEV_BITRIX_DOMAIN || null)
-      setLeadId(prev => (Number.isFinite(prev) && prev > 0 ? prev : (Number(import.meta.env.VITE_DEV_LEAD_ID) || 135624)))
-
+      const devLead = Number(import.meta.env.VITE_DEV_LEAD_ID)
+      setLeadId(prev => (Number.isFinite(prev) && prev > 0 ? prev : (Number.isFinite(devLead) && devLead > 0 ? devLead : null)))
     }
   }, [])
 
@@ -114,7 +119,18 @@ const fullDayLabels = ['Воскресенье','Понедельник','Вто
 
 export function App() {
   const { token, domain, leadId } = useBitrixContext()
-  const [publicOk, setPublicOk] = useState(false)
+  // Значение вычисляется синхронно в инициализаторе: раньше оно ставилось
+  // только в useEffect, и первый кадр успевал отрисовать экран «Нет доступа».
+  const [publicOk, setPublicOk] = useState(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search)
+      const tok = sp.get('app_token') || sessionStorage.getItem('app.publicToken') || import.meta.env.VITE_PUBLIC_APP_TOKEN
+      const pid = sp.get('app_id') || sessionStorage.getItem('app.publicId') || import.meta.env.VITE_PUBLIC_APP_ID
+      return !!tok && !!pid
+    } catch {
+      return !!import.meta.env.VITE_PUBLIC_APP_TOKEN && !!import.meta.env.VITE_PUBLIC_APP_ID
+    }
+  })
   // Read app public token from query and require it
   useEffect(() => {
     try {
@@ -152,6 +168,25 @@ export function App() {
   const [allSlotsWeek, setAllSlotsWeek] = useState([[],[],[],[],[],[],[]])
   const [availableWeek, setAvailableWeek] = useState([[],[],[],[],[],[],[]])
   const [leadAppt, setLeadAppt] = useState(null)
+
+  // Доступность кнопки подтверждения зависит от текущего времени, а React сам
+  // по себе не перерисовывается с ходом часов. Карточку лида открывали утром,
+  // когда до встречи было больше 24 часов, она висела в Bitrix открытой полдня,
+  // и к моменту звонка клиенту кнопка всё ещё была серой. Тик это снимает.
+  const [nowTs, setNowTs] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNowTs(Date.now()), 30000)
+    // Фоновые вкладки браузер тормозит вплоть до полной остановки таймеров,
+    // поэтому при возврате к вкладке пересчитываем время сразу.
+    const resync = () => { if (!document.hidden) setNowTs(Date.now()) }
+    document.addEventListener('visibilitychange', resync)
+    window.addEventListener('focus', resync)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', resync)
+      window.removeEventListener('focus', resync)
+    }
+  }, [])
   const [settings, setSettings] = useState({ max_booking_days: 7 })
   // Bumped on the server's minute tick so past slots grey out without refetching
   const [, setNowTick] = useState(0)
@@ -233,7 +268,7 @@ export function App() {
       } catch (e) { /* silent */ }
     }
     syncLeadOffice()
-  }, [api, leadId, officeId, offices, leadOfficeBitrixId])
+  }, [apiInstance, leadId, officeId, offices, leadOfficeBitrixId])
 
   async function loadLeadAppt() {
     if (!leadId) { setLeadAppt(null); return }
@@ -268,20 +303,78 @@ export function App() {
     } finally { setLoading(false) }
   }
 
+  // Точечная перезагрузка одного дня недели.
+  //
+  // В офисе одновременно работают 12 операторов, и WS-событие slots.updated
+  // рассылается всем. Раньше любое изменение слота приводило к перезагрузке
+  // ВСЕЙ недели у каждого оператора — 7 запросов на человека, то есть 84
+  // запроса на одно бронирование. При десятке броней в минуту это ~1000
+  // запросов, а весь офис сидит за одним NAT-адресом, на который и считается
+  // rate limit. Событие несёт дату, поэтому перезагружаем только её.
+  async function loadDays(dates) {
+    if (!officeId || !dates.length) return
+    const weekDates = [...Array(7)].map((_, i) => toLocalISO(addDays(weekStart, i)))
+    const targets = dates
+      .map((d) => ({ date: d, idx: weekDates.indexOf(d) }))
+      .filter((t) => t.idx !== -1)
+    if (!targets.length) return
+
+    try {
+      const byTime = (a, b) => a.start.localeCompare(b.start)
+      const loaded = await Promise.all(
+        targets.map((t) => apiInstance
+          .get('/slots/all', { params: { office_id: officeId, date: t.date } })
+          .then((r) => ({ idx: t.idx, list: (r.data.data || []).slice().sort(byTime) })))
+      )
+      setAllSlotsWeek((prev) => {
+        const next = prev.slice()
+        for (const { idx, list } of loaded) next[idx] = list
+        return next
+      })
+      setAvailableWeek((prev) => {
+        const next = prev.slice()
+        for (const { idx, list } of loaded) next[idx] = list.filter((s) => Number(s.free) > 0)
+        return next
+      })
+    } catch (e) {
+      console.error('Failed to load days', e)
+    }
+  }
+
   useEffect(() => { loadWeek() }, [apiInstance, officeId, weekStart])
 
   // Websocket events fire in bursts; coalesce them into one reload and always
   // use the current week rather than the one captured when the socket opened
   const loadWeekRef = useRef(loadWeek)
-  useEffect(() => { loadWeekRef.current = loadWeek })
+  const loadDaysRef = useRef(loadDays)
+  useEffect(() => { loadWeekRef.current = loadWeek; loadDaysRef.current = loadDays })
   const reloadTimerRef = useRef(null)
+  const pendingDatesRef = useRef(new Set())
+
   const scheduleWeekReload = useCallback(() => {
+    // null означает «перезагрузить неделю целиком»
+    pendingDatesRef.current = null
     if (reloadTimerRef.current) return
     reloadTimerRef.current = setTimeout(() => {
       reloadTimerRef.current = null
+      pendingDatesRef.current = new Set()
       loadWeekRef.current()
     }, 500)
   }, [])
+
+  const scheduleDayReload = useCallback((date) => {
+    if (!date) return scheduleWeekReload()
+    // Если уже запланирована полная перезагрузка — точечная не нужна
+    if (pendingDatesRef.current !== null) pendingDatesRef.current.add(date)
+    if (reloadTimerRef.current) return
+    reloadTimerRef.current = setTimeout(() => {
+      reloadTimerRef.current = null
+      const dates = pendingDatesRef.current
+      pendingDatesRef.current = new Set()
+      if (dates === null) loadWeekRef.current()
+      else loadDaysRef.current([...dates])
+    }, 500)
+  }, [scheduleWeekReload])
   useEffect(() => { loadLeadAppt() }, [apiInstance, leadId])
 
   // If there is an existing appointment for this lead, auto-select its office and week
@@ -300,48 +393,88 @@ export function App() {
   // Websocket live updates
   useEffect(() => {
     let ws
-    try {
-      const base = '/api'
-      // Convert base to absolute ws URL if needed
-      let url
-      if (base.startsWith('http')) {
-        const u = new URL(base.replace(/\/$/, ''))
-        u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
-        u.pathname = (u.pathname.replace(/\/$/, '')) + '/ws'
-        url = u.toString()
-      } else {
-        // Assume same origin
-        const loc = window.location
-        url = `${loc.protocol === 'https:' ? 'wss:' : 'ws:'}//${loc.host}${base.replace(/\/$/, '')}/ws`
-      }
-      ws = new WebSocket(url)
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data)
-          if (msg.type === 'slots.updated') {
-            // If update concerns selected office and week window, refresh
-            if (officeId && msg.office_id && String(msg.office_id) === String(officeId)) {
-              scheduleWeekReload()
+    let reconnectTimer
+    let closed = false
+    let attempt = 0
+
+    const connect = () => {
+      try {
+        const base = '/api'
+        // Convert base to absolute ws URL if needed
+        let url
+        if (base.startsWith('http')) {
+          const u = new URL(base.replace(/\/$/, ''))
+          u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
+          u.pathname = (u.pathname.replace(/\/$/, '')) + '/ws'
+          url = u.toString()
+        } else {
+          // Assume same origin
+          const loc = window.location
+          url = `${loc.protocol === 'https:' ? 'wss:' : 'ws:'}//${loc.host}${base.replace(/\/$/, '')}/ws`
+        }
+        ws = new WebSocket(url)
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data)
+            if (msg.type === 'slots.updated') {
+              // If update concerns selected office and week window, refresh
+              if (officeId && msg.office_id && String(msg.office_id) === String(officeId)) {
+                scheduleDayReload(msg.date)
+              }
+            } else if (msg.type === 'appointment.updated') {
+              // If appointment concerns our lead, refresh banner
+              const lead = msg?.appointment?.lead_id
+              if (lead && leadId && Number(lead) === Number(leadId)) {
+                loadLeadAppt()
+              } else {
+                // Изменение чужой встречи влияет на занятость её дня
+                if (officeId) scheduleDayReload(msg?.appointment?.date)
+              }
+            } else if (msg.type === 'time.tick') {
+              // Past slots are derived from the clock at render time, so a re-render is
+              // enough — refetching the whole week here made every open tab storm the API
+              setNowTick(Date.now())
             }
-          } else if (msg.type === 'appointment.updated') {
-            // If appointment concerns our lead, refresh banner
-            const lead = msg?.appointment?.lead_id
-            if (lead && leadId && Number(lead) === Number(leadId)) {
-              loadLeadAppt()
-            } else {
-              // Also refresh available slots since appointment affects capacity
-              if (officeId) scheduleWeekReload()
-            }
-          } else if (msg.type === 'time.tick') {
-            // Past slots are derived from the clock at render time, so a re-render is
-            // enough — refetching the whole week here made every open tab storm the API
-            setNowTick(Date.now())
-          }
-        } catch {}
+          } catch {}
+        }
+        ws.onopen = () => { attempt = 0 }
+        // Раньше обрыв соединения не обрабатывался вообще: панель навсегда
+        // переставала получать обновления слотов и тики времени, и оператор
+        // работал по устаревшей сетке, ничего об этом не зная.
+        ws.onclose = () => { if (!closed) scheduleReconnect() }
+        ws.onerror = () => { try { ws.close() } catch {} }
+      } catch { scheduleReconnect() }
+    }
+
+    const scheduleReconnect = () => {
+      if (closed || reconnectTimer) return
+      const delay = Math.min(30000, 1000 * Math.pow(2, attempt++))
+      reconnectTimer = setTimeout(() => { reconnectTimer = null; connect() }, delay)
+    }
+
+    connect()
+
+    // Возврат к вкладке — самый частый момент, когда обрыв уже случился;
+    // не ждём таймер, проверяем сокет сразу.
+    const resyncSocket = () => {
+      if (document.hidden || closed) return
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+        attempt = 0
+        connect()
       }
-    } catch {}
-    return () => { try { ws && ws.close() } catch {} }
-  }, [officeId, leadId, scheduleWeekReload])
+    }
+    document.addEventListener('visibilitychange', resyncSocket)
+    window.addEventListener('online', resyncSocket)
+
+    return () => {
+      closed = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      document.removeEventListener('visibilitychange', resyncSocket)
+      window.removeEventListener('online', resyncSocket)
+      try { ws && ws.close() } catch {}
+    }
+  }, [officeId, leadId, scheduleWeekReload, scheduleDayReload])
 
   useEffect(() => () => { if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current) }, [])
 
@@ -376,24 +509,27 @@ export function App() {
     return leadAppt.date === date && leadAppt.timeSlot === timeSlot
   }
 
+  // Время везде считается в зоне офиса, а не в зоне машины оператора.
+  // Раньше эти три функции использовали new Date()/setHours() и toLocalISO(),
+  // хотя кнопка подтверждения в этом же файле уже была переведена на
+  // confirmWindow.js с явной Europe/Minsk — внутри одного экрана работали
+  // две разные модели времени.
   const isPastSlot = (dayIdx, slot) => {
-    try {
-      const dateObj = new Date(addDays(weekStart, dayIdx))
-      const [hh, mm] = (slot?.start || '00:00').split(':').map(Number)
-      dateObj.setHours(Number.isFinite(hh) ? hh : 0, Number.isFinite(mm) ? mm : 0, 0, 0)
-      return dateObj.getTime() < Date.now()
-    } catch {
-      return false
-    }
+    const date = toLocalISO(addDays(weekStart, dayIdx))
+    const startsAt = parseBusinessDateTime(date, slot?.start)
+    if (!startsAt) return false
+    return startsAt.getTime() < nowTs
   }
 
   const isPastDay = (dayIdx) => {
-    const endOfDay = dayjs(addDays(weekStart, dayIdx)).endOf('day').toDate()
-    return endOfDay.getTime() < Date.now()
+    const date = toLocalISO(addDays(weekStart, dayIdx))
+    const endOfDay = parseBusinessDateTime(date, '23:59')
+    if (!endOfDay) return false
+    return endOfDay.getTime() < nowTs
   }
 
   const isToday = (dayIdx) => {
-    return toLocalISO(addDays(weekStart, dayIdx)) === toLocalISO(new Date())
+    return toLocalISO(addDays(weekStart, dayIdx)) === businessToday(new Date(nowTs))
   }
 
   const isBeyondMaxBookingPeriod = (dayIdx) => {
@@ -426,13 +562,17 @@ export function App() {
       loadLeadAppt()
     } catch (e) {
       console.error('Create appointment failed', e)
-      message.error('Не удалось забронировать. Попробуйте ещё раз')
+      // Сервер теперь проверяет вместимость слота и объясняет отказ
+      message.error(e?.response?.data?.message || 'Не удалось забронировать. Попробуйте ещё раз')
+      scheduleWeekReload()
     }
   }
 
   const updateAppointmentStatus = async (id, status) => {
     try {
-      await apiInstance.put(`/appointments/${id}`, { status })
+      // lead_id передаётся явно: сервер сверяет его с лидом самой встречи,
+      // иначе изменить чужую запись можно было, зная только её UUID.
+      await apiInstance.put(`/appointments/${id}`, { status }, { params: { lead_id: leadId } })
       // Как и при создании: не держим диалог подтверждения открытым на время перезагрузки
       scheduleWeekReload()
       loadLeadAppt()
@@ -450,26 +590,17 @@ export function App() {
   const prevWeek = () => setWeekStart(addDays(weekStart, -7))
   const nextWeek = () => setWeekStart(addDays(weekStart, 7))
 
-  const isAppointmentInPast = (appt) => {
-    try {
-      if (!appt) return false
-      const [start, end] = String(appt.timeSlot||'').split('-')
-      const endTime = end || start || '00:00'
-      const dt = dayjs(`${appt.date} ${endTime}`, 'YYYY-MM-DD HH:mm')
-      return dt.isBefore(dayjs())
-    } catch { return false }
-  }
+  // Время встречи разбирается как настенное время офиса (см. confirmWindow.js),
+  // а не как локальное время машины оператора. Прежний dayjs(str, 'YYYY-MM-DD HH:mm')
+  // формат вообще игнорировал: плагин customParseFormat не подключён.
+  const now = useMemo(() => new Date(nowTs), [nowTs])
 
-  const canConfirmAppointment = (appt) => {
-    try {
-      if (!appt) return false
-      const [start] = String(appt.timeSlot||'').split('-')
-      const appointmentDateTime = dayjs(`${appt.date} ${start}`, 'YYYY-MM-DD HH:mm')
-      const now = dayjs()
-      const hoursUntilAppointment = appointmentDateTime.diff(now, 'hour', true)
-      return hoursUntilAppointment <= 24 && hoursUntilAppointment > 0
-    } catch { return false }
-  }
+  const isAppointmentInPast = (appt) => isAppointmentFinished(appt, now)
+
+  const confirmVerdict = useMemo(
+    () => (leadAppt ? evaluateConfirmWindow(leadAppt, now) : null),
+    [leadAppt, now]
+  )
 
   // Only the office list gates the first paint. Waiting on the Bitrix lead here used to
   // freeze the whole widget for as long as Bitrix took to answer; the office modal still
@@ -556,17 +687,21 @@ export function App() {
               </Space>
               <Divider style={{ margin:'8px 0' }} />
               <Space>
-                {leadAppt.status !== 'confirmed' && canConfirmAppointment(leadAppt) && <Button type="primary" size="large" onClick={() => Modal.confirm({
+                {leadAppt.status !== 'confirmed' && confirmVerdict?.allowed && <Button type="primary" size="large" onClick={() => Modal.confirm({
                   title: (<span><CheckCircleOutlined style={{ color:'#52c41a', marginRight:8 }} />Подтвердить встречу?</span>),
                   content: 'Вы уверены, что хотите подтвердить эту встречу?',
                   okText:'Да, подтвердить', cancelText:'Нет', okButtonProps:{ type:'primary' },
                   onOk: () => updateAppointmentStatus(leadAppt.id, 'confirmed')
                 })}>Подтвердить</Button>}
-                {leadAppt.status !== 'confirmed' && !canConfirmAppointment(leadAppt) && (
-                  <Tooltip title="Встречу можно подтвердить только за 24 часа до начала">
-                    <Button type="primary" size="large" disabled>
-                      Подтвердить (заблокировано)
-                    </Button>
+                {leadAppt.status !== 'confirmed' && confirmVerdict && !confirmVerdict.allowed && (
+                  <Tooltip title={confirmBlockedHint(confirmVerdict, (d) => dayjs(d).locale('ru').format('D MMMM, HH:mm'))}>
+                    {/* Отключённая кнопка не отдаёт события мыши, поэтому обёртка
+                        нужна, чтобы подсказка вообще показывалась при наведении. */}
+                    <span style={{ display:'inline-block', cursor:'not-allowed' }}>
+                      <Button type="primary" size="large" disabled style={{ pointerEvents:'none' }}>
+                        Подтвердить (заблокировано)
+                      </Button>
+                    </span>
                   </Tooltip>
                 )}
                 <Button size="large" danger onClick={() => Modal.confirm({
@@ -576,6 +711,14 @@ export function App() {
                   onOk: () => updateAppointmentStatus(leadAppt.id, 'cancelled')
                 })}>Отменить</Button>
               </Space>
+              {/* Причина блокировки видна сразу, а не только по наведению:
+                  раньше на любую причину показывался один текст про 24 часа,
+                  и операторы не понимали, что именно мешает подтвердить. */}
+              {leadAppt.status !== 'confirmed' && confirmVerdict && !confirmVerdict.allowed && (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {confirmBlockedHint(confirmVerdict, (d) => dayjs(d).locale('ru').format('D MMMM, HH:mm'))}
+                </Typography.Text>
+              )}
             </Space>
           </Card>
         )})()}
@@ -590,8 +733,15 @@ export function App() {
             maxEnd = Math.max(maxEnd, toMin(s.end))
           }))
           if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd) || minStart>=maxEnd) return null
-          const timeRows = []
-          for (let t=minStart; t<maxEnd; t+=30) timeRows.push(toTime(t))
+          // Раньше сетка строилась жёстко с шагом 30 минут, а ячейка искалась
+          // точным совпадением slot.start === t. При этом slotDuration в шаблоне
+          // валидируется в диапазоне 15–120 минут: слоты 15, 20, 45 и 90 минут
+          // не попадали на границы сетки и просто исчезали из виджета.
+          // Теперь строки — это фактические времена начала слотов за неделю.
+          const startSet = new Set()
+          ;(allSlotsWeek || []).forEach(day => (day||[]).forEach(s => startSet.add(toMin(s.start))))
+          const timeRows = Array.from(startSet).sort((a,b) => a-b).map(toTime)
+          if (timeRows.length === 0) return null
                      return (
                            <div style={{ display:'grid', gridTemplateColumns:'repeat(7, minmax(180px, 1fr))', gap:0, borderLeft:'2px solid #e6f4ff', borderTop:'2px solid #e6f4ff' }}>
                   {daysLabels.map((label, idx) => {

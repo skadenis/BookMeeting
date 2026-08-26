@@ -2,8 +2,21 @@ const { Router } = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const { models, Op } = require('../lib/db');
 const { invalidateSlotsCache } = require('../services/slotsService');
+const { broadcastSlotsUpdated } = require('../lib/ws');
+const {
+	generateSlotsFromWeekday,
+	resolveWeekdayItems,
+	findOrphanedAppointments,
+	weekdayOf,
+} = require('../lib/scheduleRewrite');
+
+const { requireRole } = require('../middleware/adminAuth');
 
 const router = Router();
+
+// Как и в offices.js: писать может только роль editor и выше,
+// а публичный префикс пропускает лишь GET (см. routes/index.js).
+const canEdit = requireRole('editor');
 
 router.get('/', async (_req, res, next) => {
 	try {
@@ -26,7 +39,7 @@ router.get('/:id', [
 	} catch (e) { next(e); }
 });
 
-router.post('/', [
+router.post('/', canEdit, [
 	body('name').isString().notEmpty(),
 	body('description').optional().isString(),
 	body('baseStartTime').optional().isString(),
@@ -87,7 +100,7 @@ router.post('/', [
 	} catch (e) { next(e); }
  });
 
-router.put('/:id', [
+router.put('/:id', canEdit, [
 	param('id').isString().notEmpty(),
 	body('name').optional().isString().notEmpty(),
 	body('description').optional().isString(),
@@ -149,144 +162,120 @@ router.put('/:id', [
 	} catch (e) { next(e); }
 });
 
-router.delete('/:id', [param('id').isString().notEmpty()], async (req, res, next) => {
+router.delete('/:id', canEdit, [param('id').isUUID()], async (req, res, next) => {
 	try {
 		await models.Template.destroy({ where: { id: req.params.id } });
 		res.json({ ok: true });
 	} catch (e) { next(e); }
 });
 
-// Функция для генерации слотов из профиля дня
-function generateSlotsFromWeekday(weekday, template) {
-	if (!weekday || !weekday.start || !weekday.end) return [];
-	
-	const slots = [];
-	const startMin = parseInt(weekday.start.split(':')[0]) * 60 + parseInt(weekday.start.split(':')[1]);
-	const endMin = parseInt(weekday.end.split(':')[0]) * 60 + parseInt(weekday.end.split(':')[1]);
-	const duration = template.slotDuration || 30;
-	
-	for (let time = startMin; time < endMin; time += duration) {
-		const startTime = `${String(Math.floor(time/60)).padStart(2,'0')}:${String(time%60).padStart(2,'0')}`;
-		const endTime = `${String(Math.floor((time+duration)/60)).padStart(2,'0')}:${String((time+duration)%60).padStart(2,'0')}`;
-		
-		slots.push({
-			start: startTime,
-			end: endTime,
-			capacity: (weekday.capacity ?? template.defaultCapacity ?? 1)
-		});
+// Общая перезапись расписания на одну дату.
+//
+// Раньше логика была скопирована в четырёх местах (здесь, в GET /:id/apply,
+// в POST /apply-to-date и в slots.js), и копии успели разойтись по поведению.
+async function rewriteScheduleForDate({ officeId, isoDate, template, force }) {
+	const items = resolveWeekdayItems(template.weekdays, weekdayOf(isoDate), template);
+
+	// Проверяем ДО удаления: какие активные записи останутся без слота.
+	// Раньше слоты и расписание удалялись безусловно, и встреча повисала
+	// на времени, которого больше нет в расписании.
+	const orphans = await findOrphanedAppointments({ officeId, date: isoDate, items });
+	if (orphans.length > 0 && !force) {
+		return { skipped: true, orphans };
 	}
-	
-	// Применяем специальные слоты
-	if (weekday.specialSlots && Array.isArray(weekday.specialSlots)) {
-		weekday.specialSlots.forEach(special => {
-			const specialStartMin = parseInt(special.start.split(':')[0]) * 60 + parseInt(special.start.split(':')[1]);
-			const specialEndMin = parseInt(special.end.split(':')[0]) * 60 + parseInt(special.end.split(':')[1]);
-			
-			slots.forEach(slot => {
-				const slotStartMin = parseInt(slot.start.split(':')[0]) * 60 + parseInt(slot.start.split(':')[1]);
-				const slotEndMin = parseInt(slot.end.split(':')[0]) * 60 + parseInt(slot.end.split(':')[1]);
-				
-				if (slotStartMin >= specialStartMin && slotEndMin <= specialEndMin) {
-					slot.capacity = special.capacity;
-					slot.type = special.type;
-				}
+
+	const existingList = await models.Schedule.findAll({ where: { office_id: officeId, date: isoDate } });
+	for (const sch of existingList) {
+		await models.Slot.destroy({ where: { schedule_id: sch.id } });
+	}
+	await models.Schedule.destroy({ where: { office_id: officeId, date: isoDate } });
+
+	const working = items.filter((it) => Number(it?.capacity ?? 1) > 0);
+	if (working.length > 0) {
+		const schedule = await models.Schedule.create({
+			office_id: officeId,
+			date: isoDate,
+			isWorkingDay: true,
+			isCustomized: true,
+			customizedAt: new Date(),
+		});
+		for (const slot of items) {
+			await models.Slot.create({
+				schedule_id: schedule.id,
+				start: slot.start,
+				end: slot.end,
+				available: true,
+				capacity: (slot.capacity ?? 1),
 			});
-		});
+		}
 	}
-	
-	return slots;
+
+	await invalidateSlotsCache(officeId, isoDate);
+	broadcastSlotsUpdated(officeId, isoDate);
+	return { skipped: false, created: items.length, orphans: [] };
 }
 
-router.post('/:id/apply', [
-	param('id').isString().notEmpty(),
-	body('office_id').isString().notEmpty(),
+function eachIsoDate(startDate, endDate) {
+	const parse = (v) => {
+		const [y, m, d] = String(v).slice(0, 10).split('-').map(Number);
+		return Date.UTC(y, (m || 1) - 1, d || 1);
+	};
+	const out = [];
+	// Итерация в UTC: локальная арифметика дат зависела от зоны процесса
+	for (let t = parse(startDate); t <= parse(endDate); t += 86400000) {
+		out.push(new Date(t).toISOString().slice(0, 10));
+	}
+	return out;
+}
+
+router.post('/:id/apply', canEdit, [
+	param('id').isUUID(),
+	body('office_id').isUUID(),
 	body('start_date').isISO8601(),
 	body('end_date').isISO8601(),
+	body('force').optional().isBoolean(),
 ], async (req, res, next) => {
 	try {
 		const errors = validationResult(req);
 		if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 		const tpl = await models.Template.findByPk(req.params.id);
 		if (!tpl) return res.status(404).json({ error: 'Template not found' });
-		const { office_id, start_date, end_date } = req.body;
-		const parseLocalDate = (s) => { const [y,m,d] = String(s).slice(0,10).split('-').map(Number); return new Date(y, (m||1)-1, d||1) };
-		const start = parseLocalDate(start_date);
-		const end = parseLocalDate(end_date);
-		const isoLocal = (d) => {
-			const y = d.getFullYear();
-			const m = String(d.getMonth()+1).padStart(2,'0');
-			const day = String(d.getDate()).padStart(2,'0');
-			return `${y}-${m}-${day}`;
-		};
-		
-		for (let d = new Date(start); d.getTime() <= end.getTime(); d.setDate(d.getDate()+1)) {
-			const iso = isoLocal(d);
-			// Compute weekday from ISO at UTC midnight to avoid TZ skew
-			const weekday = new Date(`${iso}T00:00:00Z`).getUTCDay();
-			const getWeekdayProfile = (weekdays, wd) => {
-				const map = weekdays || {};
-				const direct = map[String(wd)] || map[wd];
-				if (direct && typeof direct === 'object') return direct;
-				// Support templates that store Sunday under key "7"
-				if (wd === 0) {
-					const alt = map['7'] || map[7];
-					if (alt && typeof alt === 'object') return alt;
-				}
-				return null;
-			};
-			
-			const weekdayProfile = getWeekdayProfile(tpl.weekdays, weekday);
-			if (!weekdayProfile) continue;
 
-			// Normalize profile to array of items (old format) or generate from new format
-			const items = Array.isArray(weekdayProfile) ? weekdayProfile : generateSlotsFromWeekday(weekdayProfile, tpl);
-			
-			// Remove any existing schedules for this office/date
-			const existingList = await models.Schedule.findAll({ where: { office_id, date: iso } });
-			for (const sch of existingList) {
-				await models.Slot.destroy({ where: { schedule_id: sch.id } });
-			}
-			await models.Schedule.destroy({ where: { office_id, date: iso } });
-			
-			// Create schedule and slots only if there are working (>0 capacity) slots
-			const hasWorking = (items||[]).some(it => Number(it?.capacity ?? 1) > 0);
-			if (hasWorking) {
-				const schedule = await models.Schedule.create({ 
-					office_id, 
-					date: iso, 
-					isWorkingDay: true,
-					isCustomized: true,
-					customizedAt: new Date()
-				});
-				
-				for (const slot of items) {
-					await models.Slot.create({ 
-						schedule_id: schedule.id, 
-						start: slot.start, 
-						end: slot.end, 
-						available: true, 
-						capacity: (slot.capacity ?? 1) 
-					});
-				}
-			}
+		const { office_id, start_date, end_date } = req.body;
+		const force = req.body.force === true;
+		const dates = eachIsoDate(start_date, end_date);
+		if (dates.length === 0) return res.status(400).json({ error: 'Пустой диапазон дат' });
+		if (dates.length > 366) return res.status(400).json({ error: 'Диапазон больше года' });
+
+		const blocked = [];
+		let applied = 0;
+		for (const iso of dates) {
+			const result = await rewriteScheduleForDate({ officeId: office_id, isoDate: iso, template: tpl, force });
+			if (result.skipped) blocked.push({ date: iso, appointments: result.orphans });
+			else applied++;
 		}
-		
-		// Invalidate cache for the date range
-		for (let d = new Date(start); d.getTime() <= end.getTime(); d.setDate(d.getDate()+1)) {
-			const iso = isoLocal(d);
-			await invalidateSlotsCache(office_id, iso);
+
+		if (blocked.length > 0) {
+			return res.status(409).json({
+				error: 'Schedule rewrite would orphan appointments',
+				message: 'На эти даты есть активные записи, которые не попадают в новое расписание. Повторите с force: true, если это ожидаемо.',
+				applied,
+				blocked,
+			});
 		}
-		
-		res.json({ ok: true });
+
+		res.json({ ok: true, applied });
 	} catch (e) { next(e); }
 });
 
 // Preview how a template would map to dates without applying
+// Валидаторы здесь раньше стояли на body(), хотя это GET и данные читаются
+// из query — то есть не проверяли ничего.
 router.get('/:id/preview', [
-	param('id').isString().notEmpty(),
-	body('office_id').optional(),
-	body('start_date').optional().isISO8601(),
-	body('end_date').optional().isISO8601(),
+	param('id').isUUID(),
+	query('office_id').optional().isUUID(),
+	query('start_date').optional().isISO8601(),
+	query('end_date').optional().isISO8601(),
 ], async (req, res, next) => {
 	try {
 		const tpl = await models.Template.findByPk(req.params.id);
@@ -301,162 +290,48 @@ router.get('/:id/preview', [
 			const day = String(d.getDate()).padStart(2,'0');
 			return `${y}-${m}-${day}`;
 		};
-		const getItemsForWeekday = (weekdays, wd) => {
-			const map = weekdays || {};
-			const direct = map[String(wd)] || map[wd];
-			if (Array.isArray(direct) && direct.length) return direct;
-			if (wd === 0) {
-				const alt = map['7'] || map[7];
-				if (Array.isArray(alt)) return alt;
-			}
-			return [];
-		};
 		const days = [];
 		for (let d = new Date(start); d.getTime() <= end.getTime(); d.setDate(d.getDate()+1)) {
 			const iso = isoLocal(d);
-			const weekday = d.getDay();
-			const items = getItemsForWeekday(tpl.weekdays, weekday);
+			// weekdayOf считает день недели в UTC — так же, как при применении
+			const weekday = weekdayOf(iso);
+			const items = resolveWeekdayItems(tpl.weekdays, weekday, tpl);
 			days.push({ date: iso, weekday, itemsCount: (items||[]).length });
 		}
 		res.json({ data: days });
 	} catch (e) { next(e); }
 });
 
-// GET route for applying template to specific date (for frontend compatibility)
-router.get('/:id/apply', [
-	param('id').isString().notEmpty(),
-	query('office_id').isString().notEmpty(),
-	query('date').isISO8601(),
-], async (req, res, next) => {
-	try {
-		const errors = validationResult(req);
-		if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-
-		const template_id = req.params.id;
-		const { office_id, date } = req.query;
-
-		const template = await models.Template.findByPk(template_id);
-		if (!template) return res.status(404).json({ error: 'Template not found' });
-
-		const office = await models.Office.findByPk(office_id);
-		if (!office) return res.status(404).json({ error: 'Office not found' });
-
-		// Apply template to specific date
-		const dateObj = new Date(`${date}T00:00:00Z`);
-		const weekday = dateObj.getUTCDay();
-
-		const getItemsForWeekday = (weekdays, wd) => {
-			const map = weekdays || {};
-			const direct = map[String(wd)] || map[wd];
-			if (Array.isArray(direct) && direct.length) return direct;
-			if (wd === 0) {
-				const alt = map['7'] || map[7];
-				if (Array.isArray(alt)) return alt;
-			}
-			return [];
-		};
-
-		const items = getItemsForWeekday(template.weekdays, weekday);
-
-		// Remove existing schedule/slots for this date
-		const existingList = await models.Schedule.findAll({ where: { office_id, date } });
-		for (const sch of existingList) {
-			await models.Slot.destroy({ where: { schedule_id: sch.id } });
-		}
-		await models.Schedule.destroy({ where: { office_id, date } });
-
-		// Create new schedule with template slots
-		if (items.length > 0) {
-			const schedule = await models.Schedule.create({
-				office_id,
-				date,
-				isWorkingDay: true,
-				isCustomized: true,
-				customizedAt: new Date()
-			});
-
-			for (const s of items) {
-				await models.Slot.create({
-					schedule_id: schedule.id,
-					start: s.start,
-					end: s.end,
-					available: true,
-					capacity: s.capacity || 1
-				});
-			}
-
-			// Invalidate cache
-			await invalidateSlotsCache(office_id, date);
-		}
-
-		res.json({ success: true, message: 'Template applied to date' });
-	} catch (e) { next(e); }
-});
-
-// Apply template to a specific date
-router.post('/apply-to-date', [
-	body('template_id').isString().notEmpty(),
-	body('office_id').isString().notEmpty(),
+// Применение шаблона к одной дате
+router.post('/apply-to-date', canEdit, [
+	body('template_id').isUUID(),
+	body('office_id').isUUID(),
 	body('date').isISO8601(),
+	body('force').optional().isBoolean(),
 ], async (req, res, next) => {
 	try {
 		const errors = validationResult(req);
 		if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
 		const { template_id, office_id, date } = req.body;
-
 		const template = await models.Template.findByPk(template_id);
 		if (!template) return res.status(404).json({ error: 'Template not found' });
-
 		const office = await models.Office.findByPk(office_id);
 		if (!office) return res.status(404).json({ error: 'Office not found' });
 
-		// Apply template to specific date
-		const dateObj = new Date(`${date}T00:00:00Z`);
-		const weekday = dateObj.getUTCDay();
-
-		const getItemsForWeekday = (weekdays, wd) => {
-			const map = weekdays || {};
-			const direct = map[String(wd)] || map[wd];
-			if (Array.isArray(direct) && direct.length) return direct;
-			if (wd === 0) {
-				const alt = map['7'] || map[7];
-				if (Array.isArray(alt)) return alt;
-			}
-			return [];
-		};
-
-		const items = getItemsForWeekday(template.weekdays, weekday);
-
-		// Remove existing schedule/slots for this date
-		const existingList = await models.Schedule.findAll({ where: { office_id, date } });
-		for (const sch of existingList) {
-			await models.Slot.destroy({ where: { schedule_id: sch.id } });
-		}
-		await models.Schedule.destroy({ where: { office_id, date } });
-
-		// Create new schedule with template slots
-		if (items.length > 0) {
-			const schedule = await models.Schedule.create({
-				office_id,
-				date,
-				isWorkingDay: true,
-				isCustomized: true,
-				customizedAt: new Date()
+		const isoDate = String(date).slice(0, 10);
+		const result = await rewriteScheduleForDate({
+			officeId: office_id,
+			isoDate,
+			template,
+			force: req.body.force === true,
+		});
+		if (result.skipped) {
+			return res.status(409).json({
+				error: 'Schedule rewrite would orphan appointments',
+				message: 'На эту дату есть активные записи, которые не попадают в новое расписание.',
+				appointments: result.orphans,
 			});
-
-			for (const s of items) {
-				await models.Slot.create({
-					schedule_id: schedule.id,
-					start: s.start,
-					end: s.end,
-					available: true,
-					capacity: s.capacity || 1
-				});
-			}
-
-			// Invalidate cache
-			await invalidateSlotsCache(office_id, date);
 		}
 
 		res.json({ success: true, message: 'Template applied to date' });

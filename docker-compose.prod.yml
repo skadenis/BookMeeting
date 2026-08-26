@@ -5,27 +5,38 @@ services:
     networks:
       - app-network
     environment:
+      # Офисы работают по Минску; без этого контейнер живёт в UTC
+      TZ: Europe/Minsk
+      BUSINESS_TZ: Europe/Minsk
       NODE_ENV: production
       PORT: 4000
       DB_HOST: postgres
       DB_PORT: 5432
       DB_NAME: meetings
       DB_USERNAME: meetings
-      DB_PASSWORD: meetings
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD обязателен}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       BITRIX_DEV_MODE: "false"
-      BITRIX_REST_URL: ${BITRIX_REST_URL:-https://bitrix24.newhc.by/rest/15/m0navisevloaqfhc}
+      BITRIX_REST_URL: ${BITRIX_REST_URL:?BITRIX_REST_URL обязателен}
       ENABLE_LEADS_SYNC: ${ENABLE_LEADS_SYNC:-true}
       ENABLE_CRON: ${ENABLE_CRON:-true}
-      CORS_ORIGIN: "https://book-meeting.centr-cred.by"
+      # Домен расходился с README и certbot (centrcred.by): перечислены оба,
+      # уточните реальный и уберите лишний
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://book-meeting.centrcred.by,https://book-meeting.centr-cred.by}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@centrcred.by}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
-      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-change-me-in-production}
-      PUBLIC_TOKEN_PAIRS: ${PUBLIC_TOKEN_PAIRS:-widget1:secretA,widget2:secretB}
-      RATE_LIMIT_WINDOW_MS: 60000
-      RATE_LIMIT_MAX: 1200
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD обязателен}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?ADMIN_JWT_SECRET обязателен}
+      PUBLIC_TOKEN_PAIRS: ${PUBLIC_TOKEN_PAIRS:?PUBLIC_TOKEN_PAIRS обязателен}
+      CRON_TOKEN: ${CRON_TOKEN:-}
+      BITRIX_ALLOWED_DOMAINS: ${BITRIX_ALLOWED_DOMAINS:-}
+      LEADS_SYNC_CRON: ${LEADS_SYNC_CRON:-*/5 * * * *}
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-60000}
+      # 12 операторов офиса делят один NAT-адрес, лимит считается на IP
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-3000}
+      DB_POOL_MAX: ${DB_POOL_MAX:-30}
+      SLOTS_CACHE_TTL: ${SLOTS_CACHE_TTL:-10}
     ports:
       - "4400:4000"
     depends_on:
@@ -40,6 +51,8 @@ services:
       context: ./frontend
       args:
         VITE_API_BASE_URL: /api
+        VITE_PUBLIC_APP_ID: ${VITE_PUBLIC_APP_ID:-}
+        VITE_PUBLIC_APP_TOKEN: ${VITE_PUBLIC_APP_TOKEN:-}
     container_name: bookmeeting-frontend
     networks:
       - app-network
@@ -57,7 +70,7 @@ services:
     environment:
       POSTGRES_DB: meetings
       POSTGRES_USER: meetings
-      POSTGRES_PASSWORD: meetings
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD обязателен}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

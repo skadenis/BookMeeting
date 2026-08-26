@@ -19,9 +19,11 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
-          script_stop: false
+          # false означал, что шаг не прервётся на упавшей команде
+          # и частично применённый деплой отчитается как успешный
+          script_stop: true
           script: |
-            # set -e
+            set -e
             echo "🚀 Starting deployment..."
             
             echo "🔍 Environment check:"
@@ -130,10 +132,12 @@ jobs:
             git log --oneline -3 || echo "⚠️ Git log failed"
             git status || echo "⚠️ Git status failed"
             
-            # Ensure env file exists (copy once from example if missing)
-            if [ ! -f .env ]; then 
-              echo "📝 Creating .env from example..."
-              cp env.example .env || echo "⚠️ Warning: could not copy env.example"
+            # .env больше НЕ создаётся из env.example автоматически: раньше так
+            # на сервер попадали значения по умолчанию (admin123 и прочие),
+            # с которыми приложение поднималось как боевое.
+            if [ ! -f .env ]; then
+              echo "❌ .env отсутствует на сервере. Создайте его вручную по образцу env.example."
+              exit 1
             fi
             
             echo "🐳 Checking Docker..."

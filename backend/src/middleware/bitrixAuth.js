@@ -1,159 +1,153 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.bitrixAuthMiddleware = bitrixAuthMiddleware;
-// In production, validate token via Bitrix REST: oauth.token introspection or simple API call
-async function bitrixAuthMiddleware(req, res, next) {
-    try {
-        // Shared app tokens for iframe embedding (public area)
-        const appTokenHeader = req.header('X-App-Token');
-        const appIdHeader = req.header('X-App-Id');
-        const tokenPairsEnv = (process.env.PUBLIC_TOKEN_PAIRS || '').split(',').map(s => s.trim()).filter(Boolean);
-        
-        // Validate pair: id:secret (single-token flow disabled)
-        let pairOk = false;
-        if (appIdHeader && appTokenHeader && tokenPairsEnv.length > 0) {
-            for (const pair of tokenPairsEnv) {
-                const [pid, psec] = pair.split(':');
-                if (pid && psec && pid === appIdHeader && psec === appTokenHeader) { 
-                    pairOk = true; 
-                    break; 
-                }
-            }
-        }
-        
-        if (pairOk) {
-            req.bitrix = {
-                userId: 0,
-                domain: 'public',
-                leadId: req.query.lead_id ? Number(req.query.lead_id) : undefined,
-                dealId: req.query.deal_id ? Number(req.query.deal_id) : undefined,
-                contactId: req.query.contact_id ? Number(req.query.contact_id) : undefined,
-                accessToken: 'public-token'
-            };
-            return next();
-        }
+'use strict';
 
-        const authHeader = req.header('Authorization');
-        let token = authHeader?.startsWith('Bearer ')
-            ? authHeader.substring('Bearer '.length)
-            : undefined;
-        // Also accept token from query (?AUTH_ID=... or ?auth=...)
-        if (!token) {
-            const qAuth = (req.query.AUTH_ID || req.query.auth || req.query.access_token);
-            if (qAuth)
-                token = String(qAuth);
-        }
-        const domainFromHeader = req.header('X-Bitrix-Domain');
-        const domainParam = (req.query.DOMAIN || req.query.domain);
-        const domain = (domainFromHeader || domainParam || '').toString();
-        const leadId = req.query.lead_id ? Number(req.query.lead_id) : undefined;
-        const dealId = req.query.deal_id ? Number(req.query.deal_id) : undefined;
-        const contactId = req.query.contact_id ? Number(req.query.contact_id) : undefined;
-        const userId = req.query.user_id ? Number(req.query.user_id) : undefined;
+// Аутентификация публичного контура (виджет внутри Bitrix24).
+//
+// Что было сломано до переписывания:
+//  1. Ветка «на всякий случай» повторяла условие проверки пары токенов, но уже
+//     без сверки секрета: любые X-App-Id/X-App-Token пропускались.
+//  2. Заголовок Upgrade: websocket на обычном HTTP-запросе полностью обходил
+//     проверку. WebSocket-соединения обрабатывает ws-сервер на событии upgrade
+//     HTTP-сервера и до express-middleware не доходят — ветка была только дырой.
+//  3. Токен Bitrix не проверялся вообще (`TODO: call Bitrix to validate token`),
+//     достаточно было передать ?domain=что-угодно.
+//  4. Список «публичных» GET-эндпоинтов включал /bitrix/lead, который отдаёт
+//     карточку лида с персональными данными.
+//
+// Теперь доступ даёт ровно одно из двух: совпавшая пара из PUBLIC_TOKEN_PAIRS
+// или токен Bitrix, проверенный вызовом user.current на разрешённом домене.
 
-        const isWebSocket = String(req.headers.upgrade || '').toLowerCase() === 'websocket' || req.url.startsWith('/ws');
-        if (isWebSocket) {
-            req.bitrix = {
-                userId: userId || 0,
-                domain: domain || 'ws',
-                leadId,
-                dealId,
-                contactId,
-                accessToken: token || 'ws',
-            };
-            return next();
-        }
-        
-        if (process.env.BITRIX_DEV_MODE === 'true') {
-            const devToken = token || process.env.VITE_DEV_BITRIX_TOKEN || 'dev-token';
-            // В dev режиме логируем минимально
-            console.log('🔍 Dev mode: user_id:', userId || 'not set');
-            req.bitrix = {
-                userId: userId || 0, // Используем user_id из query параметра, fallback на 0
-                domain: domain || process.env.VITE_DEV_BITRIX_DOMAIN || 'example.bitrix24.ru',
-                leadId,
-                dealId,
-                contactId,
-                accessToken: devToken,
-            };
+const { verifyAccessToken, isAllowedDomain, normalizeDomain } = require('../lib/bitrix');
 
-            return next();
-        }
-        
-        // PRODUCTION MODE - более гибкая проверка
-        console.log('🔍 Middleware bitrixAuth (JavaScript) - PRODUCTION MODE:');
-        console.log('  - URL:', req.url);
-        console.log('  - Method:', req.method);
-        console.log('  - Headers:', {
-            authorization: req.headers.authorization ? 'present' : 'missing',
-            'x-bitrix-domain': req.headers['x-bitrix-domain'],
-            'x-app-id': req.headers['x-app-id'],
-            'x-app-token': req.headers['x-app-token'] ? 'present' : 'missing'
-        });
-        console.log('  - Query params:', req.query);
-
-        // В продакшене для публичных эндпоинтов разрешаем запросы без строгой авторизации
-        // Публичные эндпоинты: /offices, /slots (GET), /templates (GET), /bitrix/lead (GET), /appointments (GET)
-        const isPublicEndpoint = (
-            (req.method === 'GET' && req.url.startsWith('/offices')) ||
-            (req.method === 'GET' && req.url.startsWith('/slots')) ||
-            (req.method === 'GET' && req.url.startsWith('/templates')) ||
-            (req.method === 'GET' && req.url.startsWith('/bitrix/lead')) ||
-            (req.method === 'GET' && req.url.startsWith('/appointments'))
-        );
-
-        if (isPublicEndpoint && (!token && !domain)) {
-            console.log('  - INFO: Public endpoint accessed without auth - allowing');
-            req.bitrix = {
-                userId: 0,
-                domain: 'public-access',
-                leadId,
-                dealId,
-                contactId,
-                accessToken: 'public-access'
-            };
-            return next();
-        }
-
-        // Для остальных эндпоинтов требуем авторизацию
-        if (!token && !domain) {
-            // Проверяем, есть ли публичные токены в заголовках
-            if (appIdHeader && appTokenHeader && tokenPairsEnv.length > 0) {
-                // Это должно было сработать выше, но на всякий случай
-                console.log('  - Using public app tokens');
-                req.bitrix = {
-                    userId: 0,
-                    domain: 'public',
-                    leadId,
-                    dealId,
-                    contactId,
-                    accessToken: 'public-token'
-                };
-                return next();
-            }
-            
-            console.log('  - ERROR: No token, domain, or public tokens provided');
-            return res.status(401).json({ 
-                error: 'Unauthorized - missing authentication',
-                details: 'Required: Authorization token or X-App-Id/X-App-Token pair'
-            });
-        }
-        
-        // TODO: call Bitrix to validate token; here we trust but set context
-        req.bitrix = {
-            userId: userId || 0,
-            domain: domain || 'unknown',
-            leadId,
-            dealId,
-            contactId,
-            accessToken: token || 'no-token',
-        };
-        
-        console.log('  - SUCCESS: Authentication passed, req.bitrix set');
-        return next();
-    }
-    catch (e) {
-        console.error('❌ Middleware bitrixAuth error:', e);
-        return next(e);
-    }
+function parseTokenPairs() {
+	return String(process.env.PUBLIC_TOKEN_PAIRS || '')
+		.split(',')
+		.map((s) => s.trim())
+		.filter(Boolean)
+		.map((pair) => {
+			const idx = pair.indexOf(':');
+			if (idx <= 0) return null;
+			return { id: pair.slice(0, idx), secret: pair.slice(idx + 1) };
+		})
+		.filter((p) => p && p.id && p.secret);
 }
+
+// Сравнение постоянного времени, чтобы секрет нельзя было подобрать по таймингам
+function safeEqual(a, b) {
+	const bufA = Buffer.from(String(a));
+	const bufB = Buffer.from(String(b));
+	if (bufA.length !== bufB.length) return false;
+	return require('crypto').timingSafeEqual(bufA, bufB);
+}
+
+function matchesTokenPair(appId, appToken) {
+	if (!appId || !appToken) return false;
+	const pairs = parseTokenPairs();
+	if (pairs.length === 0) return false;
+	let matched = false;
+	for (const pair of pairs) {
+		// Без раннего выхода: время ответа не зависит от позиции пары в списке
+		if (safeEqual(pair.id, appId) && safeEqual(pair.secret, appToken)) matched = true;
+	}
+	return matched;
+}
+
+function numericOrUndefined(value) {
+	if (value === undefined || value === null || value === '') return undefined;
+	const n = Number(value);
+	return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function readContext(req) {
+	return {
+		leadId: numericOrUndefined(req.query.lead_id),
+		dealId: numericOrUndefined(req.query.deal_id),
+		contactId: numericOrUndefined(req.query.contact_id),
+		userId: numericOrUndefined(req.query.user_id),
+	};
+}
+
+async function bitrixAuthMiddleware(req, res, next) {
+	try {
+		const ctx = readContext(req);
+
+		// 1. Общая пара токенов виджета
+		if (matchesTokenPair(req.header('X-App-Id'), req.header('X-App-Token'))) {
+			req.bitrix = {
+				userId: ctx.userId || 0,
+				domain: 'widget',
+				leadId: ctx.leadId,
+				dealId: ctx.dealId,
+				contactId: ctx.contactId,
+				accessToken: null,
+				authMethod: 'token_pair',
+			};
+			return next();
+		}
+
+		// 2. Режим разработки. Раньше он включался переменной BITRIX_DEV_MODE
+		// независимо от NODE_ENV, а в docker-compose.yml стоят одновременно
+		// NODE_ENV=production и BITRIX_DEV_MODE=true — то есть прод-сборка
+		// пускала всех. Теперь NODE_ENV=production отключает режим жёстко.
+		if (process.env.NODE_ENV !== 'production' && process.env.BITRIX_DEV_MODE === 'true') {
+			req.bitrix = {
+				userId: ctx.userId || 0,
+				domain: normalizeDomain(req.header('X-Bitrix-Domain') || req.query.DOMAIN || req.query.domain)
+					|| process.env.VITE_DEV_BITRIX_DOMAIN
+					|| 'example.bitrix24.ru',
+				leadId: ctx.leadId,
+				dealId: ctx.dealId,
+				contactId: ctx.contactId,
+				accessToken: 'dev-token',
+				authMethod: 'dev',
+			};
+			return next();
+		}
+
+		// 3. Токен Bitrix — проверяется по-настоящему
+		const authHeader = req.header('Authorization') || '';
+		let token = authHeader.startsWith('Bearer ') ? authHeader.slice('Bearer '.length).trim() : null;
+		if (!token) {
+			const q = req.query.AUTH_ID || req.query.auth || req.query.access_token;
+			if (q) token = String(q);
+		}
+		const domain = req.header('X-Bitrix-Domain') || req.query.DOMAIN || req.query.domain;
+
+		if (!token || !domain) {
+			return res.status(401).json({
+				error: 'Unauthorized',
+				details: 'Требуется пара X-App-Id/X-App-Token либо токен Bitrix вместе с доменом',
+			});
+		}
+
+		if (!isAllowedDomain(domain)) {
+			return res.status(403).json({ error: 'Forbidden', details: 'Домен Bitrix не разрешён' });
+		}
+
+		const verdict = await verifyAccessToken(domain, token);
+		if (!verdict.ok) {
+			// Сбой связи с Bitrix — это не повод пускать запрос, но и не 401:
+			// отвечаем 503, чтобы отличать недоступность от неверного токена.
+			if (verdict.reason === 'unavailable') {
+				return res.status(503).json({ error: 'Bitrix unavailable', details: 'Не удалось проверить токен' });
+			}
+			return res.status(401).json({ error: 'Unauthorized', details: 'Токен Bitrix отклонён' });
+		}
+
+		req.bitrix = {
+			userId: ctx.userId || verdict.userId || 0,
+			domain: normalizeDomain(domain),
+			leadId: ctx.leadId,
+			dealId: ctx.dealId,
+			contactId: ctx.contactId,
+			accessToken: token,
+			authMethod: 'bitrix_token',
+			verifiedUserId: verdict.userId || null,
+		};
+		return next();
+	} catch (e) {
+		console.error('bitrixAuth: непредвиденная ошибка:', e?.message || e);
+		return next(e);
+	}
+}
+
+module.exports = { bitrixAuthMiddleware, matchesTokenPair };

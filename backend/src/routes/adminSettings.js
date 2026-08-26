@@ -1,7 +1,7 @@
 const { Router } = require('express');
 const { body, validationResult } = require('express-validator');
 const { models } = require('../lib/db');
-const { adminAuthMiddleware } = require('../middleware/adminAuth');
+const { adminAuthMiddleware, requireRole } = require('../middleware/adminAuth');
 
 const router = Router();
 
@@ -33,9 +33,9 @@ router.get('/', adminAuthMiddleware, async (req, res, next) => {
 });
 
 // Обновить настройки системы
-router.put('/', [
+router.put('/', adminAuthMiddleware, requireRole('admin'), [
   body('max_booking_days').isInt({ min: 1, max: 365 }).withMessage('Период записи должен быть от 1 до 365 дней'),
-], adminAuthMiddleware, async (req, res, next) => {
+], async (req, res, next) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -79,8 +79,9 @@ router.get('/public', async (req, res, next) => {
     }, {});
 
     // Значения по умолчанию
+    const parsed = Number(settingsData.max_booking_days);
     const publicSettings = {
-      max_booking_days: settingsData.max_booking_days || 7
+      max_booking_days: Number.isFinite(parsed) && parsed > 0 ? parsed : 7
     };
 
     res.json({ data: publicSettings });

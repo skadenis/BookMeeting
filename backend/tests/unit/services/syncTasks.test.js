@@ -68,10 +68,27 @@ describe('autoSyncStatuses', () => {
     expect(result.updated).toBe(1);
   });
 
-  it('cancels when the lead left the meeting stages in Bitrix', async () => {
+  // Тест закреплял отмену встречи при стадии IN_PROCESS. Но в эту стадию лид
+  // переводит само приложение: ensureLeadStage сначала ставит IN_PROCESS и
+  // только потом целевую стадию. Синхронизация видела промежуточное состояние,
+  // считала, что лид ушёл со стадий встречи, и отменяла живую запись —
+  // встреча пропадала из виджета. IN_PROCESS означает «ещё не доехало».
+  it('leaves the appointment alone on a transient Bitrix stage', async () => {
     const appointment = makeAppointment({ status: 'pending' });
     models.Appointment.findAll.mockResolvedValue([appointment]);
     axios.post.mockResolvedValue({ data: { result: [{ ID: '12345', STATUS_ID: 'IN_PROCESS' }] } });
+
+    const result = await autoSyncStatuses();
+
+    expect(appointment.update).not.toHaveBeenCalled();
+    expect(appointment.status).toBe('pending');
+    expect(result.skipped).toBe(1);
+  });
+
+  it('cancels when the lead really left the meeting stages in Bitrix', async () => {
+    const appointment = makeAppointment({ status: 'pending' });
+    models.Appointment.findAll.mockResolvedValue([appointment]);
+    axios.post.mockResolvedValue({ data: { result: [{ ID: '12345', STATUS_ID: 'JUNK' }] } });
 
     await autoSyncStatuses();
 

@@ -1,398 +1,215 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import { ConfigProvider } from 'antd';
+import dayjs from 'dayjs';
+import 'dayjs/locale/ru';
+import updateLocale from 'dayjs/plugin/updateLocale';
 import AppointmentsPage from '../../modules/admin/AppointmentsPage';
 
-// Mock the API client
+// Прежняя версия этого набора не проходила ни разу:
+//  1. Самодельный мок dayjs не реализовывал add(), и компонент падал прямо
+//     в инициализаторе состояния на dayjs().add(1, 'month') — все 23 теста.
+//  2. Ожидания были написаны под более старую разметку («Управление
+//     встречами», колонка «Действия», плейсхолдер «Поиск по лиду, сделке...»),
+//     которой в компоненте давно нет.
+// Здесь используется настоящий dayjs и проверяется фактическое поведение.
+
 jest.mock('../../api/client', () => ({
   __esModule: true,
   default: {
     get: jest.fn(),
-    put: jest.fn()
-  }
+    put: jest.fn(),
+    post: jest.fn(),
+  },
 }));
 
 const mockApi = require('../../api/client').default;
 
-// Mock dayjs
-jest.mock('dayjs', () => {
-  const mockDayjs = jest.fn((date) => {
-    if (date === '2024-01-15') {
-      return {
-        format: (format) => {
-          if (format === 'DD.MM.YYYY') return '15.01.2024';
-          if (format === 'dddd') return 'понедельник';
-          if (format === 'HH:mm') return '10:00';
-          return date;
-        },
-        startOf: () => mockDayjs('2024-01-15'),
-        endOf: () => mockDayjs('2024-01-15'),
-        unix: () => 1705257600, // Unix timestamp for 2024-01-15
-        isAfter: () => false,
-        isBefore: () => false,
-        isSame: () => true,
-        isValid: () => true
-      };
-    }
-    return {
-      format: (format) => date,
-      startOf: () => mockDayjs(date),
-      endOf: () => mockDayjs(date),
-      unix: () => 1705257600,
-      isAfter: () => false,
-      isBefore: () => false,
-      isSame: () => true,
-      isValid: () => true
-    };
-  });
-  
-  mockDayjs.locale = jest.fn(() => mockDayjs);
-  mockDayjs.extend = jest.fn();
-  mockDayjs.startOf = jest.fn(() => mockDayjs('2024-01-15'));
-  mockDayjs.endOf = jest.fn(() => mockDayjs('2024-01-15'));
-  mockDayjs.unix = jest.fn(() => 1705257600);
-  
-  return mockDayjs;
-});
+dayjs.extend(updateLocale);
+dayjs.locale('ru');
+dayjs.updateLocale('ru', { weekStart: 1 });
 
-const renderWithProviders = (component) => {
-  return render(
-    <ConfigProvider>
-      <BrowserRouter>
-        {component}
-      </BrowserRouter>
-    </ConfigProvider>
-  );
+const OFFICE = { id: 'office-1', city: 'Минск', address: 'ул. Тестовая, 1', addressNote: null };
+
+const APPOINTMENTS = [
+  {
+    id: 'appointment-1',
+    date: '2024-01-15',
+    timeSlot: '10:00-10:30',
+    status: 'pending',
+    office_id: OFFICE.id,
+    Office: OFFICE,
+    bitrix_lead_id: 12345,
+    createdAt: '2024-01-15T10:00:00Z',
+  },
+  {
+    id: 'appointment-2',
+    date: '2024-01-16',
+    timeSlot: '11:00-11:30',
+    status: 'confirmed',
+    office_id: OFFICE.id,
+    Office: OFFICE,
+    bitrix_lead_id: 12346,
+    createdAt: '2024-01-15T11:00:00Z',
+  },
+];
+
+const STATS = {
+  total: 2, pending: 1, confirmed: 1, cancelled: 0,
+  rescheduled: 0, completed: 0, no_show: 0, expired: 0,
 };
 
-describe('AppointmentsPage', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    
-    // Mock successful API responses
-    mockApi.get.mockResolvedValue({
-      data: {
-        data: [
-          {
-            id: 'appointment-1',
-            date: '2024-01-15',
-            timeSlot: '10:00',
-            status: 'pending',
-            office: {
-              id: 'office-1',
-              city: 'Минск',
-              address: 'ул. Тестовая, 1'
-            },
-            bitrix_lead_id: 12345,
-            createdAt: '2024-01-15T10:00:00Z'
-          },
-          {
-            id: 'appointment-2',
-            date: '2024-01-15',
-            timeSlot: '11:00',
-            status: 'confirmed',
-            office: {
-              id: 'office-1',
-              city: 'Минск',
-              address: 'ул. Тестовая, 1'
-            },
-            bitrix_lead_id: 12346,
-            createdAt: '2024-01-15T11:00:00Z'
-          }
-        ]
-      }
-    });
-
-    mockApi.put.mockResolvedValue({
-      data: { success: true }
-    });
+function mockEndpoints({ appointments = APPOINTMENTS, total = appointments.length } = {}) {
+  mockApi.get.mockImplementation((url) => {
+    if (url === '/admin/appointments') {
+      return Promise.resolve({ data: { data: appointments, meta: { total, page: 1, pageSize: 20 } } });
+    }
+    if (url === '/admin/appointments/stats/overview') {
+      return Promise.resolve({ data: { data: STATS } });
+    }
+    if (url === '/admin/offices') {
+      return Promise.resolve({ data: { data: [OFFICE] } });
+    }
+    return Promise.resolve({ data: { data: [] } });
   });
+  mockApi.put.mockResolvedValue({ data: { data: {} } });
+}
 
-  describe('Rendering', () => {
-    it('should render appointments page title', () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      expect(screen.getByText('Управление встречами')).toBeInTheDocument();
+const renderPage = () => render(
+  <ConfigProvider>
+    <BrowserRouter>
+      <AppointmentsPage />
+    </BrowserRouter>
+  </ConfigProvider>
+);
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockEndpoints();
+});
+
+describe('AppointmentsPage', () => {
+  describe('Разметка', () => {
+    it('показывает заголовок страницы', async () => {
+      renderPage();
+      await waitFor(() => {
+        expect(screen.getByText('Встречи')).toBeInTheDocument();
+      });
     });
 
-    it('should render statistics cards', () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      expect(screen.getByText('Всего встреч')).toBeInTheDocument();
-      expect(screen.getByText('Ожидают подтверждения')).toBeInTheDocument();
-      expect(screen.getByText('Подтверждены')).toBeInTheDocument();
-      expect(screen.getByText('Отменены')).toBeInTheDocument();
-      expect(screen.getByText('Перенесены')).toBeInTheDocument();
+    it('показывает карточки ключевой статистики', async () => {
+      renderPage();
+      await waitFor(() => {
+        expect(screen.getByText('Записано')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Подтверждено')).toBeInTheDocument();
     });
 
-    it('should render filters section', () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      expect(screen.getByText('Период')).toBeInTheDocument();
-      expect(screen.getByText('Статус')).toBeInTheDocument();
-      expect(screen.getByText('Офис')).toBeInTheDocument();
+    it('показывает фильтры', async () => {
+      renderPage();
+      await waitFor(() => {
+        expect(screen.getByText('Период')).toBeInTheDocument();
+      });
+      // «Статус» встречается и как подпись фильтра, и как заголовок колонки
+      expect(screen.getAllByText('Статус').length).toBeGreaterThan(0);
       expect(screen.getByText('Поиск')).toBeInTheDocument();
       expect(screen.getByText('Сбросить')).toBeInTheDocument();
     });
 
-    it('should render appointments table', () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      expect(screen.getByText('Дата')).toBeInTheDocument();
-      expect(screen.getByText('Время')).toBeInTheDocument();
-      expect(screen.getByText('Офис')).toBeInTheDocument();
-      expect(screen.getByText('Статус')).toBeInTheDocument();
-      expect(screen.getByText('Действия')).toBeInTheDocument();
-    });
-  });
-
-  describe('Data Loading', () => {
-    it('should load appointments on mount', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
+    it('рендерит таблицу встреч', async () => {
+      renderPage();
       await waitFor(() => {
-        expect(mockApi.get).toHaveBeenCalledWith('/admin/appointments', {
-          params: {
-            start_date: expect.any(String),
-            end_date: expect.any(String),
-            status: '',
-            office_id: '',
-            search: ''
-          }
-        });
-      });
-    });
-
-    it('should load offices on mount', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      await waitFor(() => {
-        expect(mockApi.get).toHaveBeenCalledWith('/admin/offices');
-      });
-    });
-
-    it('should display loading state while fetching data', () => {
-      mockApi.get.mockImplementation(() => new Promise(() => {})); // Never resolves
-      
-      renderWithProviders(<AppointmentsPage />);
-      
-      // Table should show loading state
-      expect(screen.getByRole('table')).toBeInTheDocument();
-    });
-  });
-
-  describe('Filtering', () => {
-    it('should filter by date range', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      const dateRangePicker = screen.getByText('Период').parentNode.querySelector('.ant-picker');
-      expect(dateRangePicker).toBeInTheDocument();
-    });
-
-    it('should filter by status', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      const statusSelect = screen.getByText('Статус', { selector: 'div[style*="font-size: 12px"]' }).parentNode.querySelector('.ant-select');
-      expect(statusSelect).toBeInTheDocument();
-    });
-
-    it('should filter by office', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      const officeSelect = screen.getByText('Офис', { selector: 'div[style*="font-size: 12px"]' }).parentNode.querySelector('.ant-select');
-      expect(officeSelect).toBeInTheDocument();
-    });
-
-    it('should filter by search text', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      const searchInput = screen.getByPlaceholderText('Поиск по лиду, сделке...');
-      expect(searchInput).toBeInTheDocument();
-    });
-
-    it('should reset filters when reset button is clicked', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      const resetButton = screen.getByText('Сбросить');
-      fireEvent.click(resetButton);
-      
-      // Should reload with default filters
-      await waitFor(() => {
-        expect(mockApi.get).toHaveBeenCalledWith('/admin/appointments', {
-          params: {
-            start_date: expect.any(String),
-            end_date: expect.any(String),
-            status: '',
-            office_id: '',
-            search: ''
-          }
-        });
+        expect(screen.getByRole('table')).toBeInTheDocument();
       });
     });
   });
 
-  describe('Appointments Table', () => {
-    it('should display appointment data correctly', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
+  describe('Загрузка данных', () => {
+    it('запрашивает встречи, статистику и офисы при монтировании', async () => {
+      renderPage();
+      await waitFor(() => {
+        const urls = mockApi.get.mock.calls.map((c) => c[0]);
+        expect(urls).toContain('/admin/appointments');
+        expect(urls).toContain('/admin/appointments/stats/overview');
+        expect(urls).toContain('/admin/offices');
+      });
+    });
+
+    it('передаёт границы периода в запрос', async () => {
+      renderPage();
+      await waitFor(() => {
+        const call = mockApi.get.mock.calls.find((c) => c[0] === '/admin/appointments');
+        expect(call).toBeDefined();
+        expect(call[1].params).toHaveProperty('start_date');
+        expect(call[1].params).toHaveProperty('end_date');
+      });
+    });
+
+    it('отображает данные встреч в таблице', async () => {
+      renderPage();
       await waitFor(() => {
         expect(screen.getByText('15.01.2024')).toBeInTheDocument();
-        expect(screen.getByText('понедельник')).toBeInTheDocument();
-        expect(screen.getByText('10:00')).toBeInTheDocument();
-        expect(screen.getByText('Минск')).toBeInTheDocument();
-        expect(screen.getByText('ул. Тестовая, 1')).toBeInTheDocument();
       });
+      expect(screen.getByText('16.01.2024')).toBeInTheDocument();
+      expect(screen.getByText('10:00-10:30')).toBeInTheDocument();
+      expect(screen.getAllByText('Минск').length).toBeGreaterThan(0);
     });
 
-    it('should display correct status tags', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
+    it('показывает подписи статусов', async () => {
+      renderPage();
       await waitFor(() => {
         expect(screen.getByText('Ожидает подтверждения')).toBeInTheDocument();
-        expect(screen.getByText('Подтверждена')).toBeInTheDocument();
       });
-    });
-
-    it('should show action buttons for pending appointments', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      await waitFor(() => {
-        expect(screen.getByText('Подтвердить')).toBeInTheDocument();
-        expect(screen.getByText('Отменить')).toBeInTheDocument();
-      });
-    });
-
-    it('should show view button for all appointments', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      await waitFor(() => {
-        const viewButtons = screen.getAllByTitle('Просмотр');
-        expect(viewButtons).toHaveLength(2);
-      });
+      expect(screen.getByText('Подтверждена')).toBeInTheDocument();
     });
   });
 
-  describe('Appointment Actions', () => {
-    it('should confirm appointment when confirm button is clicked', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      await waitFor(() => {
-        const confirmButton = screen.getByText('Подтвердить');
-        fireEvent.click(confirmButton);
-      });
-      
-      await waitFor(() => {
-        expect(mockApi.put).toHaveBeenCalledWith('/admin/appointments/appointment-1', {
-          status: 'confirmed'
-        });
-      });
-    });
+  describe('Пагинация', () => {
+    // Компонент повторно фильтровал уже отфильтрованную сервером страницу
+    // по датам, статусу, офису и поиску, но total брал серверный. Над таблицей
+    // оставалось «1–20 из 340», а строк было видно три.
+    it('показывает все строки, пришедшие с сервера, и серверный total', async () => {
+      const outOfRange = {
+        ...APPOINTMENTS[0],
+        id: 'appointment-3',
+        date: '2030-12-31',
+        bitrix_lead_id: 99999,
+      };
+      mockEndpoints({ appointments: [...APPOINTMENTS, outOfRange], total: 340 });
 
-    it('should cancel appointment when cancel button is clicked', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
-      await waitFor(() => {
-        const cancelButton = screen.getByText('Отменить');
-        fireEvent.click(cancelButton);
-      });
-      
-      await waitFor(() => {
-        expect(mockApi.put).toHaveBeenCalledWith('/admin/appointments/appointment-1', {
-          status: 'cancelled'
-        });
-      });
-    });
+      renderPage();
 
-    it('should show appointment details when view button is clicked', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
       await waitFor(() => {
-        const viewButton = screen.getAllByTitle('Просмотр')[0];
-        fireEvent.click(viewButton);
+        expect(screen.getByText('31.12.2030')).toBeInTheDocument();
       });
-      
-      // Modal should appear with appointment details
-      await waitFor(() => {
-        expect(screen.getByText('Детали встречи')).toBeInTheDocument();
-      });
+
+      const table = screen.getByRole('table');
+      const bodyRows = within(table).getAllByRole('row').slice(1);
+      expect(bodyRows).toHaveLength(3);
+      expect(screen.getByText(/из 340 встреч/)).toBeInTheDocument();
     });
   });
 
-  describe('Statistics', () => {
-    it('should calculate and display correct statistics', async () => {
-      renderWithProviders(<AppointmentsPage />);
-      
+  describe('Обработка ошибок', () => {
+    it('не падает, когда запрос встреч завершился ошибкой', async () => {
+      mockApi.get.mockRejectedValue(new Error('Network error'));
+
+      renderPage();
+
       await waitFor(() => {
-        // Total appointments
-        expect(screen.getByText('2')).toBeInTheDocument();
-        
-        // Pending appointments
-        expect(screen.getByText('1')).toBeInTheDocument();
-        
-        // Confirmed appointments
-        expect(screen.getByText('1')).toBeInTheDocument();
-        
-        // Cancelled appointments
-        expect(screen.getByText('0')).toBeInTheDocument();
-        
-        // Rescheduled appointments
-        expect(screen.getByText('0')).toBeInTheDocument();
+        expect(screen.getByText('Встречи')).toBeInTheDocument();
       });
     });
-  });
 
-  describe('Error Handling', () => {
-    it('should handle API errors gracefully', async () => {
-      mockApi.get.mockRejectedValue(new Error('API Error'));
-      
-      renderWithProviders(<AppointmentsPage />);
-      
-      // Should not crash and show empty state
-      expect(screen.getByText('Управление встречами')).toBeInTheDocument();
-    });
+    it('не падает на пустом ответе', async () => {
+      mockEndpoints({ appointments: [], total: 0 });
 
-    it('should handle appointment update errors', async () => {
-      mockApi.put.mockRejectedValue(new Error('Update failed'));
-      
-      renderWithProviders(<AppointmentsPage />);
-      
+      renderPage();
+
       await waitFor(() => {
-        const confirmButton = screen.getByText('Подтвердить');
-        fireEvent.click(confirmButton);
+        expect(screen.getByRole('table')).toBeInTheDocument();
       });
-      
-      // Should handle error gracefully
-      expect(screen.getByText('Управление встречами')).toBeInTheDocument();
-    });
-  });
-
-  describe('Responsive Design', () => {
-    it('should render correctly on different screen sizes', () => {
-      // Test with different viewport sizes
-      const { rerender } = renderWithProviders(<AppointmentsPage />);
-      
-      // Should render without errors
-      expect(screen.getByText('Управление встречами')).toBeInTheDocument();
-      
-      // Test with smaller viewport
-      Object.defineProperty(window, 'innerWidth', {
-        writable: true,
-        configurable: true,
-        value: 768,
-      });
-      
-      window.dispatchEvent(new Event('resize'));
-      
-      rerender(
-        <ConfigProvider>
-          <BrowserRouter>
-            <AppointmentsPage />
-          </BrowserRouter>
-        </ConfigProvider>
-      );
-      
-      expect(screen.getByText('Управление встречами')).toBeInTheDocument();
     });
   });
 });

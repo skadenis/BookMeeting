@@ -128,38 +128,11 @@ export default function AppointmentsPage() {
 
       const response = await api.get('/admin/appointments', { params })
 
-      // Клиентская страховка: убираем записи вне выбранного периода
-      let items = response.data.data || []
-      if (filters.dateRange && filters.dateRange.length === 2) {
-        const start = filters.dateRange[0].startOf('day')
-        const end = filters.dateRange[1].endOf('day')
-        items = items.filter(a => {
-          const d = dayjs(a.date, 'YYYY-MM-DD')
-          return (d.isAfter(start) || d.isSame(start, 'day')) && (d.isBefore(end) || d.isSame(end, 'day'))
-        })
-      }
-
-      if (filters.status) {
-        items = items.filter(a => a.status === filters.status)
-      }
-
-      if (filters.office) {
-        items = items.filter(a => String(a.office_id || a.Office?.id) === String(filters.office))
-      }
-
-      if (filters.search && String(filters.search).trim().length) {
-        const q = String(filters.search).trim().toLowerCase()
-        items = items.filter(a => {
-          const parts = [
-            a.bitrix_lead_id && String(a.bitrix_lead_id),
-            a.timeSlot && String(a.timeSlot),
-            a.date && dayjs(a.date).format('DD.MM.YYYY'),
-            a.Office?.city,
-            a.Office?.address
-          ].filter(Boolean).map(s => String(s).toLowerCase())
-          return parts.some(p => p.includes(q))
-        })
-      }
+      // Здесь была повторная фильтрация уже отфильтрованной сервером страницы
+      // по датам, статусу, офису и поиску. Сервер отдаёт 20 записей и общий
+      // total, поэтому после отсева над таблицей оставалось «1–20 из 340»,
+      // а строк было видно три. Фильтры целиком на стороне сервера.
+      const items = response.data.data || []
 
       setAppointments(items)
       setPagination(prev => ({
@@ -192,7 +165,8 @@ export default function AppointmentsPage() {
       loadAppointments()
       loadStatistics()
     } catch (error) {
-      message.error('Не удалось обновить статус встречи')
+      // Сервер объясняет причину отказа — показываем её, а не общий текст
+      message.error(error?.response?.data?.message || 'Не удалось обновить статус встречи')
     }
   }
 
@@ -259,7 +233,9 @@ export default function AppointmentsPage() {
     setPagination(prev => ({ ...prev, current: 1 }))
   }
 
-  const handleTableChange = (paginationInfo, filters, sorter) => {
+  // Второй параметр antd назывался filters и затенял одноимённое состояние
+  // компонента: любое обращение к filters внутри взяло бы фильтры таблицы.
+  const handleTableChange = (paginationInfo, tableFilters, sorter) => {
     setPagination(prev => ({
       ...prev,
       current: paginationInfo.current,

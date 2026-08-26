@@ -1,6 +1,15 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
+
+// Меню вызывает navigate() из react-router. Прежний тест проверял
+// window.location.pathname, который в этом файле подменён статическим объектом
+// без такого поля, — проверка не могла сработать ни при каком поведении.
+const mockNavigate = jest.fn();
+jest.mock('react-router-dom', () => ({
+  ...jest.requireActual('react-router-dom'),
+  useNavigate: () => mockNavigate,
+}));
 import Layout from '../../modules/admin/Layout';
 
 // Mock localStorage
@@ -10,7 +19,11 @@ const localStorageMock = {
   removeItem: jest.fn(),
   clear: jest.fn(),
 };
-global.localStorage = localStorageMock;
+Object.defineProperty(window, 'localStorage', {
+  value: localStorageMock,
+  writable: true,
+  configurable: true,
+});
 
 // Mock fetch
 global.fetch = jest.fn();
@@ -44,9 +57,24 @@ const renderWithRouter = (component) => {
   );
 };
 
+// Компонент на монтировании проверяет токен запросом GET /auth/me и стирает
+// его при неуспехе. Без настроенного fetch валидация падала всегда, поэтому
+// любой тест «авторизованного» состояния видел форму входа.
+const authenticate = (token = 'valid-token') => {
+  localStorageMock.getItem.mockReturnValue(token);
+  fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ user: { id: 'admin-1', role: 'admin' } }) });
+};
+
+// Ждём, пока пройдёт валидация и отрисуется админский интерфейс
+const waitForAdminUi = () => waitFor(() => {
+  expect(screen.getByText('Админка')).toBeInTheDocument();
+});
+
 describe('Admin Layout', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockNavigate.mockClear();
+    mockLocation.search = '';
     localStorageMock.getItem.mockReturnValue(null);
     fetch.mockClear();
     mockLocation.replace.mockClear();
@@ -64,16 +92,17 @@ describe('Admin Layout', () => {
       expect(screen.getByText('Войти')).toBeInTheDocument();
     });
 
-    it('should show admin interface when authenticated', () => {
-      localStorageMock.getItem.mockReturnValue('valid-token');
+    it('should show admin interface when authenticated', async () => {
+      authenticate();
       fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ id: 'admin-123', email: 'admin@test.com' })
       });
       
       renderWithRouter(<Layout />);
+
       
-      expect(screen.getByText('Админка')).toBeInTheDocument();
+      await waitForAdminUi();
       expect(screen.getByText('Управление расписанием')).toBeInTheDocument();
       expect(screen.getByText('Выйти')).toBeInTheDocument();
     });
@@ -124,8 +153,9 @@ describe('Admin Layout', () => {
       await waitFor(() => {
         expect(localStorageMock.setItem).toHaveBeenCalledWith('admin.token', 'new-token');
         expect(mockLocation.replace).toHaveBeenCalledWith('/admin');
-        expect(mockLocation.reload).toHaveBeenCalled();
       });
+      // reload() вызывался только в удалённой ветке приёма токена из URL
+      expect(mockLocation.reload).not.toHaveBeenCalled();
     });
 
     it('should handle login failure', async () => {
@@ -150,7 +180,7 @@ describe('Admin Layout', () => {
 
   describe('Navigation Menu', () => {
     beforeEach(() => {
-      localStorageMock.getItem.mockReturnValue('valid-token');
+      authenticate();
       fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ id: 'admin-123', email: 'admin@test.com' })
@@ -185,84 +215,43 @@ describe('Admin Layout', () => {
     });
 
     it('should navigate to correct routes when menu items are clicked', async () => {
-      const { container } = renderWithRouter(<Layout />);
-      
+      authenticate();
+      renderWithRouter(<Layout />);
+      await waitForAdminUi();
+
+      fireEvent.click(screen.getByText('Офисы'));
+
       await waitFor(() => {
-        const officesItem = screen.getByText('Офисы');
-        fireEvent.click(officesItem);
-        
-        // Should navigate to offices page
-        expect(window.location.pathname).toBe('/admin/offices');
+        expect(mockNavigate).toHaveBeenCalledWith('/admin/offices');
       });
     });
   });
 
+  // Блок закреплял приём админского JWT из ?admin_token= / ?adminToken= / ?token=.
+  // Долгоживущий токен попадал в access-логи nginx, в историю браузера и в
+  // заголовок Referer при переходе на внешний сайт. Приём убран и на клиенте,
+  // и на сервере, поэтому тесты проверяют обратное.
   describe('URL Token Handling', () => {
-    it('should extract token from URL query parameters', () => {
-      // Mock URL with token
-      Object.defineProperty(window, 'location', {
-        value: {
-          ...mockLocation,
-          search: '?admin_token=url-token&other=param'
-        },
-        writable: true,
-      });
-      
-      renderWithRouter(<Layout />);
-      
-      expect(localStorageMock.setItem).toHaveBeenCalledWith('admin.token', 'url-token');
-    });
+    const cases = ['admin_token', 'adminToken', 'token'];
 
-    it('should extract token from adminToken parameter', () => {
-      Object.defineProperty(window, 'location', {
-        value: {
-          ...mockLocation,
-          search: '?adminToken=alt-token'
-        },
-        writable: true,
-      });
-      
-      renderWithRouter(<Layout />);
-      
-      expect(localStorageMock.setItem).toHaveBeenCalledWith('admin.token', 'alt-token');
-    });
+    it.each(cases)('does not accept an admin token from ?%s', async (param) => {
+      mockLocation.search = `?${param}=leaked-jwt`;
+      mockLocation.href = `http://localhost:3000/admin?${param}=leaked-jwt`;
+      localStorageMock.getItem.mockReturnValue(null);
 
-    it('should extract token from token parameter', () => {
-      Object.defineProperty(window, 'location', {
-        value: {
-          ...mockLocation,
-          search: '?token=simple-token'
-        },
-        writable: true,
-      });
-      
       renderWithRouter(<Layout />);
-      
-      expect(localStorageMock.setItem).toHaveBeenCalledWith('admin.token', 'simple-token');
-    });
 
-    it('should clean URL after extracting token', () => {
-      Object.defineProperty(window, 'location', {
-        value: {
-          ...mockLocation,
-          search: '?admin_token=url-token&other=param'
-        },
-        writable: true,
+      await waitFor(() => {
+        expect(screen.getByText('Вход в админку')).toBeInTheDocument();
       });
-      
-      renderWithRouter(<Layout />);
-      
-      expect(mockHistory.replaceState).toHaveBeenCalledWith(
-        {},
-        '',
-        'http://localhost:3000/admin'
-      );
+      expect(localStorageMock.setItem).not.toHaveBeenCalledWith('admin.token', 'leaked-jwt');
+      expect(mockLocation.reload).not.toHaveBeenCalled();
     });
   });
 
   describe('Logout', () => {
     beforeEach(() => {
-      localStorageMock.getItem.mockReturnValue('valid-token');
+      authenticate();
       fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ id: 'admin-123', email: 'admin@test.com' })
@@ -284,7 +273,7 @@ describe('Admin Layout', () => {
 
   describe('Responsive Design', () => {
     beforeEach(() => {
-      localStorageMock.getItem.mockReturnValue('valid-token');
+      authenticate();
       fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ id: 'admin-123', email: 'admin@test.com' })
@@ -299,15 +288,17 @@ describe('Admin Layout', () => {
         value: 768,
       });
       
+      authenticate();
       renderWithRouter(<Layout />);
-      
-      await waitFor(() => {
-        expect(screen.getByText('Админка')).toBeInTheDocument();
-      });
-      
-      // Sidebar should be collapsible
+      await waitForAdminUi();
+
+      // breakpoint и collapsedWidth — это React-пропсы antd Sider, в DOM они
+      // не пробрасываются: прежняя проверка getAttribute('breakpoint')
+      // не могла пройти ни при каком поведении компонента.
       const sidebar = document.querySelector('.ant-layout-sider');
-      expect(sidebar).toHaveAttribute('breakpoint', 'lg');
+      expect(sidebar).toBeInTheDocument();
+      expect(sidebar).toHaveClass('ant-layout-sider');
+      expect(sidebar.querySelector('.ant-menu')).toBeInTheDocument();
     });
 
     it('should render correctly on different screen sizes', async () => {
@@ -331,14 +322,14 @@ describe('Admin Layout', () => {
           <Layout />
         </BrowserRouter>
       );
-      
-      expect(screen.getByText('Админка')).toBeInTheDocument();
+
+      await waitForAdminUi();
     });
   });
 
   describe('Error Handling', () => {
     it('should handle fetch errors gracefully', async () => {
-      localStorageMock.getItem.mockReturnValue('valid-token');
+      authenticate();
       fetch.mockRejectedValueOnce(new Error('Network error'));
       
       renderWithRouter(<Layout />);

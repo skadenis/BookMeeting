@@ -514,17 +514,25 @@ export default function OfficeDetail() {
           <Input type="number" min={0} style={{ width:160 }} placeholder="например, 2 (0 — перерыв)" value={editCapacity} onChange={(e)=>setEditCapacity(Math.max(0, Number(e.target.value)||0))} />
           <Button type="primary" onClick={async()=>{
             try {
-              // Prefer precise id-based updates if available
-              const hasIds = selectedSlots.every(s => s.slotId)
-              if (hasIds) {
-                await Promise.all(selectedSlots.map(s => api.get('/admin/slots/all', { params: { office_id: id, date: s.date, update_slot_id: s.slotId, new_capacity: editCapacity } })))
-              } else {
-                await Promise.all(selectedSlots.map(s => api.get('/admin/slots/all', { params: { office_id: id, date: s.date, update_slot_id: s.slotId, new_capacity: editCapacity } })))
+              // Раньше вместимость правилась через GET /admin/slots/all с
+              // параметрами update_slot_id и new_capacity — мутирующий GET
+              // без валидации (?new_capacity=abc записывал NaN). Обе ветки
+              // if/else были при этом идентичны. Теперь один POST-эндпоинт.
+              const withIds = selectedSlots.filter(s => s.slotId)
+              if (withIds.length === 0) {
+                message.error('Не удалось определить слоты для изменения')
+                return
               }
+              await Promise.all(withIds.map(s => api.post('/admin/slots/update-capacity', {
+                slot_id: s.slotId,
+                capacity: editCapacity,
+              })))
               message.success('Изменения применены к выбранным слотам')
               setSelectedSlots([])
               await loadPreview()
-            } catch (e) { message.error('Не удалось применить массовое изменение') }
+            } catch (e) {
+              message.error(e?.response?.data?.message || 'Не удалось применить массовое изменение')
+            }
           }}>Применить</Button>
           <Button onClick={()=>setSelectedSlots([])}>Сбросить</Button>
         </div>
@@ -560,17 +568,17 @@ export default function OfficeDetail() {
               <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                 <Button onClick={()=>setEditSlot(null)}>Отмена</Button>
                 <Button type="primary" onClick={async()=>{
-                  console.log('🔴 SAVE CAPACITY BUTTON CLICKED:', { editSlot, editCapacity, id })
                   try {
-                    console.log('📡 Sending capacity update:', `/slots/all?office_id=${id}&date=${editSlot.date}&update_slot_id=${editSlot.id}&new_capacity=${editCapacity}`)
-                    await api.get(`/admin/slots/all?office_id=${id}&date=${editSlot.date}&update_slot_id=${editSlot.id}&new_capacity=${editCapacity}`)
-                    console.log('✅ Capacity update successful')
+                    await api.post('/admin/slots/update-capacity', {
+                      slot_id: editSlot.id,
+                      capacity: editCapacity,
+                    })
                     message.success('Вместимость обновлена')
                     setEditSlot(null)
                     await loadPreview()
                   } catch (err) {
-                    console.error('❌ Capacity update failed:', err)
-                    message.error('Ошибка обновления вместимости')
+                    console.error('Capacity update failed:', err)
+                    message.error(err?.response?.data?.message || 'Ошибка обновления вместимости')
                   }
                 }}>Сохранить</Button>
               </div>

@@ -4,6 +4,10 @@ if (String(process.env.DISABLE_REDIS) === 'true') {
 	const store = new Map();
 	const redis = {
 		async connect() { /* no-op */ },
+		// ping() отсутствовал, а /api/health его вызывает: при DISABLE_REDIS=true
+		// health-check падал с TypeError и отдавал 503 «Service unavailable».
+		async ping() { return 'PONG'; },
+		async quit() { store.clear(); return 'OK'; },
 		async get(key) { return store.has(key) ? store.get(key) : null; },
 		async set(key, value, mode, ttl) {
 			store.set(key, value);

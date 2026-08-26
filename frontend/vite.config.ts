@@ -8,7 +8,9 @@ export default defineConfig({
 	server: {
 		host: true,
 		port: 5173,
-		allowedHosts: ['vic-chain-grown-restrict.trycloudflare.com', 'localhost'],
+		// Здесь был зашит одноразовый туннель trycloudflare.com, оставшийся от отладки.
+		// Дополнительные хосты задаются через VITE_ALLOWED_HOSTS (через запятую).
+		allowedHosts: ['localhost', ...String(process.env.VITE_ALLOWED_HOSTS || '').split(',').map(h => h.trim()).filter(Boolean)],
 		proxy: {
 			'/api': {
 				target: apiProxyTarget,
