@@ -21,10 +21,8 @@ services:
       BITRIX_REST_URL: ${BITRIX_REST_URL:?BITRIX_REST_URL обязателен}
       ENABLE_LEADS_SYNC: ${ENABLE_LEADS_SYNC:-true}
       ENABLE_CRON: ${ENABLE_CRON:-true}
-      # Домен расходился с README и certbot (centrcred.by): перечислены оба,
-      # уточните реальный и уберите лишний
-      CORS_ORIGIN: ${CORS_ORIGIN:-https://book-meeting.centrcred.by,https://book-meeting.centr-cred.by}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@centrcred.by}
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://book-meeting.centr-cred.by}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@centr-cred.by}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD обязателен}
       ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?ADMIN_JWT_SECRET обязателен}

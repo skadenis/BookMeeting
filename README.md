@@ -91,21 +91,21 @@ docker-compose logs -f frontend
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
 ```
-3) Конфиг Nginx (хост-машина) для `book-meeting.centrcred.by`:
+3) Конфиг Nginx (хост-машина) для `book-meeting.centr-cred.by`:
 ```nginx
 server {
     listen 80;
-    server_name book-meeting.centrcred.by;
+    server_name book-meeting.centr-cred.by;
     location /.well-known/acme-challenge/ { root /var/www/certbot; }
     location / { return 301 https://$host$request_uri; }
 }
 
 server {
     listen 443 ssl http2;
-    server_name book-meeting.centrcred.by;
+    server_name book-meeting.centr-cred.by;
 
-    ssl_certificate     /etc/letsencrypt/live/book-meeting.centrcred.by/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/book-meeting.centrcred.by/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/book-meeting.centr-cred.by/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/book-meeting.centr-cred.by/privkey.pem;
 
     # Frontend (статика)
     location / {
@@ -130,8 +130,8 @@ server {
 ### SSL (Let’s Encrypt + автообновление)
 ```bash
 sudo mkdir -p /var/www/certbot
-sudo certbot certonly --webroot -w /var/www/certbot -d book-meeting.centrcred.by \
-  --email admin@centrcred.by --agree-tos --non-interactive
+sudo certbot certonly --webroot -w /var/www/certbot -d book-meeting.centr-cred.by \
+  --email admin@centr-cred.by --agree-tos --non-interactive
 ```
 Cron для автообновления и перезагрузки Nginx:
 ```bash
