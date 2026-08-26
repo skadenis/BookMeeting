@@ -57,15 +57,16 @@ if [ "$ADMIN_JWT_SECRET" = "change-me-in-production" ]; then
     fail "ADMIN_JWT_SECRET оставлен значением из репозитория. Прод не тронут."
 fi
 
+# Пара виджета обязана совпадать с адресом плейсмента Bitrix, поэтому её
+# нельзя сменить односторонне — деплой из-за неё не останавливаем, но
+# предупреждаем заметно.
 OLD_IFS="$IFS"
 IFS=','
 for PAIR in $PUBLIC_TOKEN_PAIRS; do
     case "$PAIR" in
         widget1:secretA|widget2:secretB)
-            IFS="$OLD_IFS"
-            echo "PUBLIC_TOKEN_PAIRS содержит пару '$PAIR' из открытого репозитория." >&2
-            echo "Заведите новую пару здесь и в адресе плейсмента Bitrix." >&2
-            fail "Прод не тронут."
+            echo "ВНИМАНИЕ: PUBLIC_TOKEN_PAIRS содержит пару '$PAIR' из открытого репозитория." >&2
+            echo "          Заведите новую здесь и в адресе плейсмента Bitrix." >&2
             ;;
     esac
 done
