@@ -30,3 +30,6 @@ yarn-error.log*
 .cache/
 # graphify
 graphify-out/
+
+# черновики дизайна
+.design/
