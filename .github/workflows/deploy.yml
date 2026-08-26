@@ -141,24 +141,79 @@ jobs:
             fi
             
             echo "🐳 Checking Docker..."
-            docker --version || echo "❌ Docker not available"
-            docker compose version || echo "❌ Docker Compose not available"
-            
-            echo "🔧 Building and starting services..."
-            # Stop existing services first
-            docker compose -f docker-compose.prod.yml down || echo "⚠️ No existing services to stop"
-            
-            # Build and start
-            docker compose -f docker-compose.prod.yml up -d --build || {
-              echo "❌ Docker Compose failed. Checking logs..."
-              docker compose -f docker-compose.prod.yml logs || true
+            docker --version
+            docker compose version
+
+            # ── Предполётная проверка ───────────────────────────────────────
+            # Раньше деплой делал `docker compose down` ПЕРВЫМ действием, и
+            # только потом пытался собрать и поднять. Любая ошибка на сборке
+            # или на старте оставляла прод лежать: старые контейнеры уже
+            # остановлены, новые не поднялись. Теперь всё, что может упасть,
+            # проверяется и собирается ДО остановки работающего сервиса.
+            echo "🔎 Проверяю переменные окружения..."
+            set -a; . ./.env; set +a
+
+            MISSING=""
+            for VAR in ADMIN_JWT_SECRET ADMIN_PASSWORD PUBLIC_TOKEN_PAIRS BITRIX_REST_URL; do
+              eval "VAL=\${$VAR:-}"
+              if [ -z "$VAL" ]; then MISSING="$MISSING $VAR"; fi
+            done
+            if [ -n "$MISSING" ]; then
+              echo "❌ В .env не заданы:$MISSING"
+              echo "   Прод НЕ тронут, работающая версия продолжает работать."
+              exit 1
+            fi
+
+            # Значения, лежавшие в открытом репозитории, бэкенд отвергнет на старте
+            case "$ADMIN_JWT_SECRET" in change-me-in-production)
+              echo "❌ ADMIN_JWT_SECRET оставлен значением из репозитория. Прод не тронут."; exit 1 ;;
+            esac
+            case ",$PUBLIC_TOKEN_PAIRS," in *,widget1:secretA,*|*,widget2:secretB,*)
+              echo "❌ PUBLIC_TOKEN_PAIRS содержит пару из открытого репозитория."
+              echo "   Заведите новую пару здесь и в адресе плейсмента Bitrix. Прод не тронут."
+              exit 1 ;;
+            esac
+
+            echo "🔎 Проверяю docker-compose..."
+            docker compose -f docker-compose.prod.yml config >/dev/null || {
+              echo "❌ Конфигурация compose невалидна. Прод не тронут."
               exit 1
             }
-            
+
+            # ── Сборка до остановки ─────────────────────────────────────────
+            echo "🔨 Собираю образы (работающий сервис пока не трогаю)..."
+            docker compose -f docker-compose.prod.yml build || {
+              echo "❌ Сборка не удалась. Прод не тронут, старая версия работает."
+              exit 1
+            }
+
+            # ── Переключение ────────────────────────────────────────────────
+            # up -d пересоздаёт только изменившиеся контейнеры; полный down
+            # больше не нужен и лишь удлинял окно недоступности.
+            echo "🚀 Переключаю на новую версию..."
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans || {
+              echo "❌ Не удалось поднять сервисы. Логи:"
+              docker compose -f docker-compose.prod.yml logs --tail=100 || true
+              exit 1
+            }
+
+            # ── Health check ────────────────────────────────────────────────
+            echo "🩺 Жду готовности бэкенда..."
+            OK=0
+            for i in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:4400/api/health >/dev/null 2>&1; then OK=1; break; fi
+              sleep 3
+            done
+            if [ "$OK" != "1" ]; then
+              echo "❌ Бэкенд не отвечает на /api/health за 90 секунд. Логи:"
+              docker compose -f docker-compose.prod.yml logs --tail=120 backend || true
+              exit 1
+            fi
+            echo "✅ Бэкенд отвечает"
+
             echo "🧹 Cleaning up Docker..."
-            docker system prune -f || true
-            
+            docker image prune -f || true
+
             echo "✅ Deployment completed successfully!"
-            echo "📊 Service status:"
             docker compose -f docker-compose.prod.yml ps || true
 
