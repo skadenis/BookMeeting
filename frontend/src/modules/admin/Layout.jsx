@@ -20,23 +20,10 @@ export default function AdminLayout() {
   const [form] = Form.useForm()
   const [token, setToken] = React.useState(typeof window !== 'undefined' ? localStorage.getItem('admin.token') : null)
 
-  // Auto-read admin_token from URL and persist
-  React.useEffect(() => {
-    try {
-      const sp = new URLSearchParams(window.location.search)
-      const qToken = sp.get('admin_token') || sp.get('adminToken') || sp.get('token')
-      if (qToken) {
-        localStorage.setItem('admin.token', qToken)
-        // Clean URL without token
-        const url = new URL(window.location.href)
-        url.searchParams.delete('admin_token')
-        url.searchParams.delete('adminToken')
-        url.searchParams.delete('token')
-        window.history.replaceState({}, '', url.toString())
-        window.location.reload()
-      }
-    } catch {}
-  }, [])
+  // Приём админского токена из адресной строки убран: семидневный JWT попадал
+  // в access-логи nginx, в историю браузера и в заголовок Referer при переходе
+  // на любой внешний сайт. Сервер тоже больше не принимает ?token= —
+  // остаётся только вход по логину и паролю через форму ниже.
 
   const doLogin = async () => {
     try {
@@ -49,7 +36,14 @@ export default function AdminLayout() {
       localStorage.setItem('admin.token', data.token)
       message.success('Вход выполнен')
       window.location.replace('/admin')
-    } catch (e) {}
+    } catch (e) {
+      // Раньше catch был пустым: при неверном пароле форма просто ничего
+      // не делала, и пользователь не понимал, ошибся он или сломан сервер.
+      if (e?.errorFields) return // ошибки валидации antd показывает сам
+      message.error(e?.message === 'Auth failed'
+        ? 'Неверная почта или пароль'
+        : 'Не удалось войти. Проверьте соединение с сервером')
+    }
   }
 
   // Validate token on load; clear invalid token (avoids false-positive access)

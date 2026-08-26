@@ -26,7 +26,13 @@ services:
   backend:
     build: ./backend
     environment:
-      NODE_ENV: production
+      # Офисы работают по Минску; без этого контейнер живёт в UTC
+      TZ: Europe/Minsk
+      BUSINESS_TZ: Europe/Minsk
+      # Здесь одновременно стояли NODE_ENV=production и BITRIX_DEV_MODE=true.
+      # Это включало dev-ветку CORS (origin: true) и dev-ветку bitrixAuth,
+      # которая пропускала любой запрос. Для локального стенда режим — development.
+      NODE_ENV: development
       PORT: 4000
       DB_HOST: postgres
       DB_PORT: 5432
@@ -36,7 +42,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       BITRIX_DEV_MODE: "true"
-      BITRIX_REST_URL: ${BITRIX_REST_URL}
+      BITRIX_REST_URL: ${BITRIX_REST_URL:-}
       ENABLE_LEADS_SYNC: ${ENABLE_LEADS_SYNC:-true}
       ENABLE_CRON: ${ENABLE_CRON:-true}
       CORS_ORIGIN: "http://localhost:8088,http://localhost:5173,http://localhost:5174"

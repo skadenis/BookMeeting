@@ -2,6 +2,9 @@ services:
   backend:
     build: ./backend
     environment:
+      # Офисы работают по Минску; без этого контейнер живёт в UTC
+      TZ: Europe/Minsk
+      BUSINESS_TZ: Europe/Minsk
       NODE_ENV: development
       PORT: 4000
       DB_HOST: postgres

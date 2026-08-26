@@ -1,10 +1,16 @@
 const { Router } = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 
-const { models, Op, Sequelize } = require('../lib/db');
+const { sequelize, models, Op, Sequelize } = require('../lib/db');
 const axios = require('axios');
+const { assertSlotBookable, BookingError } = require('../services/bookingGuard');
+const { recordAppointmentChange, snapshot } = require('../services/appointmentHistory');
+const { restUrl } = require('../lib/bitrix');
 const { invalidateSlotsCache } = require('../services/slotsService');
 const { broadcastSlotsUpdated, broadcastAppointmentUpdated } = require('../lib/ws');
+const { CONFIRM_WINDOW_HOURS, evaluateConfirmWindow } = require('../lib/confirmWindow');
+const { BUSINESS_TZ } = require('../lib/time');
+const { markLocalStatusChange, clearLocalStatusChange } = require('../services/localStatusGuard');
 
 const router = Router();
 
@@ -33,9 +39,14 @@ async function ensureLeadStage(leadId, targetStageId, currentStageId = null) {
 	try {
 		// Если текущая стадия не передана, получаем её из Битрикса
 		if (!currentStageId) {
-			const getLeadUrl = `${process.env.BITRIX_REST_URL}/crm.lead.get`;
-			const getLeadResponse = await axios.post(getLeadUrl, { id: Number(leadId) }, { timeout: BITRIX_READ_TIMEOUT_MS });
-			currentStageId = getLeadResponse.data.result.STATUS_ID;
+			const getLeadResponse = await axios.post(restUrl('crm.lead.get'), { id: Number(leadId) }, { timeout: BITRIX_READ_TIMEOUT_MS });
+			// Раньше здесь было getLeadResponse.data.result.STATUS_ID без защиты:
+			// при ответе Bitrix вида {error: ...} поля result нет и обращение падало.
+			currentStageId = getLeadResponse?.data?.result?.STATUS_ID || null;
+			if (!currentStageId) {
+				console.warn(`ensureLeadStage: Bitrix не вернул стадию лида ${leadId}, пропускаю перевод`);
+				return;
+			}
 		}
 
 		console.log(`🔍 Проверяю стадию лида ${leadId}: текущая = ${currentStageId}, целевая = ${targetStageId}`);
@@ -52,7 +63,7 @@ async function ensureLeadStage(leadId, targetStageId, currentStageId = null) {
 		if (String(currentStageId) === '2' && String(targetStageId) === '2') {
 			console.log(`🔄 Перевожу лид ${leadId} из стадии "2" в "IN_PROCESS" перед назначением встречи`);
 			
-			const updateStageUrl = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
+			const updateStageUrl = restUrl('crm.lead.update');
 			await postToBitrixWithRetry(updateStageUrl, {
 				id: Number(leadId),
 				fields: { STATUS_ID: 'IN_PROCESS' }
@@ -65,7 +76,7 @@ async function ensureLeadStage(leadId, targetStageId, currentStageId = null) {
 		if (String(currentStageId) === '2' && String(targetStageId) === '37') {
 			console.log(`🔄 Перевожу лид ${leadId} из стадии "2" в "IN_PROCESS" перед подтверждением встречи`);
 			
-			const updateStageUrl = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
+			const updateStageUrl = restUrl('crm.lead.update');
 			await postToBitrixWithRetry(updateStageUrl, {
 				id: Number(leadId),
 				fields: { STATUS_ID: 'IN_PROCESS' }
@@ -98,22 +109,41 @@ function resolveUserId(req) {
 	}
 }
 
-function resolveLeadId(req) {
+// Источники лида по убыванию доверия. Виджет исторически передаёт lead_id
+// в теле POST и не передаёт его в PUT вовсе, поэтому тело остаётся допустимым
+// источником — иначе запись и подтверждение перестают работать.
+//
+// Ограничение, о котором стоит помнить: общий секрет виджета один на всех
+// операторов, поэтому криптографически привязать вызывающего к конкретному
+// лиду нечем. Проверка ниже даёт две вещи: (1) несовпадение явного контекста и
+// тела отсекается, (2) в PUT лид сверяется с лидом самой встречи, так что
+// перебор чужих UUID больше не работает.
+function leadFromReferer(req) {
 	try {
 		const referer = req.headers.referer || req.headers.referrer;
-		let refererLeadId = null;
-		if (referer) {
-			const url = new URL(referer);
-			const raw = url.searchParams.get('lead_id')
-				|| url.searchParams.get('LEAD_ID')
-				|| url.searchParams.get('leadId');
-			const n = Number(raw);
-			refererLeadId = Number.isFinite(n) && n > 0 ? n : null;
-		}
-		return Number(req.bitrix?.leadId || req.query.lead_id || refererLeadId || 0) || null;
+		if (!referer) return null;
+		const url = new URL(referer);
+		const raw = url.searchParams.get('lead_id')
+			|| url.searchParams.get('LEAD_ID')
+			|| url.searchParams.get('leadId');
+		const n = Number(raw);
+		return Number.isFinite(n) && n > 0 ? n : null;
 	} catch {
-		return Number(req.bitrix?.leadId || req.query.lead_id || 0) || null;
+		return null;
 	}
+}
+
+// Лид из проверенного/явного контекста запроса (без тела)
+function contextLeadId(req) {
+	const n = Number(req.bitrix?.leadId || req.query?.lead_id || leadFromReferer(req) || 0);
+	return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function resolveLeadId(req) {
+	const fromContext = contextLeadId(req);
+	if (fromContext) return fromContext;
+	const fromBody = Number(req.body?.lead_id);
+	return Number.isFinite(fromBody) && fromBody > 0 ? fromBody : null;
 }
 
 function normalizeDateString(value) {
@@ -185,45 +215,107 @@ router.post('/', [
 		
 		const errors = validationResult(req);
 		if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-		const { office_id, date, time_slot, lead_id, deal_id, contact_id } = req.body;
+		const { office_id, date, time_slot, deal_id, contact_id } = req.body;
+
+		// Лид берётся из проверенного контекста запроса, а не только из тела.
+		// Раньше произвольный lead_id из body позволял отменить чужие активные
+		// встречи (см. блок отмены ниже) и записать клиента на чужой лид.
+		const lead_id = resolveLeadId(req);
+		if (!lead_id) {
+			return res.status(400).json({ error: 'lead_id is required', message: 'Не удалось определить лид для записи' });
+		}
+		const fromContext = contextLeadId(req);
+		const bodyLeadId = Number(req.body.lead_id);
+		if (fromContext && Number.isFinite(bodyLeadId) && bodyLeadId > 0 && bodyLeadId !== fromContext) {
+			return res.status(403).json({ error: 'Lead mismatch', message: 'lead_id не совпадает с контекстом запроса' });
+		}
+
 		const office = await models.Office.findByPk(office_id);
 		if (!office) return res.status(404).json({ error: 'Office not found' });
 
 		const newDate = String(date).slice(0, 10);
 
-		// Один лид — одна активная запись: отменяем все активные (pending/confirmed) и создаем новую
-		if (lead_id) {
-			const activeAppointments = await models.Appointment.findAll({
-				where: {
+		// Проверка слота и создание записи — в одной транзакции с блокировкой
+		// строки слота. Раньше проверок не было вовсе, и даже после их появления
+		// без транзакции два одновременных бронирования прочитали бы одну и ту же
+		// занятость и оба прошли бы.
+		let appointment;
+		const cancelledBefore = [];
+		try {
+			appointment = await sequelize.transaction(async (tx) => {
+				await assertSlotBookable({
+					officeId: office_id,
+					date: newDate,
+					timeSlot: time_slot,
+					transaction: tx,
+				});
+
+				// Один лид — одна активная запись: отменяем прежние активные и создаём новую
+				const activeAppointments = await models.Appointment.findAll({
+					where: {
+						bitrix_lead_id: lead_id,
+						status: ['pending','confirmed'],
+						date: { [Op.gte]: Sequelize.literal("DATE_TRUNC('week', CURRENT_DATE)") },
+					},
+					include: [{ model: models.Office }],
+					order: [['createdAt', 'DESC']],
+					transaction: tx,
+				});
+				for (const appt of activeAppointments) {
+					const before = snapshot(appt);
+					appt.status = 'cancelled';
+					await appt.save({ transaction: tx });
+					await recordAppointmentChange({
+						appointmentId: appt.id,
+						action: 'cancelled_by_rebooking',
+						oldValue: before,
+						newValue: snapshot(appt),
+						req,
+						transaction: tx,
+					});
+					cancelledBefore.push({
+						officeId: appt.office_id || (appt.Office && appt.Office.id),
+						date: appt.date,
+						appt,
+					});
+				}
+
+				const created = await models.Appointment.create({
+					office_id,
 					bitrix_lead_id: lead_id,
-					status: ['pending','confirmed'],
-					date: { [Op.gte]: Sequelize.literal("DATE_TRUNC('week', CURRENT_DATE)") },
-				},
-				include: [{ model: models.Office }],
-				order: [['createdAt', 'DESC']],
+					bitrix_deal_id: deal_id ?? null,
+					bitrix_contact_id: contact_id ?? null,
+					date: newDate,
+					timeSlot: time_slot,
+					status: 'pending',
+					createdBy: (req.bitrix && req.bitrix.userId) || 0,
+				}, { transaction: tx });
+
+				await recordAppointmentChange({
+					appointmentId: created.id,
+					action: 'created',
+					oldValue: null,
+					newValue: snapshot(created),
+					req,
+					transaction: tx,
+				});
+
+				return created;
 			});
-			for (const appt of activeAppointments) {
-				const oldOfficeId = appt.office_id || (appt.Office && appt.Office.id);
-				const oldDate = appt.date;
-				appt.status = 'cancelled';
-				await appt.save();
-				await invalidateSlotsCache(oldOfficeId, oldDate);
-				broadcastSlotsUpdated(oldOfficeId, oldDate);
-				broadcastAppointmentUpdated(appt);
+		} catch (e) {
+			if (e instanceof BookingError) {
+				return res.status(e.status).json({ error: 'Slot not bookable', reason: e.reason, message: e.message });
 			}
+			throw e;
 		}
 
-		const appointment = await models.Appointment.create({
-			office_id,
-			bitrix_lead_id: lead_id ?? null,
-			bitrix_deal_id: deal_id ?? null,
-			bitrix_contact_id: contact_id ?? null,
-			date: newDate,
-			timeSlot: time_slot,
-			status: 'pending',
-			createdBy: (req.bitrix && req.bitrix.userId) || 0,
-		});
-		
+		// Оповещения — только после успешного коммита транзакции
+		for (const c of cancelledBefore) {
+			await invalidateSlotsCache(c.officeId, c.date);
+			broadcastSlotsUpdated(c.officeId, c.date);
+			broadcastAppointmentUpdated(c.appt);
+		}
+
 		const shouldUpdateBitrix = process.env.NODE_ENV === 'production' && appointment.bitrix_lead_id;
 		const resolvedUserId = shouldUpdateBitrix ? resolveUserId(req) : null;
 		const officeBitrixId = office?.bitrixOfficeId ? Number(office.bitrixOfficeId) : null;
@@ -249,7 +341,7 @@ router.post('/', [
 					console.log('  - req.bitrix:', req.bitrix);
 					console.log('  - req.bitrix.userId:', reqUserIdFromBitrix);
 					
-					const getLeadUrl = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.get`;
+					const getLeadUrl = restUrl('crm.lead.get');
 					const leadResponse = await axios.post(getLeadUrl, { id: Number(appointment.bitrix_lead_id) }, { timeout: BITRIX_READ_TIMEOUT_MS });
 					const lead = leadResponse?.data?.result || {};
 					const leadMeetingDateRaw = lead?.UF_CRM_1655460588 ?? null;
@@ -261,7 +353,7 @@ router.post('/', [
 					// (стадию берём из уже загруженного лида, чтобы не делать второй запрос в Битрикс)
 					await ensureLeadStage(appointment.bitrix_lead_id, '2', lead?.STATUS_ID || null);
 
-					const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
+					const url = restUrl('crm.lead.update');
 					const fields = {
 						STATUS_ID: 2, // Статус "Назначена встреча"
 						UF_CRM_1675255265: officeBitrixId || null,
@@ -322,40 +414,95 @@ router.put('/:id', [
 		const appointment = await models.Appointment.findByPk(id, { include: [{ model: models.Office }] });
 		if (!appointment) return res.status(404).json({ error: 'Not found' });
 
+		// Проверка принадлежности встречи. Раньше её не было вообще: любой
+		// вызывающий мог изменить или отменить чужую запись, зная только UUID.
+		const callerLeadId = resolveLeadId(req);
+		if (!callerLeadId || Number(appointment.bitrix_lead_id) !== Number(callerLeadId)) {
+			// 404, а не 403: иначе ответ подтверждает существование чужой записи
+			return res.status(404).json({ error: 'Not found' });
+		}
+
 		const { status, date, time_slot, office_id } = req.body;
+		const before = snapshot(appointment);
 		const oldDate = appointment.date;
 		const oldOfficeId = appointment.office_id || (appointment.Office && appointment.Office.id);
 
-		// Проверка ограничения на подтверждение встречи (только за 24 часа до начала)
+		// Проверка окна подтверждения. Правило и разбор времени вынесены в
+		// lib/confirmWindow + lib/time: раньше время встречи парсилось без указания
+		// зоны, контейнер живёт в UTC, и сервер считал, что до встречи на 3 часа
+		// больше — реальный порог подтверждения был 21 час вместо 24.
 		if (status === 'confirmed') {
-			const appointmentDateTime = new Date(`${appointment.date}T${appointment.timeSlot.split('-')[0]}:00`);
-			const now = new Date();
-			const hoursUntilAppointment = (appointmentDateTime - now) / (1000 * 60 * 60);
-			
-			console.log('🔍 Проверка ограничения на подтверждение встречи:');
-			console.log('  - Дата встречи:', appointment.date);
-			console.log('  - Время начала:', appointment.timeSlot.split('-')[0]);
-			console.log('  - Полная дата/время встречи:', appointmentDateTime.toISOString());
-			console.log('  - Текущее время:', now.toISOString());
-			console.log('  - Часов до встречи:', hoursUntilAppointment.toFixed(2));
-			
-			if (hoursUntilAppointment > 24) {
-				console.log('❌ Отклонено: до встречи более 24 часов');
-				return res.status(400).json({ 
-					error: 'Appointment confirmation too early',
-					message: 'Встречу можно подтвердить только за 24 часа до начала',
-					hoursUntilAppointment: Math.round(hoursUntilAppointment * 100) / 100
+			const verdict = evaluateConfirmWindow(appointment);
+
+			console.log('🔍 Проверка окна подтверждения встречи:');
+			console.log('  - Дата встречи:', appointment.date, appointment.timeSlot);
+			console.log('  - Бизнес-зона:', BUSINESS_TZ);
+			console.log('  - Часов до встречи:', verdict.hoursUntil === null ? 'н/д' : verdict.hoursUntil.toFixed(2));
+			console.log('  - Вердикт:', verdict.reason);
+
+			if (!verdict.allowed) {
+				const messages = {
+					too_early: `Подтвердить встречу можно не раньше чем за ${CONFIRM_WINDOW_HOURS} часа до начала`,
+					finished: 'Встреча уже завершилась — подтвердить её нельзя',
+					invalid_time: 'Не удалось определить время встречи',
+				};
+				return res.status(400).json({
+					error: 'Appointment confirmation not allowed',
+					reason: verdict.reason,
+					message: messages[verdict.reason] || 'Подтвердить встречу сейчас нельзя',
+					hoursUntilAppointment: verdict.hoursUntil === null ? null : Math.round(verdict.hoursUntil * 100) / 100,
+					opensAt: verdict.opensAt ? verdict.opensAt.toISOString() : null,
 				});
 			}
-			
-			console.log('✅ Разрешено: до встречи менее 24 часов');
 		}
 
-		if (status) appointment.status = status;
-		if (date) appointment.date = String(date).slice(0, 10);
-		if (time_slot) appointment.timeSlot = time_slot;
-		if (office_id) appointment.office_id = office_id;
-		await appointment.save();
+		const nextDate = date ? String(date).slice(0, 10) : appointment.date;
+		const nextTimeSlot = time_slot || appointment.timeSlot;
+		const nextOfficeId = office_id || appointment.office_id;
+		const isReschedule = nextDate !== appointment.date
+			|| nextTimeSlot !== appointment.timeSlot
+			|| String(nextOfficeId) !== String(appointment.office_id);
+
+		// Перенос — это тоже занятие места, и он должен проходить ту же проверку,
+		// что и создание. Раньше новые дата/время присваивались напрямую, и
+		// перенос был вторым способом переполнить слот в обход интерфейса.
+		try {
+			await sequelize.transaction(async (tx) => {
+				if (isReschedule && appointment.status !== 'cancelled' && status !== 'cancelled') {
+					await assertSlotBookable({
+						officeId: nextOfficeId,
+						date: nextDate,
+						timeSlot: nextTimeSlot,
+						excludeAppointmentId: appointment.id,
+						transaction: tx,
+					});
+				}
+
+				if (status) appointment.status = status;
+				appointment.date = nextDate;
+				appointment.timeSlot = nextTimeSlot;
+				appointment.office_id = nextOfficeId;
+				await appointment.save({ transaction: tx });
+
+				await recordAppointmentChange({
+					appointmentId: appointment.id,
+					action: isReschedule ? 'rescheduled' : `status_${appointment.status}`,
+					oldValue: before,
+					newValue: snapshot(appointment),
+					req,
+					transaction: tx,
+				});
+			});
+		} catch (e) {
+			if (e instanceof BookingError) {
+				return res.status(e.status).json({ error: 'Slot not bookable', reason: e.reason, message: e.message });
+			}
+			throw e;
+		}
+
+		// Помечаем решение оператора, чтобы пятиминутная синхронизация с Bitrix
+		// не откатила его, пока стадия лида ещё не доехала до CRM.
+		if (status) await markLocalStatusChange(appointment.id, status);
 		const shouldUpdateConfirmed = status === 'confirmed' && appointment.bitrix_lead_id && process.env.NODE_ENV === 'production';
 		const shouldUpdateCancelled = status === 'cancelled' && appointment.bitrix_lead_id && process.env.NODE_ENV === 'production';
 		const resolvedUserId = shouldUpdateConfirmed ? resolveUserId(req) : null;
@@ -398,7 +545,7 @@ router.put('/:id', [
 					const dateParts = String(appointment.date || '').split('-'); // YYYY-MM-DD
 					const dateRu = (dateParts.length === 3) ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : '';
 
-					const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
+					const url = restUrl('crm.lead.update');
 					const requestData = {
 						id: Number(appointment.bitrix_lead_id),
 						fields: {
@@ -420,8 +567,16 @@ router.put('/:id', [
 					
 					const response = await postToBitrixWithRetry(url, requestData);
 					console.log('✅ Ответ от Bitrix при подтверждении встречи:', response.status, response.data);
+					// Стадия доехала — расхождения больше нет, снимаем защиту от синхронизации
+					await clearLocalStatusChange(appointment.id);
 				} catch (e) {
-					console.error('Bitrix lead update failed on confirmation:', e?.response?.data || e?.message || e);
+					// Локально встреча подтверждена, в Bitrix — нет. Расхождение
+					// молча переживало ретраи и всплывало откатом статуса, поэтому
+					// логируем отдельным маркером для алертов.
+					console.error(
+						`⛔ BITRIX_SYNC_FAILED confirm appointment=${appointment.id} lead=${appointment.bitrix_lead_id}:`,
+						e?.response?.data || e?.message || e
+					);
 				}
 			});
 		} else if (status === 'confirmed' && appointment.bitrix_lead_id) {
@@ -432,7 +587,7 @@ router.put('/:id', [
 			setImmediate(async () => {
 				try {
 					// Отмена встречи: переводим лид в IN_PROCESS и очищаем дату/время в кастомных полях
-					const url = `${String(process.env.BITRIX_REST_URL).replace(/\/+$/, '')}/crm.lead.update`;
+					const url = restUrl('crm.lead.update');
 					const requestData = {
 						id: Number(appointment.bitrix_lead_id),
 						fields: {

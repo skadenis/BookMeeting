@@ -1,0 +1,15 @@
+# Без этого файла COPY . . затягивал в образ локальный node_modules с хоста
+# (с бинарниками под другую ОС) поверх того, что установил npm, а также .env,
+# тесты и служебные каталоги.
+node_modules
+npm-debug.log*
+.env
+.env.*
+!.env.example
+coverage
+tests
+.git
+.gitignore
+Dockerfile
+.dockerignore
+*.md

@@ -1,9 +1,10 @@
 const { Router } = require('express');
+const crypto = require('crypto');
 const { models, Op } = require('../lib/db');
 const { adminAuthMiddleware } = require('../middleware/adminAuth');
 const dayjs = require('dayjs');
 const axios = require('axios');
-const { autoSyncStatuses, autoExpireAppointments, dedupeAppointments, backfillLeadOffices } = require('../services/syncTasks');
+const { autoSyncStatuses, autoExpireAppointments, dedupeAppointments } = require('../services/syncTasks');
 
 const router = Router();
 
@@ -18,12 +19,21 @@ const BITRIX_STATUS_MAPPING = {
   // Добавьте другие статусы по мере необходимости
 };
 
-// Middleware: разрешить вызов либо по внутреннему X-Cron-Token, либо от авторизованного админа
+// Middleware: разрешить вызов либо по внутреннему X-Cron-Token, либо от авторизованного админа.
+//
+// Раньше здесь было `process.env.CRON_TOKEN || 'internal-cron-token'`, а сама
+// переменная не задавалась ни в одном compose-файле — значит в проде работала
+// именно константа из исходников. Заголовка X-Cron-Token: internal-cron-token
+// хватало, чтобы вызвать /dedupe, который физически удаляет записи.
+// Теперь при незаданном CRON_TOKEN этот путь просто отключён.
 function allowCronOrAdmin(req, res, next) {
-  const token = req.headers['x-cron-token'];
-  const expected = process.env.CRON_TOKEN || 'internal-cron-token';
-  if (token && token === expected) {
-    return next();
+  const expected = process.env.CRON_TOKEN;
+  if (expected && expected !== 'internal-cron-token') {
+    const token = req.headers['x-cron-token'];
+    if (token && Buffer.byteLength(token) === Buffer.byteLength(expected)
+        && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected))) {
+      return next();
+    }
   }
   // Фоллбек: пускаем авторизованных админов
   return adminAuthMiddleware(req, res, next);
@@ -41,7 +51,7 @@ router.post('/auto-sync-statuses', allowCronOrAdmin, async (req, res, next) => {
 });
 
 // Получить статистику завершенных встреч
-router.get('/completed-stats', async (req, res, next) => {
+router.get('/completed-stats', allowCronOrAdmin, async (req, res, next) => {
   try {
     const { start_date, end_date } = req.query;
 
@@ -63,7 +73,7 @@ router.get('/completed-stats', async (req, res, next) => {
     const stats = await models.Appointment.findAll({
       attributes: [
         'status',
-        [models.Appointment.sequelize.fn('COUNT', '*'), 'count']
+        [models.Appointment.sequelize.fn('COUNT', models.Appointment.sequelize.col('id')), 'count']
       ],
       where: whereClause,
       group: ['status'],
@@ -132,11 +142,7 @@ router.post('/dedupe', allowCronOrAdmin, async (req, res, next) => {
 
 module.exports = router;
 
-// Backfill Bitrix lead offices based on existing appointments
-router.post('/backfill-lead-offices', allowCronOrAdmin, async (req, res, next) => {
-  try {
-    const { start_date, end_date, office_id } = req.body || {};
-    const result = await backfillLeadOffices({ startDate: start_date, endDate: end_date, officeId: office_id });
-    res.json({ data: result });
-  } catch (e) { next(e); }
-});
+// Маршрут /backfill-lead-offices удалён: он импортировал backfillLeadOffices,
+// которой в services/syncTasks.js нет уже давно (там на её месте комментарий
+// «Backfill function removed»). Любой вызов падал с
+// TypeError: backfillLeadOffices is not a function.

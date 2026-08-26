@@ -7,8 +7,9 @@ class CronService {
     this.jobs = new Map();
     // prod-safe default to port 4000; override with API_BASE_URL
     this.apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:4000/api';
-    this.cronToken = process.env.CRON_TOKEN || 'internal-cron-token';
+    this.cronToken = process.env.CRON_TOKEN || null;
     this.adminBearer = process.env.CRON_ADMIN_TOKEN || '';
+    this.started = false;
   }
 
   // Запуск автоматической синхронизации статусов каждые 5 минут
@@ -27,7 +28,6 @@ class CronService {
       timezone: "Europe/Minsk"
     });
 
-    this.jobs.set('auto-sync', job);
     return job;
   }
 
@@ -47,18 +47,26 @@ class CronService {
       timezone: "Europe/Minsk"
     });
 
-    this.jobs.set('auto-expire', job);
     return job;
   }
 
   // Запуск всех cron задач
   startAll() {
+    if (this.started) {
+      console.log('Cron jobs already started, skipping');
+      return;
+    }
     console.log('Starting cron jobs...');
-    
-    const autoSyncJob = this.startAutoSync();
-    const autoExpireJob = this.startAutoExpire();
-    // Синхронизация лидов для админской страницы (данные источника /admin/appointments/sync/bitrix24)
-    const leadsSyncJob = cron.schedule('* * * * *', async () => {
+
+    this.register('auto-sync', this.startAutoSync());
+    this.register('auto-expire', this.startAutoExpire());
+
+    // Синхронизация лидов для админской страницы.
+    //
+    // Раньше стояло '* * * * *' — раз в минуту, и лог при старте честно писал
+    // «(DEBUG MODE)». В проде это 1440 полных обходов crm.lead.list в сутки.
+    // Значение по умолчанию — раз в 5 минут, переопределяется LEADS_SYNC_CRON.
+    const leadsSyncJob = cron.schedule(process.env.LEADS_SYNC_CRON || '*/5 * * * *', async () => {
       try {
         if (process.env.ENABLE_LEADS_SYNC !== 'true') {
           return; // feature is disabled unless explicitly enabled
@@ -76,6 +84,7 @@ class CronService {
         console.error('Admin leads sync cron error:', error.message);
       }
     }, { scheduled: false, timezone: 'Europe/Minsk' });
+
     // Ежедневная чистка дублей в 03:30 по Минску
     const dedupeJob = cron.schedule('30 3 * * *', async () => {
       try {
@@ -86,7 +95,7 @@ class CronService {
         console.error('Dedupe cron error:', error.message);
       }
     }, { scheduled: false, timezone: 'Europe/Minsk' });
-    
+
     // Проверка лидов со статусом "не пришел" каждые 30 минут
     const noShowLeadsJob = cron.schedule('*/30 * * * *', async () => {
       try {
@@ -105,29 +114,40 @@ class CronService {
         console.error('No-show leads check cron error:', error.message);
       }
     }, { scheduled: false, timezone: 'Europe/Minsk' });
-    
-    autoSyncJob.start();
-    autoExpireJob.start();
-    leadsSyncJob.start();
-    dedupeJob.start();
-    noShowLeadsJob.start();
-    
-    console.log('Cron jobs started:');
-    console.log('- Auto sync statuses: every 5 minutes');
-    console.log('- Auto expire appointments: every hour');
-    console.log('- Admin leads sync: every minute (DEBUG MODE)');
-    console.log('- Dedupe appointments: daily at 03:30');
-    console.log('- No-show leads check: every 30 minutes');
+
+    // Эти три задачи раньше не попадали в this.jobs: они создавались
+    // локальными переменными и запускались, но stopAll() итерируется по Map и
+    // останавливал только auto-sync и auto-expire. После SIGTERM старый
+    // контейнер продолжал писать в БД во время запуска нового.
+    this.register('leads-sync', leadsSyncJob);
+    this.register('dedupe', dedupeJob);
+    this.register('no-show-leads', noShowLeadsJob);
+
+    for (const [name, job] of this.jobs) {
+      job.start();
+      console.log(`- Started ${name}`);
+    }
+    this.started = true;
+  }
+
+  register(name, job) {
+    this.jobs.set(name, job);
+    return job;
   }
 
   // Остановка всех cron задач
   stopAll() {
     console.log('Stopping cron jobs...');
     for (const [name, job] of this.jobs) {
-      job.stop();
-      console.log(`- Stopped ${name}`);
+      try {
+        job.stop();
+        console.log(`- Stopped ${name}`);
+      } catch (e) {
+        console.error(`- Failed to stop ${name}:`, e?.message || e);
+      }
     }
     this.jobs.clear();
+    this.started = false;
   }
 
   // Получить статус всех задач

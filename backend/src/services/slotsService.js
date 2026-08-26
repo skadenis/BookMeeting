@@ -1,5 +1,6 @@
 const { models } = require('../lib/db');
 const { redis } = require('../lib/redis');
+const { businessToday, parseBusinessDateTime } = require('../lib/time');
 
 async function getAvailableSlots(officeId, date) {
 	const cacheKey = `slots:${officeId}:${date}`;
@@ -24,24 +25,33 @@ async function getAvailableSlots(officeId, date) {
 			countByStart[ts] = (countByStart[ts] || 0) + 1;
 		}
 	}
-	// Filter out past slots for the current day
+	// Отсечение прошедших слотов текущего дня.
+	//
+	// Раньше «сегодня» вычислялось как
+	//   new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().slice(0,10)
+	// — это полночь по локальной зоне, переведённая в UTC. При TZ=Europe/Minsk
+	// (UTC+3) выражение давало ВЧЕРАШНЮЮ дату, isToday всегда был false, и
+	// фильтр не срабатывал ни разу: через API можно было записаться на уже
+	// прошедшее время сегодняшнего дня.
+	//
+	// Сравнение времени тоже шло через setHours() в зоне процесса. Теперь и
+	// дата, и время берутся из lib/time.js в бизнес-зоне.
 	const now = new Date();
-	const isToday = String(date) === new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().slice(0,10);
+	const isToday = String(date).slice(0, 10) === businessToday(now);
 	const available = slots
 		.map((s) => {
 			const key = `${s.start}-${s.end}`.replace(/\s+/g, '');
 			const used = (countByFull[key] || 0) + (countByStart[s.start] || 0);
-			return { id: s.id, start: s.start, end: s.end, capacity: s.capacity, used, free: Math.max(0, s.capacity - used) };
+			const capacity = Number.isFinite(Number(s.capacity)) ? Number(s.capacity) : 0;
+			return { id: s.id, start: s.start, end: s.end, capacity, used, free: Math.max(0, capacity - used) };
 		})
 		.filter((x) => {
 			if (x.free <= 0) return false;
 			if (!isToday) return true;
-			try {
-				const [hh, mm] = String(x.start).split(':').map(Number);
-				const startDt = new Date();
-				startDt.setHours(Number.isFinite(hh)?hh:0, Number.isFinite(mm)?mm:0, 0, 0);
-				return startDt.getTime() > now.getTime();
-			} catch { return true }
+			const startsAt = parseBusinessDateTime(date, x.start);
+			// Не смогли разобрать время — не прячем слот молча
+			if (!startsAt) return true;
+			return startsAt.getTime() > now.getTime();
 		});
 
 
@@ -49,9 +59,20 @@ async function getAvailableSlots(officeId, date) {
 	return available;
 }
 
-async function invalidateSlotsCache(officeId, date) {
-	const cacheKey = `slots:${officeId}:${date}`;
-	await redis.del(cacheKey);
+// Ключи кеша сетки слотов на офис+дату. Их два: доступные слоты для виджета
+// и полная сетка с занятостью для админки.
+function slotsCacheKeys(officeId, date) {
+	const d = String(date).slice(0, 10);
+	return [`slots:${officeId}:${d}`, `slots:all:${officeId}:${d}`];
 }
 
-module.exports = { getAvailableSlots, invalidateSlotsCache };
+async function invalidateSlotsCache(officeId, date) {
+	if (!officeId || !date) return;
+	for (const key of slotsCacheKeys(officeId, date)) {
+		try { await redis.del(key); } catch (e) {
+			console.error('slotsService: не удалось сбросить кеш', key, e?.message || e);
+		}
+	}
+}
+
+module.exports = { getAvailableSlots, invalidateSlotsCache, slotsCacheKeys };

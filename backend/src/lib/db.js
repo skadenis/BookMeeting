@@ -12,6 +12,17 @@ const sequelize = new Sequelize(
 		port: Number(process.env.DB_PORT || 5432),
 		dialect: 'postgres',
 		logging: false,
+		// Пул по умолчанию — 5 соединений. Бронирование держит соединение на
+		// время транзакции с блокировкой строки слота, поэтому при десятке
+		// одновременных запросов пул исчерпывался и часть из них падала с
+		// SequelizeConnectionAcquireTimeoutError, то есть с 500 вместо
+		// понятного отказа «нет мест».
+		pool: {
+			max: Number(process.env.DB_POOL_MAX || 30),
+			min: Number(process.env.DB_POOL_MIN || 0),
+			acquire: Number(process.env.DB_POOL_ACQUIRE_MS || 30000),
+			idle: Number(process.env.DB_POOL_IDLE_MS || 10000),
+		},
 	}
 );
 

@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { adminAuthMiddleware, signAdminJwt } = require('../../../src/middleware/adminAuth');
+const { adminAuthMiddleware, signAdminJwt, requireRole } = require('../../../src/middleware/adminAuth');
 
 describe('Admin Auth Middleware', () => {
   const mockReq = {
@@ -51,46 +51,24 @@ describe('Admin Auth Middleware', () => {
       expect(mockRes.status).not.toHaveBeenCalled();
     });
 
-    it('should authenticate with token in query params', () => {
-      const payload = { id: 'admin-123', email: 'admin@test.com' };
-      const token = signAdminJwt(payload);
-      
-      mockReq.header.mockReturnValue('');
-      mockReq.query.admin_token = token;
-      
-      adminAuthMiddleware(mockReq, mockRes, mockNext);
-      
-      expect(mockReq.admin).toBeDefined();
-      expect(mockReq.admin.id).toBe(payload.id);
-      expect(mockNext).toHaveBeenCalled();
-    });
+    // Раньше здесь было три теста, закреплявших приём токена через
+    // ?admin_token= / ?adminToken= / ?token=. Это отправляло долгоживущий
+    // админский JWT в access-логи nginx, в историю браузера и в Referer.
+    // Приём из query удалён, поэтому тесты проверяют обратное — отказ.
+    it('should reject token passed via query params', () => {
+      const token = signAdminJwt({ id: 'admin-123', email: 'admin@test.com' });
 
-    it('should authenticate with adminToken in query params', () => {
-      const payload = { id: 'admin-123', email: 'admin@test.com' };
-      const token = signAdminJwt(payload);
-      
-      mockReq.header.mockReturnValue('');
-      mockReq.query.adminToken = token;
-      
-      adminAuthMiddleware(mockReq, mockRes, mockNext);
-      
-      expect(mockReq.admin).toBeDefined();
-      expect(mockReq.admin.id).toBe(payload.id);
-      expect(mockNext).toHaveBeenCalled();
-    });
+      for (const key of ['admin_token', 'adminToken', 'token']) {
+        jest.clearAllMocks();
+        mockReq.admin = null;
+        mockReq.query = { [key]: token };
+        mockReq.header.mockReturnValue('');
 
-    it('should authenticate with token in query params', () => {
-      const payload = { id: 'admin-123', email: 'admin@test.com' };
-      const token = signAdminJwt(payload);
-      
-      mockReq.header.mockReturnValue('');
-      mockReq.query.token = token;
-      
-      adminAuthMiddleware(mockReq, mockRes, mockNext);
-      
-      expect(mockReq.admin).toBeDefined();
-      expect(mockReq.admin.id).toBe(payload.id);
-      expect(mockNext).toHaveBeenCalled();
+        adminAuthMiddleware(mockReq, mockRes, mockNext);
+
+        expect(mockRes.status).toHaveBeenCalledWith(401);
+        expect(mockNext).not.toHaveBeenCalled();
+      }
     });
 
     it('should reject request without token', () => {
@@ -136,18 +114,65 @@ describe('Admin Auth Middleware', () => {
       expect(mockNext).not.toHaveBeenCalled();
     });
 
-    it('should use default secret if ADMIN_JWT_SECRET not set', () => {
+    it('should use default secret if ADMIN_JWT_SECRET not set (non-production only)', () => {
       delete process.env.ADMIN_JWT_SECRET;
-      
+
       const payload = { id: 'admin-123', email: 'admin@test.com' };
       const token = signAdminJwt(payload);
-      
+
       mockReq.header.mockReturnValue(`Bearer ${token}`);
-      
+
       adminAuthMiddleware(mockReq, mockRes, mockNext);
-      
+
       expect(mockReq.admin).toBeDefined();
       expect(mockNext).toHaveBeenCalled();
+    });
+
+    it('should refuse to sign with a default secret in production', () => {
+      const prevEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      process.env.ADMIN_JWT_SECRET = 'change-me-in-production';
+
+      expect(() => signAdminJwt({ id: 'admin-123' })).toThrow(/ADMIN_JWT_SECRET/);
+
+      process.env.NODE_ENV = prevEnv;
+      process.env.ADMIN_JWT_SECRET = 'test-secret';
+    });
+  });
+
+  // Роли в модели User существовали и валидировались при создании, но ни один
+  // маршрут их не проверял: токен с ролью viewer давал полный доступ.
+  describe('requireRole', () => {
+    const run = (role, minRole) => {
+      const req = { admin: role ? { role } : null };
+      const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+      const next = jest.fn();
+      requireRole(minRole)(req, res, next);
+      return { res, next };
+    };
+
+    it('allows a role at or above the required rank', () => {
+      expect(run('admin', 'editor').next).toHaveBeenCalled();
+      expect(run('editor', 'editor').next).toHaveBeenCalled();
+      expect(run('admin', 'admin').next).toHaveBeenCalled();
+    });
+
+    it('rejects a role below the required rank with 403', () => {
+      const { res, next } = run('viewer', 'editor');
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('rejects a request with no role at all', () => {
+      const { res, next } = run(null, 'viewer');
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unknown role name', () => {
+      const { res, next } = run('superuser', 'viewer');
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(next).not.toHaveBeenCalled();
     });
   });
 });

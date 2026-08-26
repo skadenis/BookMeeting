@@ -1,6 +1,8 @@
 const dayjs = require('dayjs');
 const axios = require('axios');
 const { models, Op, Sequelize } = require('../lib/db');
+const { businessToday, businessNowParts, parseBusinessDateTime, slotEnd } = require('../lib/time');
+const { hasRecentLocalStatusChange } = require('./localStatusGuard');
 
 // Map Bitrix24 statuses to local statuses
 const BITRIX_STATUS_MAPPING = {
@@ -12,13 +14,16 @@ const BITRIX_STATUS_MAPPING = {
   'CONVERTED': 'completed'
 };
 
-function getBitrixRestUrl(method) {
-  const base = String(process.env.BITRIX_REST_URL).replace(/\/+$/, '');
-  const path = String(method || '').replace(/^\/+/, '');
-  return `${base}/${path}`;
-}
+const { restUrl: getBitrixRestUrl } = require('../lib/bitrix');
 
 const LOCAL_STATUSES = ['pending','confirmed','completed','no_show','cancelled','rescheduled'];
+
+// Стадии, через которые лид проходит транзитом по вине самого приложения:
+// ensureLeadStage сначала переводит лид в IN_PROCESS и только затем ставит
+// целевую стадию. Раньше IN_PROCESS не был в маппинге, попадал в ветку
+// "лид ушёл со стадий встречи" и отменял живую запись. Такие стадии значат
+// "ещё не доехало", а не "встречи больше нет".
+const BITRIX_TRANSIENT_STATUSES = new Set(['IN_PROCESS']);
 
 // Fetch STATUS_ID for many leads at once. Returns a Map(leadId -> STATUS_ID);
 // leads whose batch request failed are simply absent from the map.
@@ -46,7 +51,7 @@ async function autoSyncStatuses() {
 
   // Only today's appointments: older ones are already settled in the CRM and
   // re-syncing them would overwrite decisions made there.
-  const today = dayjs().format('YYYY-MM-DD');
+  const today = businessToday();
   const appointmentsToCheck = await models.Appointment.findAll({
     where: {
       bitrix_lead_id: { [Op.not]: null },
@@ -64,6 +69,7 @@ async function autoSyncStatuses() {
   let updatedCount = 0;
   let noShowCount = 0;
   let skippedCount = 0;
+  let guardedCount = 0;
 
   for (const appointment of appointmentsToCheck) {
     const leadId = Number(appointment.bitrix_lead_id);
@@ -78,11 +84,24 @@ async function autoSyncStatuses() {
     const bitrixStatus = statusById.get(leadId);
     const newStatus = BITRIX_STATUS_MAPPING[bitrixStatus] || bitrixStatus;
 
+    // Оператор только что менял статус вручную, а до Bitrix это ещё могло не
+    // доехать. Не затираем его решение промежуточным состоянием CRM.
+    if (await hasRecentLocalStatusChange(appointment.id)) {
+      guardedCount++;
+      continue;
+    }
+
+    // Транзитная стадия — просто ждём следующего прогона.
+    if (BITRIX_TRANSIENT_STATUSES.has(bitrixStatus)) {
+      skippedCount++;
+      continue;
+    }
+
     const endPart = appointment.timeSlot && String(appointment.timeSlot).includes('-')
-      ? String(appointment.timeSlot).split('-')[1]
+      ? slotEnd(appointment.timeSlot)
       : '23:59';
-    const appointmentDateTime = dayjs(`${appointment.date} ${endPart}`);
-    const isPastDue = appointmentDateTime.isBefore(dayjs().subtract(2, 'hours'));
+    const appointmentEnd = parseBusinessDateTime(appointment.date, endPart);
+    const isPastDue = appointmentEnd ? appointmentEnd.getTime() < Date.now() - 2 * 3600 * 1000 : false;
 
     if (LOCAL_STATUSES.includes(newStatus)) {
       if (newStatus !== appointment.status) {
@@ -93,13 +112,14 @@ async function autoSyncStatuses() {
         noShowCount++;
       }
     } else {
-      // Lead left the meeting stages in Bitrix (IN_PROCESS, JUNK, ...) — the meeting no longer stands
+      // Лид ушёл со стадий встречи в Bitrix (JUNK, LOSE, ...) — встреча не состоится
+      console.log(`Service: лид ${leadId} в стадии ${bitrixStatus} — отменяю встречу ${appointment.id}`);
       await appointment.update({ status: 'cancelled' });
       updatedCount++;
     }
   }
 
-  console.log(`Service status sync complete: ${updatedCount} updated, ${noShowCount} marked as no_show, ${skippedCount} skipped (no Bitrix answer)`);
+  console.log(`Service status sync complete: ${updatedCount} updated, ${noShowCount} marked as no_show, ${skippedCount} skipped, ${guardedCount} protected (recent operator action)`);
   return {
     checked: appointmentsToCheck.length,
     updated: updatedCount,
@@ -110,20 +130,37 @@ async function autoSyncStatuses() {
 
 async function autoExpireAppointments() {
   console.log('Starting automatic appointment expiration (service)...');
-  const cutoffTime = dayjs().subtract(2, 'hours');
+  // Настенное время бизнес-зоны: в БД лежат локальные "YYYY-MM-DD" и "HH:mm",
+  // и сравнивать их с временем процесса (UTC) было некорректно.
+  const cutoff = businessNowParts(new Date(Date.now() - 2 * 3600 * 1000));
+  const cutoffTime = `${cutoff.date} ${cutoff.time}`;
+
+  // sequelize.col() подставляет имя в SQL как есть и НЕ отображает атрибут
+  // модели на field. Атрибут называется timeSlot, а колонка в БД — time_slot,
+  // поэтому запрос уходил с "timeSlot" и падал с
+  //   ERROR: column "timeSlot" does not exist
+  // Ежечасное авто-истечение не отрабатывало ни разу, ошибка тонула в catch.
+  //
+  // Второй момент: для исторического короткого формата "HH:MM" (без дефиса)
+  // SPLIT_PART(..., '-', 2) возвращает пустую строку, и сравнение
+  // 'YYYY-MM-DD ' < cutoff было истиной с начала суток — встреча помечалась
+  // неявкой ещё до своего начала. NULLIF + COALESCE берут в этом случае
+  // само значение time_slot.
+  const col = models.Appointment.sequelize.col.bind(models.Appointment.sequelize);
+  const fn = models.Appointment.sequelize.fn.bind(models.Appointment.sequelize);
+  const endTimeExpr = fn(
+    'COALESCE',
+    fn('NULLIF', fn('SPLIT_PART', col('time_slot'), '-', 2), ''),
+    col('time_slot')
+  );
 
   const expiredAppointments = await models.Appointment.findAll({
     where: {
       status: { [Op.in]: ['pending', 'confirmed'] },
       [Op.and]: [
         models.Appointment.sequelize.where(
-          models.Appointment.sequelize.fn(
-            'CONCAT',
-            models.Appointment.sequelize.col('date'),
-            ' ',
-            models.Appointment.sequelize.fn('SPLIT_PART', models.Appointment.sequelize.col('timeSlot'), '-', 2)
-          ),
-          { [Op.lt]: cutoffTime.format('YYYY-MM-DD HH:mm') }
+          fn('CONCAT', col('date'), ' ', endTimeExpr),
+          { [Op.lt]: cutoffTime }
         )
       ]
     }
@@ -167,12 +204,16 @@ async function fetchAndAnalyzeBitrixLeads() {
   // SELECT fields reflect route logic
   while (true) {
     console.log(`Service: Fetching leads page ${pageCount + 1}, start: ${start}`);
+    // Ключи ДОЛЖНЫ быть в нижнем регистре: Bitrix REST игнорирует SELECT/FILTER,
+    // и фильтр по стадиям не применялся — выгружались все лиды подряд, а затем
+    // каждый из них становился кандидатом на создание встречи.
+    // В fetchLeadStatuses и checkNoShowLeads в этом же файле регистр верный.
     const response = await axios.post(getBitrixRestUrl('crm.lead.list'), {
-      SELECT: [
+      select: [
         'ID', 'UF_CRM_1675255265', 'UF_CRM_1725445029', 'UF_CRM_1725483092',
         'UF_CRM_1655460588', 'UF_CRM_1657019494', 'STATUS_ID'
       ],
-      FILTER: { STATUS_ID: [2, 37] },
+      filter: { STATUS_ID: [2, 37] },
       start
     }, { timeout: 30000, headers: { 'Content-Type': 'application/json' } });
 
@@ -188,19 +229,32 @@ async function fetchAndAnalyzeBitrixLeads() {
 
   console.log(`Service: total leads fetched: ${allLeads.length}`);
 
+  // Раньше выбирались ВСЕ встречи без фильтра, а Map оставлял последнюю
+  // попавшуюся на лид. Если у лида была встреча месяц назад, новая запись из
+  // CRM не создавалась — вместо этого прошлой встрече переписывали дату и
+  // время, то есть завершённая встреча «переезжала» в будущее.
+  // Берём только активные встречи от сегодняшнего дня.
   const existingAppointments = await models.Appointment.findAll({
-    attributes: ['id', 'bitrix_lead_id', 'status', 'date', 'timeSlot']
+    attributes: ['id', 'bitrix_lead_id', 'status', 'date', 'timeSlot'],
+    where: {
+      bitrix_lead_id: { [Op.not]: null },
+      status: { [Op.in]: ['pending', 'confirmed', 'rescheduled'] },
+      date: { [Op.gte]: businessToday() }
+    },
+    order: [['date', 'ASC']]
   });
   const existingLeadMap = new Map();
   existingAppointments.forEach(app => {
-    if (app.bitrix_lead_id) existingLeadMap.set(app.bitrix_lead_id, app);
+    // Ключ приводим к строке: bitrix_lead_id — BIGINT, Sequelize отдаёт его
+    // строкой, а lead.ID из Bitrix тоже строка, но полагаться на это нельзя
+    if (app.bitrix_lead_id) existingLeadMap.set(String(app.bitrix_lead_id), app);
   });
 
   const toCreate = [];
   const toUpdate = [];
   allLeads.forEach(lead => {
     try {
-      const existingAppointment = existingLeadMap.get(lead.ID);
+      const existingAppointment = existingLeadMap.get(String(lead.ID));
       const bitrixStatus = BITRIX_STATUS_MAPPING[lead.STATUS_ID] || 'pending';
       const leadDateRaw = String(lead.UF_CRM_1655460588 || '');
       const leadDate = leadDateRaw.includes('T')
@@ -304,10 +358,12 @@ async function syncMissingAppointments({ applyUpdates = true } = {}) {
   // Lazy imports to avoid circular deps at module load
   const { invalidateSlotsCache } = require('./slotsService');
   const { broadcastSlotsUpdated } = require('../lib/ws');
+  const { assertSlotBookable, BookingError } = require('./bookingGuard');
 
   let created = 0;
   let updated = 0;
   const invalidOfficeRefs = [];
+  const skipped = [];
 
   // Helper: resolve local office UUID by provided office ref (uuid or Bitrix numeric)
   async function resolveOfficeId(officeRef) {
@@ -349,6 +405,29 @@ async function syncMissingAppointments({ applyUpdates = true } = {}) {
           // Keep for potential update step below
           continue;
         }
+
+        // Синхронизация — третий канал создания встреч, и он тоже обязан
+        // проверять вместимость слота. Раньше create() шёл напрямую, и
+        // переполнение слотов прилетало из CRM, где таких ограничений нет.
+        // Прошедшие даты и горизонт записи здесь не ограничиваем: CRM может
+        // легитимно прислать запись задним числом.
+        try {
+          await assertSlotBookable({
+            officeId: localOfficeId,
+            date: lead.date,
+            timeSlot: lead.timeSlot,
+            allowPast: true,
+            enforceHorizon: false
+          });
+        } catch (guardError) {
+          if (guardError instanceof BookingError) {
+            skipped.push({ bitrix_lead_id: lead.bitrix_lead_id, date: lead.date, timeSlot: lead.timeSlot, reason: guardError.reason });
+            console.warn(`Service: пропускаю лид ${lead.bitrix_lead_id} — ${guardError.reason}: ${guardError.message}`);
+            continue;
+          }
+          throw guardError;
+        }
+
         await models.Appointment.create({
           bitrix_lead_id: lead.bitrix_lead_id,
           office_id: localOfficeId,
@@ -403,7 +482,8 @@ async function syncMissingAppointments({ applyUpdates = true } = {}) {
   return {
     created,
     updated,
-    invalidOfficeRefs
+    invalidOfficeRefs,
+    skipped
   };
 }
 
@@ -477,7 +557,26 @@ async function checkNoShowLeads({ daysBack = 3 } = {}) {
         }
         
         const bitrixStatus = BITRIX_STATUS_MAPPING[lead.STATUS_ID] || 'pending';
-        
+
+        // Встреча, которая уже закончилась, помечена неявкой обоснованно.
+        // Раньше проверки на это не было, и две задачи тянули запись в разные
+        // стороны: autoExpireAppointments раз в час ставила no_show, а этот
+        // прогон раз в 30 минут возвращал pending, потому что лид всё ещё
+        // висел в стадии 2. Статус менялся сам по себе дважды в час, и каждая
+        // смена рассылала WS-событие всем клиентам.
+        //
+        // Восстанавливаем только будущие встречи, а для прошедших — лишь
+        // терминальный статус из CRM ('completed'), который неявкой не является.
+        const endPart = appointment.timeSlot && String(appointment.timeSlot).includes('-')
+          ? slotEnd(appointment.timeSlot)
+          : '23:59';
+        const appointmentEnd = parseBusinessDateTime(appointment.date, endPart);
+        const alreadyFinished = appointmentEnd ? appointmentEnd.getTime() <= Date.now() : false;
+
+        if (alreadyFinished && bitrixStatus !== 'completed') {
+          continue;
+        }
+
         // Если статус в Bitrix24 активный (не отменен и не "не пришел"), восстанавливаем appointment
         if (['pending', 'confirmed', 'completed', 'rescheduled'].includes(bitrixStatus)) {
           console.log(`Service: Restoring appointment ${appointment.id} for lead ${appointment.bitrix_lead_id} from no_show to ${bitrixStatus}`);
