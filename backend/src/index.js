@@ -29,23 +29,45 @@ const PORT = Number(process.env.PORT || 4000);
 
 // Значения по умолчанию из env.example работали как боевые: они подставлялись
 // через ${VAR:-default} в docker-compose.prod.yml, если переменную не задали.
-const INSECURE_DEFAULTS = [
+const REQUIRED_SECRETS = [
 	['ADMIN_JWT_SECRET', 'change-me-in-production'],
 	['ADMIN_PASSWORD', 'admin123'],
-	['PUBLIC_TOKEN_PAIRS', 'widget1:secretA,widget2:secretB'],
-	['CRON_TOKEN', 'internal-cron-token'],
+	['PUBLIC_TOKEN_PAIRS', null],
 ];
+
+// Пары виджета, которые попали в репозиторий и потому считаются публичными
+const LEAKED_TOKEN_PAIRS = new Set(['widget1:secretA', 'widget2:secretB']);
 
 function assertProductionSecrets() {
 	if (process.env.NODE_ENV !== 'production') return;
-	const bad = INSECURE_DEFAULTS
-		.filter(([name, def]) => !process.env[name] || process.env[name] === def)
+
+	const bad = REQUIRED_SECRETS
+		.filter(([name, def]) => !process.env[name] || (def && process.env[name] === def))
 		.map(([name]) => name);
 	if (bad.length) {
 		throw new Error(
 			`Отказ запускаться в production: не заданы или оставлены значениями по умолчанию: ${bad.join(', ')}`
 		);
 	}
+
+	// Проверяем каждую пару отдельно: значения из env.example лежали в открытом
+	// репозитории, поэтому годятся любому, кто его видел.
+	const leaked = String(process.env.PUBLIC_TOKEN_PAIRS)
+		.split(',').map((s) => s.trim()).filter((s) => LEAKED_TOKEN_PAIRS.has(s));
+	if (leaked.length) {
+		throw new Error(
+			`Отказ запускаться в production: пары виджета ${leaked.join(', ')} были опубликованы в репозитории. ` +
+			'Задайте новые в PUBLIC_TOKEN_PAIRS и в адресе плейсмента Bitrix.'
+		);
+	}
+
+	// CRON_TOKEN не обязателен: пустое значение просто отключает вызов кронов
+	// по заголовку, админский токен продолжает работать. Запрещено только
+	// то самое значение из исходников.
+	if (process.env.CRON_TOKEN === 'internal-cron-token') {
+		throw new Error('CRON_TOKEN оставлен значением по умолчанию из исходников');
+	}
+
 	if (process.env.BITRIX_DEV_MODE === 'true') {
 		throw new Error('BITRIX_DEV_MODE=true недопустим при NODE_ENV=production');
 	}

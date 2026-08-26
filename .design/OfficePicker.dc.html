@@ -1,0 +1,176 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-size: 14px; color: rgba(0,0,0,.88); background: #f5f5f5;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: #1677ff; text-decoration: none; }
+    a:hover { color: #4096ff; }
+
+    .wrap { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+    .card { background: #fff; border-radius: 8px;
+      box-shadow: 0 1px 2px 0 rgba(0,0,0,.03), 0 1px 6px -1px rgba(0,0,0,.02), 0 2px 4px 0 rgba(0,0,0,.02); }
+
+    .note { display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+      background: #e6f4ff; border: 1px solid #91caff; border-radius: 6px;
+      font-size: 12px; color: #0958d9; }
+
+    .bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px; }
+    .muted { color: rgba(0,0,0,.45); }
+
+    /* Раньше это была модалка поверх пустого серого прямоугольника: контекст
+       терялся, список офисов был спрятан за клик по пустому селекту. */
+    .panel { padding: 22px 24px; display: flex; flex-direction: column; gap: 16px; }
+    .panel-head { display: flex; flex-direction: column; gap: 4px; }
+    .panel-title { font-size: 18px; font-weight: 600; }
+    .panel-sub { font-size: 13px; color: rgba(0,0,0,.65); max-width: 62ch; }
+
+    .search { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px;
+      border: 1px solid #d9d9d9; border-radius: 6px; background: #fff; max-width: 420px; }
+    .search:focus-within { border-color: #1677ff; box-shadow: 0 0 0 2px rgba(5,145,255,.1); }
+    .search input { border: 0; outline: 0; font: inherit; flex-grow: 1; color: inherit; background: transparent; }
+    .search input::placeholder { color: rgba(0,0,0,.25); }
+
+    .group-label { font-size: 12px; font-weight: 600; color: rgba(0,0,0,.45);
+      text-transform: uppercase; letter-spacing: .05em; }
+
+    .offices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .office { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px;
+      border: 1px solid #d9d9d9; border-radius: 8px; cursor: pointer; background: #fff; min-height: 76px; }
+    .office:hover { border-color: #1677ff; background: #f0f8ff; }
+    .office-sel { border-color: #1677ff; background: #e6f4ff; box-shadow: 0 0 0 1px #1677ff; }
+    .office-city { font-size: 13px; color: rgba(0,0,0,.45); }
+    .office-addr { font-size: 15px; font-weight: 600; }
+    .office-meta { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 2px; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+    .free { color: #52c41a; }
+    .tight { color: #d48806; }
+    .none { color: rgba(0,0,0,.35); }
+
+    .hint { display: flex; align-items: flex-start; gap: 8px; font-size: 12px;
+      color: rgba(0,0,0,.45); padding-top: 4px; border-top: 1px solid #f0f0f0; }
+
+    .foot { display: flex; align-items: center; gap: 10px; }
+    .btn { height: 40px; padding: 0 20px; border-radius: 6px; font-size: 14px;
+      display: inline-flex; align-items: center; cursor: pointer;
+      border: 1px solid #d9d9d9; background: #fff; }
+    .btn-primary { background: #1677ff; border-color: #1677ff; color: #fff; }
+    .btn-primary:hover { background: #4096ff; border-color: #4096ff; }
+    .btn-off { background: rgba(0,0,0,.04); border-color: #d9d9d9; color: rgba(0,0,0,.25); cursor: not-allowed; }
+  </style>
+</helmet>
+
+<div class="wrap">
+  <div class="note">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex:none"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5M12 8h.01"/></svg>
+    <span>Выбор офиса встроен в страницу, а не показан модалкой поверх пустого серого фона; список виден сразу, без клика по пустому селекту</span>
+  </div>
+
+  <div class="card bar">
+    <span style="font-weight: 600">Лид #332178</span>
+    <span class="muted" style="font-size: 13px">· офис в карточке лида не заполнен</span>
+    <span style="flex-grow: 1"></span>
+    <span class="muted" style="font-size: 12px">Запись на 7 дней вперёд</span>
+  </div>
+
+  <div class="card panel">
+    <div class="panel-head">
+      <span class="panel-title">Выберите офис</span>
+      <span class="panel-sub">В карточке лида офис не указан. Он нужен, чтобы показать свободные слоты и записать клиента по правильному адресу — выбранный офис запишется обратно в лид.</span>
+    </div>
+
+    <div class="search">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(0,0,0,.25)" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input type="text" placeholder="Город или улица" value="{{query}}" onInput="{{onQuery}}">
+    </div>
+
+    <span class="group-label">{{groupLabel}}</span>
+
+    <div class="offices">
+      <sc-for list="{{offices}}" as="o" hint-placeholder-count="6">
+        <div class="{{o.cls}}" onClick="{{o.pick}}">
+          <span class="office-city">{{o.city}}</span>
+          <span class="office-addr">{{o.addr}}</span>
+          <span class="office-meta">
+            <span class="{{o.dotCls}}" style="background: {{o.dotColor}}"></span>
+            <span class="{{o.freeCls}}">{{o.freeLabel}}</span>
+          </span>
+        </div>
+      </sc-for>
+    </div>
+
+    <div class="hint">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex:none; margin-top:1px"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5M12 8h.01"/></svg>
+      <span>Показаны только офисы, привязанные к Bitrix24. Если нужного адреса нет — его не завели в справочнике офисов.</span>
+    </div>
+
+    <div class="foot">
+      <div class="{{cta}}">{{ctaLabel}}</div>
+      <span class="muted" style="font-size: 12px">{{ctaHint}}</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "$preview": {"width": 1280, "height": 620}
+}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { picked: null, query: '' };
+  }
+
+  renderVals() {
+    const all = [
+      { id: 'a', city: 'Минск', addr: 'ул. Ленина, 15', free: 34 },
+      { id: 'b', city: 'Минск', addr: 'пр. Независимости, 58', free: 6 },
+      { id: 'c', city: 'Минск', addr: 'ул. Немига, 3', free: 0 },
+      { id: 'd', city: 'Витебск', addr: 'ул. Замковая, 12', free: 21 },
+      { id: 'e', city: 'Гомель', addr: 'пр. Ленина, 41', free: 12 },
+      { id: 'f', city: 'Брест', addr: 'ул. Советская, 78', free: 3 },
+    ];
+    const q = this.state.query.trim().toLowerCase();
+    const list = q ? all.filter((o) => `${o.city} ${o.addr}`.toLowerCase().includes(q)) : all;
+
+    const offices = list.map((o) => {
+      const tight = o.free > 0 && o.free <= 8;
+      const empty = o.free === 0;
+      return {
+        city: o.city,
+        addr: o.addr,
+        cls: this.state.picked === o.id ? 'office office-sel' : 'office',
+        dotCls: 'dot',
+        dotColor: empty ? 'rgba(0,0,0,.2)' : tight ? '#faad14' : '#52c41a',
+        freeCls: empty ? 'none' : tight ? 'tight' : 'free',
+        freeLabel: empty ? 'нет свободных слотов на неделе' : `${o.free} свободных слотов`,
+        pick: () => this.setState({ picked: o.id }),
+      };
+    });
+
+    const chosen = all.find((o) => o.id === this.state.picked);
+
+    return {
+      offices,
+      query: this.state.query,
+      onQuery: (e) => this.setState({ query: e.target.value, picked: null }),
+      groupLabel: q ? `Найдено: ${list.length}` : 'Все офисы',
+      cta: chosen ? 'btn btn-primary' : 'btn btn-off',
+      ctaLabel: chosen ? `Показать слоты — ${chosen.addr}` : 'Показать слоты',
+      ctaHint: chosen ? 'офис запишется в лид' : 'сначала выберите офис',
+    };
+  }
+}
+</script>
+</body>
+</html>
