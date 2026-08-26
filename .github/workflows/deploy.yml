@@ -12,6 +12,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Скрипт деплоя проверяется до подключения к серверу: сломанный
+      # синтаксис не должен доезжать до прода
+      - name: Check deploy script
+        run: |
+          bash -n scripts/deploy.sh
+          if command -v shellcheck >/dev/null; then shellcheck scripts/deploy.sh; fi
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -19,201 +26,39 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
-          # false означал, что шаг не прервётся на упавшей команде
-          # и частично применённый деплой отчитается как успешный
+          # script_stop: false meant the step kept going after a failed
+          # command and reported a partial deploy as success
           script_stop: true
           script: |
             set -e
-            echo "🚀 Starting deployment..."
-            
-            echo "🔍 Environment check:"
-            echo "   User: $(whoami)"
-            echo "   Home: $HOME"
-            echo "   PWD: $(pwd)"
-            echo "   PATH: $PATH"
-            
+
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
-            if [ -z "$DEPLOY_PATH" ]; then 
-              echo "❌ DEPLOY_PATH secret is required"
+            if [ -z "$DEPLOY_PATH" ]; then
+              echo "DEPLOY_PATH secret is required"
               exit 1
             fi
-            
-            echo "📁 Deploy path: $DEPLOY_PATH"
-            echo "🔍 Checking if directory exists..."
-            ls -la "$(dirname "$DEPLOY_PATH")" || echo "⚠️ Cannot list parent directory"
-            
-            echo "📂 Creating deploy directory..."
-            mkdir -p "$DEPLOY_PATH" || {
-              echo "❌ Failed to create directory $DEPLOY_PATH"
-              echo "🔍 Current user: $(whoami)"
-              echo "🔍 Current directory: $(pwd)"
-              echo "🔍 Disk space: $(df -h .)"
-              exit 1
-            }
-            
-            echo "✅ Directory created/verified"
-            echo "🔍 Listing deploy directory contents:"
-            if ls -la "$DEPLOY_PATH"; then
-              echo "✅ Directory listing successful"
-            else
-              echo "❌ Directory listing failed with exit code: $?"
-              echo "🔍 Trying to debug directory access..."
-              echo "   Directory exists: $([ -d "$DEPLOY_PATH" ] && echo "yes" || echo "no")"
-              echo "   Directory readable: $([ -r "$DEPLOY_PATH" ] && echo "yes" || echo "no")"
-              echo "   Directory executable: $([ -x "$DEPLOY_PATH" ] && echo "yes" || echo "no")"
-              echo "   Current permissions: $(ls -ld "$DEPLOY_PATH" 2>/dev/null || echo "cannot check")"
-              exit 1
-            fi
-            
-            echo "🔍 About to check git directory..."
-            echo "🔍 Checking git directory..."
-            echo "   .git exists: $([ -d "$DEPLOY_PATH/.git" ] && echo "yes" || echo "no")"
-            echo "   .git readable: $([ -r "$DEPLOY_PATH/.git" ] && echo "yes" || echo "no")"
-            echo "   .git executable: $([ -x "$DEPLOY_PATH/.git" ] && echo "yes" || echo "no")"
-            
-            echo "🔍 About to enter git condition check..."
-            echo "🔍 Testing git directory condition..."
-            
-            # Test the condition separately
+            echo "Deploy path: $DEPLOY_PATH"
+
+            # Everything sent through ssh-action stays ASCII on purpose: a long
+            # script with non-ASCII text arrived on the server mangled and died
+            # with "syntax error near unexpected token". The real deploy logic
+            # lives in scripts/deploy.sh, which travels by git and is checked
+            # with bash -n in CI.
+
             if [ -d "$DEPLOY_PATH/.git" ]; then
-              echo "✅ Git directory exists, will update"
-              GIT_EXISTS=true
+              echo "Updating existing checkout..."
+              cd "$DEPLOY_PATH"
+              git fetch origin main --depth=1
+              git reset --hard origin/main
             else
-              echo "❌ Git directory does not exist, will clone"
-              GIT_EXISTS=false
-            fi
-            
-            echo "🔍 Condition test result: GIT_EXISTS=$GIT_EXISTS"
-            
-            if [ "$GIT_EXISTS" = "true" ]; then
-              echo "🔄 Updating existing repository..."
-              echo "🔍 Current git status before update:"
-              cd "$DEPLOY_PATH" || {
-                echo "❌ Cannot cd to $DEPLOY_PATH"
-                exit 1
-              }
-              echo "📍 In deploy directory: $(pwd)"
-              git status || echo "⚠️ Git status failed"
-              git remote -v || echo "⚠️ Git remote failed"
-              
-              echo "📥 Fetching latest changes..."
-              git fetch origin main --depth=1 || {
-                echo "❌ Git fetch failed"
-                echo "🔍 Git error details:"
-                git status || true
-                exit 1
-              }
-              
-              echo "🔄 Resetting to latest main..."
-              git reset --hard origin/main || {
-                echo "❌ Git reset failed"
-                echo "🔍 Git error details:"
-                git status || true
-                exit 1
-              }
-              
-              echo "✅ Git update completed"
-            else
-              echo "📥 Cloning repository..."
-              git clone --depth=1 https://github.com/${{ github.repository }} "$DEPLOY_PATH" || {
-                echo "❌ Git clone failed"
-                exit 1
-              }
-            fi
-            
-            echo "🔍 About to cd to deploy path..."
-            cd "$DEPLOY_PATH" || {
-              echo "❌ Cannot cd to $DEPLOY_PATH after git operations"
-              exit 1
-            }
-            
-            echo "📍 Current directory: $(pwd)"
-            echo "📋 Git status:"
-            git log --oneline -3 || echo "⚠️ Git log failed"
-            git status || echo "⚠️ Git status failed"
-            
-            # .env больше НЕ создаётся из env.example автоматически: раньше так
-            # на сервер попадали значения по умолчанию (admin123 и прочие),
-            # с которыми приложение поднималось как боевое.
-            if [ ! -f .env ]; then
-              echo "❌ .env отсутствует на сервере. Создайте его вручную по образцу env.example."
-              exit 1
-            fi
-            
-            echo "🐳 Checking Docker..."
-            docker --version
-            docker compose version
-
-            # ── Предполётная проверка ───────────────────────────────────────
-            # Раньше деплой делал `docker compose down` ПЕРВЫМ действием, и
-            # только потом пытался собрать и поднять. Любая ошибка на сборке
-            # или на старте оставляла прод лежать: старые контейнеры уже
-            # остановлены, новые не поднялись. Теперь всё, что может упасть,
-            # проверяется и собирается ДО остановки работающего сервиса.
-            echo "🔎 Проверяю переменные окружения..."
-            set -a; . ./.env; set +a
-
-            MISSING=""
-            for VAR in ADMIN_JWT_SECRET ADMIN_PASSWORD PUBLIC_TOKEN_PAIRS BITRIX_REST_URL; do
-              eval "VAL=\${$VAR:-}"
-              if [ -z "$VAL" ]; then MISSING="$MISSING $VAR"; fi
-            done
-            if [ -n "$MISSING" ]; then
-              echo "❌ В .env не заданы:$MISSING"
-              echo "   Прод НЕ тронут, работающая версия продолжает работать."
-              exit 1
+              echo "Cloning repository..."
+              mkdir -p "$DEPLOY_PATH"
+              git clone --depth=1 https://github.com/${{ github.repository }} "$DEPLOY_PATH"
+              cd "$DEPLOY_PATH"
             fi
 
-            # Значения, лежавшие в открытом репозитории, бэкенд отвергнет на старте
-            case "$ADMIN_JWT_SECRET" in change-me-in-production)
-              echo "❌ ADMIN_JWT_SECRET оставлен значением из репозитория. Прод не тронут."; exit 1 ;;
-            esac
-            case ",$PUBLIC_TOKEN_PAIRS," in *,widget1:secretA,*|*,widget2:secretB,*)
-              echo "❌ PUBLIC_TOKEN_PAIRS содержит пару из открытого репозитория."
-              echo "   Заведите новую пару здесь и в адресе плейсмента Bitrix. Прод не тронут."
-              exit 1 ;;
-            esac
+            echo "Now at:"
+            git log --oneline -1
 
-            echo "🔎 Проверяю docker-compose..."
-            docker compose -f docker-compose.prod.yml config >/dev/null || {
-              echo "❌ Конфигурация compose невалидна. Прод не тронут."
-              exit 1
-            }
-
-            # ── Сборка до остановки ─────────────────────────────────────────
-            echo "🔨 Собираю образы (работающий сервис пока не трогаю)..."
-            docker compose -f docker-compose.prod.yml build || {
-              echo "❌ Сборка не удалась. Прод не тронут, старая версия работает."
-              exit 1
-            }
-
-            # ── Переключение ────────────────────────────────────────────────
-            # up -d пересоздаёт только изменившиеся контейнеры; полный down
-            # больше не нужен и лишь удлинял окно недоступности.
-            echo "🚀 Переключаю на новую версию..."
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans || {
-              echo "❌ Не удалось поднять сервисы. Логи:"
-              docker compose -f docker-compose.prod.yml logs --tail=100 || true
-              exit 1
-            }
-
-            # ── Health check ────────────────────────────────────────────────
-            echo "🩺 Жду готовности бэкенда..."
-            OK=0
-            for i in $(seq 1 30); do
-              if curl -fsS http://127.0.0.1:4400/api/health >/dev/null 2>&1; then OK=1; break; fi
-              sleep 3
-            done
-            if [ "$OK" != "1" ]; then
-              echo "❌ Бэкенд не отвечает на /api/health за 90 секунд. Логи:"
-              docker compose -f docker-compose.prod.yml logs --tail=120 backend || true
-              exit 1
-            fi
-            echo "✅ Бэкенд отвечает"
-
-            echo "🧹 Cleaning up Docker..."
-            docker image prune -f || true
-
-            echo "✅ Deployment completed successfully!"
-            docker compose -f docker-compose.prod.yml ps || true
-
+            test -f scripts/deploy.sh || { echo "scripts/deploy.sh is missing"; exit 1; }
+            bash scripts/deploy.sh
