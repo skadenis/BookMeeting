@@ -14,7 +14,7 @@ services:
       DB_PORT: 5432
       DB_NAME: meetings
       DB_USERNAME: meetings
-      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD обязателен}
+      DB_PASSWORD: ${DB_PASSWORD:-meetings}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       BITRIX_DEV_MODE: "false"
@@ -70,7 +70,9 @@ services:
     environment:
       POSTGRES_DB: meetings
       POSTGRES_USER: meetings
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD обязателен}
+      # Действует только при первой инициализации тома. У существующего
+      # тома пароль меняется через ALTER USER, а не этой переменной.
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-meetings}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
