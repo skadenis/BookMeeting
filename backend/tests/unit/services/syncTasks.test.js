@@ -11,7 +11,7 @@ jest.mock('axios');
 
 const axios = require('axios');
 const { models } = require('../../../src/lib/db');
-const { autoSyncStatuses } = require('../../../src/services/syncTasks');
+const { autoSyncStatuses, fetchAndAnalyzeBitrixLeads } = require('../../../src/services/syncTasks');
 
 const today = require('dayjs')().format('YYYY-MM-DD');
 
@@ -115,5 +115,70 @@ describe('autoSyncStatuses', () => {
     await autoSyncStatuses();
 
     expect(models.Appointment.findAll.mock.calls[0][0].where.date).toBe(today);
+  });
+});
+
+// Лид Bitrix хранит только время начала («15:00»), приложение — интервал
+// («15:00-15:30»). Анализ обязан сравнивать по началу: сравнение сырых строк
+// помечало каждую встречу как изменившуюся, и applyUpdates раз в 5 минут
+// затирал полный интервал коротким временем.
+describe('fetchAndAnalyzeBitrixLeads', () => {
+  function makeLead(overrides = {}) {
+    return {
+      ID: '12345',
+      STATUS_ID: '2',
+      UF_CRM_1675255265: '774',
+      UF_CRM_1655460588: `${today}T03:00:00+03:00`,
+      UF_CRM_1657019494: '15:00',
+      ...overrides
+    };
+  }
+
+  it('does not flag an appointment when only the slot format differs', async () => {
+    models.Appointment.findAll.mockResolvedValue([
+      { id: 'a1', bitrix_lead_id: '12345', status: 'pending', date: today, timeSlot: '15:00-15:30' }
+    ]);
+    axios.post.mockResolvedValue({ data: { result: [makeLead()] } });
+
+    const analysis = await fetchAndAnalyzeBitrixLeads();
+
+    expect(analysis.createCount).toBe(0);
+    expect(analysis.updateCount).toBe(0);
+  });
+
+  it('flags an update when the start time really changed', async () => {
+    models.Appointment.findAll.mockResolvedValue([
+      { id: 'a1', bitrix_lead_id: '12345', status: 'pending', date: today, timeSlot: '15:00-15:30' }
+    ]);
+    axios.post.mockResolvedValue({ data: { result: [makeLead({ UF_CRM_1657019494: '16:00' })] } });
+
+    const analysis = await fetchAndAnalyzeBitrixLeads();
+
+    expect(analysis.updateCount).toBe(1);
+  });
+
+  it('creates an appointment for a meeting booked directly in Bitrix', async () => {
+    models.Appointment.findAll.mockResolvedValue([]);
+    axios.post.mockResolvedValue({ data: { result: [makeLead({ STATUS_ID: '37' })] } });
+
+    const analysis = await fetchAndAnalyzeBitrixLeads();
+
+    expect(analysis.createCount).toBe(1);
+    const lead = analysis.toCreate[0].leads[0];
+    expect(lead.status).toBe('confirmed');
+    expect(lead.date).toBe(today);
+  });
+
+  it('skips leads with no meeting date or time filled in', async () => {
+    models.Appointment.findAll.mockResolvedValue([]);
+    axios.post.mockResolvedValue({ data: { result: [
+      makeLead({ UF_CRM_1655460588: '' }),
+      makeLead({ ID: '12346', UF_CRM_1657019494: '' })
+    ] } });
+
+    const analysis = await fetchAndAnalyzeBitrixLeads();
+
+    expect(analysis.createCount).toBe(0);
+    expect(analysis.updateCount).toBe(0);
   });
 });
