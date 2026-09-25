@@ -98,7 +98,43 @@ function restUrl(method) {
 	return `${base}/${path}`;
 }
 
+// Вызов входящего вебхука с повторами. Повторяем только то, что может пройти
+// со второй попытки: сеть, 5xx, 429 и QUERY_LIMIT_EXCEEDED (вебхук общий с
+// платформой, лимит Битрикса на него один). Ответ с полем error — это отказ
+// Битрикса, он бросается как ошибка с кодом, чтобы вызывающий не принял его
+// за пустой результат.
+function isRetryable(e) {
+	const status = e?.response?.status;
+	const code = e?.bitrixError || e?.response?.data?.error;
+	if (code === 'QUERY_LIMIT_EXCEEDED') return true;
+	if (e?.bitrixError) return false; // Битрикс ответил отказом по существу
+	if (!status) return true; // сеть, таймаут
+	return status >= 500 || status === 429;
+}
+
+async function callBitrix(method, params = {}, { attempts = 3, timeout = 15000, retryDelayMs = 1000 } = {}) {
+	let lastError;
+	for (let attempt = 1; attempt <= attempts; attempt++) {
+		try {
+			const response = await axios.post(restUrl(method), params, { timeout, headers: { 'Content-Type': 'application/json' } });
+			const data = response?.data;
+			if (data && data.error) {
+				const err = new Error(`Bitrix ${method}: ${data.error}${data.error_description ? ` — ${data.error_description}` : ''}`);
+				err.bitrixError = data.error;
+				throw err;
+			}
+			return data;
+		} catch (e) {
+			lastError = e;
+			if (attempt >= attempts || !isRetryable(e)) break;
+			await new Promise((r) => setTimeout(r, retryDelayMs * attempt));
+		}
+	}
+	throw lastError;
+}
+
 module.exports = {
+	callBitrix,
 	allowedDomains,
 	normalizeDomain,
 	isAllowedDomain,

@@ -24,7 +24,7 @@ const canAdmin = requireRole('admin');
 router.get('/', [
   query('start_date').optional().isISO8601(),
   query('end_date').optional().isISO8601(),
-  query('status').optional().isIn(['pending', 'confirmed', 'cancelled', 'rescheduled']),
+  query('status').optional().isIn(['pending', 'confirmed', 'cancelled', 'rescheduled', 'completed', 'no_show']),
   query('office_id').optional().isUUID(),
   query('search').optional().isString(),
   query('page').optional().isInt({ min: 1 }),
@@ -155,6 +155,56 @@ router.get('/:id', [
     next(e); 
   }
 });
+
+// Журнал встречи: кто и что менял — оператор в виджете, администратор,
+// синхронизация по стадии лида, событие Битрикса, сверка.
+router.get('/:id/history', [
+  param('id').isUUID()
+], async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const rows = await models.AppointmentHistory.findAll({
+      where: { appointment_id: req.params.id },
+      order: [['createdAt', 'ASC']],
+      raw: true,
+    });
+    res.json({ data: rows.map(describeHistoryRow) });
+  } catch (e) { next(e); }
+});
+
+const SOURCE_LABELS = {
+  bitrix_status_sync: 'Синхронизация по стадии лида',
+  no_show_check: 'Проверка неявок',
+  leads_sync: 'Синхронизация встреч из Битрикса',
+  auto_expire: 'Авто-истечение',
+  bitrix_event: 'Событие Битрикса',
+  reconcile: 'Суточная сверка',
+};
+
+// Человеческое описание автора изменения для админки
+function describeHistoryRow(row) {
+  const nv = row.newValue || row.new_value || {};
+  const actor = nv.actor || {};
+  let who;
+  if (actor.type === 'operator') who = `Оператор #${actor.id || '?'} (виджет)`;
+  else if (actor.type === 'admin') who = `Администратор ${actor.email || actor.id || ''}`.trim();
+  else if (actor.type === 'system') {
+    who = SOURCE_LABELS[actor.source || nv.source] || 'Система';
+    if (actor.bitrixUserId || nv.bitrixUserId) who += ` · изменил в Битриксе #${actor.bitrixUserId || nv.bitrixUserId}`;
+  } else who = 'Неизвестно';
+  return {
+    id: row.id,
+    at: row.createdAt || row.created_at,
+    action: row.action,
+    who,
+    actor,
+    bitrixStatus: nv.bitrixStatus || null,
+    event: nv.event || null,
+    before: row.oldValue || row.old_value || null,
+    after: { status: nv.status, date: nv.date, timeSlot: nv.timeSlot, office_id: nv.office_id },
+  };
+}
 
 // Обновить встречу
 // Place BULK endpoints BEFORE parametric ':id' routes to avoid '/bulk' being treated as ':id'
@@ -656,3 +706,4 @@ router.post('/normalize-timeslots', canAdmin, [
 });
 
 module.exports = router;
+module.exports.describeHistoryRow = describeHistoryRow;

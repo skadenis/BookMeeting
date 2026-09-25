@@ -30,6 +30,11 @@ services:
       CRON_TOKEN: ${CRON_TOKEN:-}
       # Ключ выгрузки встреч для платформы (GET /api/export/appointments); пусто — выгрузка выключена
       EXPORT_TOKEN: ${EXPORT_TOKEN:-}
+      BITRIX_EVENTS_TOKEN: ${BITRIX_EVENTS_TOKEN:-}
+      BYPASS_FLAG_MODE: ${BYPASS_FLAG_MODE:-}
+      SCHEDULE_ROLLFORWARD: ${SCHEDULE_ROLLFORWARD:-true}
+      RECONCILE_CRON: ${RECONCILE_CRON:-15 4 * * *}
+      RECONCILE_DAYS: ${RECONCILE_DAYS:-7}
       BITRIX_ALLOWED_DOMAINS: ${BITRIX_ALLOWED_DOMAINS:-}
       LEADS_SYNC_CRON: ${LEADS_SYNC_CRON:-*/5 * * * *}
       RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-60000}

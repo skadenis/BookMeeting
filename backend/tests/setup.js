@@ -12,6 +12,13 @@ process.env.BITRIX_DEV_MODE = 'true';
 process.env.BITRIX_REST_URL = 'https://test.bitrix24.by/rest/test';
 process.env.ADMIN_JWT_SECRET = 'test-secret';
 process.env.CORS_ORIGIN = 'http://localhost:5173';
+// Юнит-тестам Redis не нужен: настоящий клиент висел на переподключении.
+// Интеграционные тесты тоже обходятся хранилищем в памяти.
+if (process.env.DISABLE_REDIS === undefined) process.env.DISABLE_REDIS = 'true';
+// Повторы вызовов Битрикса без пауз
+process.env.BITRIX_RETRY_DELAY_MS = '0';
+process.env.BITRIX_EVENTS_MIN_INTERVAL_MS = '0';
+process.env.BITRIX_EVENTS_RETRY_MS = '10';
 
 // Increase timeout for integration tests
 jest.setTimeout(30000);

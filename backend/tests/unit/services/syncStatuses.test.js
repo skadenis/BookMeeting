@@ -5,7 +5,7 @@ jest.mock('../../../src/lib/db', () => ({
     Appointment: { findAll: jest.fn(), findOne: jest.fn(), findByPk: jest.fn(), create: jest.fn() },
     Office: { findByPk: jest.fn(), findOne: jest.fn() },
     Schedule: { findOne: jest.fn() },
-    Slot: { findOne: jest.fn() }
+    Slot: { findOne: jest.fn(), findAll: jest.fn() }
   },
   Op: { not: Symbol('not'), in: Symbol('in'), between: Symbol('between'), gte: Symbol('gte') },
   Sequelize: {}
@@ -18,6 +18,7 @@ jest.mock('../../../src/services/appointmentHistory', () => ({
   recordAppointmentChange: jest.fn().mockResolvedValue(null)
 }));
 jest.mock('../../../src/services/slotsService', () => ({ invalidateSlotsCache: jest.fn() }));
+jest.mock('../../../src/services/bypassLog', () => ({ recordBypass: jest.fn().mockResolvedValue(null) }));
 jest.mock('../../../src/lib/ws', () => ({ broadcastSlotsUpdated: jest.fn() }));
 jest.mock('../../../src/services/bookingGuard', () => {
   class BookingError extends Error {
@@ -29,6 +30,7 @@ jest.mock('../../../src/services/bookingGuard', () => {
 const axios = require('axios');
 const { models } = require('../../../src/lib/db');
 const { recordAppointmentChange } = require('../../../src/services/appointmentHistory');
+const { recordBypass } = require('../../../src/services/bypassLog');
 const { assertSlotBookable, BookingError } = require('../../../src/services/bookingGuard');
 const { autoSyncStatuses, checkNoShowLeads, syncMissingAppointments } = require('../../../src/services/syncTasks');
 const { businessToday } = require('../../../src/lib/time');
@@ -165,15 +167,29 @@ describe('syncMissingAppointments: встречи, назначенные в Б�
     expect(recordAppointmentChange).toHaveBeenCalledWith(expect.objectContaining({ action: 'created_from_crm_overbooked' }));
   });
 
-  it('время вне сетки по-прежнему пропускает — такую запись не к чему привязать', async () => {
+  it('время вне сетки (15:05) привязывается к слоту, который его покрывает', async () => {
     axios.post.mockResolvedValue({ data: { result: [bitrixLead({ UF_CRM_1657019494: '15:05' })] } });
     models.Slot.findOne.mockResolvedValue(null);
+    models.Slot.findAll.mockResolvedValue([{ start: '14:30', end: '15:00' }, { start: '15:00', end: '15:30' }]);
+    assertSlotBookable.mockResolvedValue({});
+
+    const result = await syncMissingAppointments();
+
+    expect(result.created).toBe(1);
+    expect(models.Appointment.create).toHaveBeenCalledWith(expect.objectContaining({ timeSlot: '15:00-15:30' }));
+  });
+
+  it('время, которого нет ни в одном слоте, пропускается и попадает в учёт назначений мимо сетки', async () => {
+    axios.post.mockResolvedValue({ data: { result: [bitrixLead({ UF_CRM_1657019494: '22:40' })] } });
+    models.Slot.findOne.mockResolvedValue(null);
+    models.Slot.findAll.mockResolvedValue([{ start: '15:00', end: '15:30' }]);
     assertSlotBookable.mockRejectedValue(new BookingError('no_slot', 'нет слота'));
 
     const result = await syncMissingAppointments();
 
     expect(result.created).toBe(0);
     expect(result.skipped).toEqual([expect.objectContaining({ bitrix_lead_id: '555', reason: 'no_slot' })]);
+    expect(recordBypass).toHaveBeenCalledWith(expect.objectContaining({ leadId: '555', outcome: 'no_slot', time: '22:40' }));
   });
 
   it('обычная встреча из Битрикса заводится с записью в журнал', async () => {

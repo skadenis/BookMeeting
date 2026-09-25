@@ -119,9 +119,38 @@ class CronService {
     // локальными переменными и запускались, но stopAll() итерируется по Map и
     // останавливал только auto-sync и auto-expire. После SIGTERM старый
     // контейнер продолжал писать в БД во время запуска нового.
+    // Суточная сверка последних 7 дней с Битриксом: пришёл / не пришёл по
+    // сделкам «Офис» и стадиям лида. Страховка к событиям Битрикса и опросу —
+    // исправляет всё, что они пропустили, и пишет отчёт (RECONCILE_DRIFT).
+    const reconcileJob = cron.schedule(process.env.RECONCILE_CRON || '15 4 * * *', async () => {
+      try {
+        if (process.env.ENABLE_LEADS_SYNC !== 'true' || !process.env.BITRIX_REST_URL) return;
+        const { reconcileRecentAppointments } = require('./reconcile');
+        const report = await reconcileRecentAppointments({ daysBack: Number(process.env.RECONCILE_DAYS || 7) });
+        console.log('Reconcile done:', { changes: report.changes, byReason: report.byReason, error: report.error || null });
+      } catch (error) {
+        console.error('Reconcile cron error:', error.message);
+      }
+    }, { scheduled: false, timezone: 'Europe/Minsk' });
+
+    // Продление расписания на окно записи: без него расписание кончалось
+    // на дате последнего ручного применения шаблона.
+    const rollForwardJob = cron.schedule(process.env.SCHEDULE_ROLLFORWARD_CRON || '10 2 * * *', async () => {
+      try {
+        if (process.env.SCHEDULE_ROLLFORWARD === 'false') return;
+        const { rollForwardSchedules } = require('./scheduleRollForward');
+        const report = await rollForwardSchedules();
+        console.log('Schedule roll-forward done:', { created: report.created.length, noSource: report.noSource.length });
+      } catch (error) {
+        console.error('Schedule roll-forward cron error:', error.message);
+      }
+    }, { scheduled: false, timezone: 'Europe/Minsk' });
+
     this.register('leads-sync', leadsSyncJob);
     this.register('dedupe', dedupeJob);
     this.register('no-show-leads', noShowLeadsJob);
+    this.register('reconcile', reconcileJob);
+    this.register('schedule-rollforward', rollForwardJob);
 
     for (const [name, job] of this.jobs) {
       job.start();

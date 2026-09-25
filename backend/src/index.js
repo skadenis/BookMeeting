@@ -24,6 +24,7 @@ const authRouter = require('./routes/auth');
 const adminUsersRouter = require('./routes/adminUsers');
 const adminSettingsRouter = require('./routes/adminSettings');
 const exportRouter = require('./routes/export');
+const bitrixEventsRouter = require('./routes/bitrixEvents');
 // const { seedIfEmpty } = require('./seed');
 
 const PORT = Number(process.env.PORT || 4000);
@@ -212,6 +213,10 @@ function createApp() {
 
 	// Выгрузка для платформы — свой ключ EXPORT_TOKEN, до bitrixAuth
 	app.use('/api/export', exportRouter);
+
+	// События Битрикса (смена стадии лида, сделка «Офис») — свой токен
+	// BITRIX_EVENTS_TOKEN, до bitrixAuth
+	app.use('/api/bitrix-events', bitrixEventsRouter);
 
 	// Public routes (protected by bitrixAuthMiddleware)
 	app.use('/api', bitrixAuthMiddleware);

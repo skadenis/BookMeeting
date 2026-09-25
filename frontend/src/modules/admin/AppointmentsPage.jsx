@@ -35,6 +35,7 @@ import api from '../../api/client'
 import PageHeader from './components/PageHeader'
 import PageTable from './components/PageTable'
 import StatsSection from './components/StatsSection'
+import AppointmentHistory from './components/AppointmentHistory'
 
 const { RangePicker } = DatePicker
 
@@ -309,7 +310,9 @@ export default function AppointmentsPage() {
         { text: 'Ожидает подтверждения', value: 'pending' },
         { text: 'Подтверждена', value: 'confirmed' },
         { text: 'Отменена', value: 'cancelled' },
-        { text: 'Перенесена', value: 'rescheduled' }
+        { text: 'Перенесена', value: 'rescheduled' },
+        { text: 'Завершена успешно', value: 'completed' },
+        { text: 'Не пришел на встречу', value: 'no_show' }
       ],
       onFilter: (value, record) => record.status === value
     },
@@ -696,6 +699,8 @@ export default function AppointmentsPage() {
                 <Select.Option value="confirmed">Подтверждена</Select.Option>
                 <Select.Option value="cancelled">Отменена</Select.Option>
                 <Select.Option value="rescheduled">Перенесена</Select.Option>
+                <Select.Option value="completed">Пришёл</Select.Option>
+                <Select.Option value="no_show">Не пришёл</Select.Option>
               </Select>
             </Form.Item>
 
@@ -756,7 +761,7 @@ export default function AppointmentsPage() {
         open={detailsModalVisible}
         onCancel={() => setDetailsModalVisible(false)}
         onOk={handleDetailsEdit}
-        width={600}
+        width={720}
         okText="Редактировать"
         cancelText="Закрыть"
       >
@@ -774,8 +779,13 @@ export default function AppointmentsPage() {
                 {viewingAppointment.bitrix_lead_id && (
                   <p><strong>ID лида в Битрикс:</strong> {viewingAppointment.bitrix_lead_id}</p>
                 )}
+                <p><strong>Кто записал:</strong> {Number(viewingAppointment.createdBy) > 0
+                  ? `Оператор #${viewingAppointment.createdBy} (сетка)`
+                  : <Tag color="orange">Назначена в Битриксе мимо сетки</Tag>}</p>
               </Col>
             </Row>
+            <Typography.Title level={5} style={{ marginTop: 8 }}>Журнал изменений</Typography.Title>
+            <AppointmentHistory appointmentId={viewingAppointment.id} />
           </div>
         )}
       </Modal>

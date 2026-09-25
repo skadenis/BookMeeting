@@ -105,6 +105,11 @@ function startOfWeek(date) {
   return d
 }
 
+// Отмена в виджете стирает дату и время встречи в лиде и уводит его из
+// «Встреча назначена» — после неё операторы вписывали новую дату руками в
+// карточке, мимо сетки. Для переноса отмена не нужна.
+const CANCEL_HINT = 'Встреча будет отменена, дата и время встречи в лиде очистятся. Если клиент хочет другое время — не отменяйте, а выберите новый слот в сетке: встреча перенесётся сама.'
+
 function addDays(date, n) {
   const d = new Date(date)
   d.setDate(d.getDate() + n)
@@ -685,6 +690,14 @@ export function App() {
                   <Tag color={leadAppt.status === 'pending' ? 'gold' : 'green'}>{leadAppt.status === 'pending' ? 'Ожидает подтверждения' : 'Подтверждена'}</Tag>
                 )}
               </Space>
+              {/* 28 % назначений мимо сетки (141 из 495 за 02–24.09) — это перенос
+                  «отменить в виджете → вписать новую дату в карточке лида»:
+                  через 18 секунд после отмены. Кнопки «перенести» не было,
+                  и что новый слот сам заменяет старый, не было видно. */}
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Клиент хочет другое время? Просто выберите новый слот в сетке ниже — эта встреча перенесётся,
+                лид в Битриксе обновится сам. Отменять встречу для переноса не нужно.
+              </Typography.Text>
               <Divider style={{ margin:'8px 0' }} />
               <Space>
                 {leadAppt.status !== 'confirmed' && confirmVerdict?.allowed && <Button type="primary" size="large" onClick={() => Modal.confirm({
@@ -706,7 +719,7 @@ export function App() {
                 )}
                 <Button size="large" danger onClick={() => Modal.confirm({
                   title: (<span><ExclamationCircleOutlined style={{ color:'#faad14', marginRight:8 }} />Подтвердите отмену</span>),
-                  content: 'Вы уверены, что хотите отменить встречу?',
+                  content: CANCEL_HINT,
                   okText:'Да, отменить', cancelText:'Нет', okButtonProps:{ danger:true },
                   onOk: () => updateAppointmentStatus(leadAppt.id, 'cancelled')
                 })}>Отменить</Button>
@@ -774,7 +787,7 @@ export function App() {
                               ) : (
                                 <Button size="middle" block onClick={() => Modal.confirm({
                                   title: (<span><ExclamationCircleOutlined style={{ color:'#faad14', marginRight:8 }} />Подтвердите отмену</span>),
-                                  content: 'Вы уверены, что хотите отменить встречу?',
+                                  content: CANCEL_HINT,
                                   okText:'Да, отменить', cancelText:'Нет', okButtonProps:{ danger:true },
                                   onOk: () => updateAppointmentStatus(leadAppt.id, 'cancelled')
                                 })}
@@ -799,8 +812,9 @@ export function App() {
                                 const d = addDays(weekStart, idx)
                                 const dd = dayjs(d).locale('ru')
                                 const dateStr = dd.format('dddd, D MMMM YYYY')
+                                const moving = leadAppt && !isAppointmentInPast(leadAppt)
                                 Modal.confirm({
-                                  title: (<span><CheckCircleOutlined style={{ color:'#52c41a', marginRight:8 }} />Назначить встречу?</span>),
+                                  title: (<span><CheckCircleOutlined style={{ color:'#52c41a', marginRight:8 }} />{moving ? 'Перенести встречу?' : 'Назначить встречу?'}</span>),
                                   centered: true,
                                   width: 640,
                                   content: (
@@ -813,9 +827,14 @@ export function App() {
                                       ) : null}
                                       <Descriptions.Item label="Дата">{dateStr}</Descriptions.Item>
                                       <Descriptions.Item label="Время">{`${slot.start} — ${slot.end}`}</Descriptions.Item>
+                                      {moving ? (
+                                        <Descriptions.Item label="Вместо">
+                                          {`${dayjs(leadAppt.date).locale('ru').format('D MMMM')}, ${leadAppt.timeSlot}`} — отменится автоматически
+                                        </Descriptions.Item>
+                                      ) : null}
                                     </Descriptions>
                                   ),
-                                  okText:'Да, назначить', cancelText:'Нет', okButtonProps:{ type:'primary' },
+                                  okText: moving ? 'Да, перенести' : 'Да, назначить', cancelText:'Нет', okButtonProps:{ type:'primary' },
                                   onOk: () => createAppointment(idx, slot)
                                 })
                               }}

@@ -110,6 +110,31 @@ const Setting = sequelize.define('Setting', {
   updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'), field: 'updated_at' },
 }, { tableName: 'settings' });
 
+// Назначения встречи мимо сетки: лид поставлен в «Встреча назначена» в
+// Битриксе, а записи в шахматке нет. Одна строка на лид + дату + время +
+// исход — повторные прогоны синхронизации не плодят дублей. Таблица новая,
+// sequelize.sync() создаёт её при старте без миграции.
+const CrmBypass = sequelize.define('CrmBypass', {
+	id: { type: DataTypes.UUID, primaryKey: true, defaultValue: DataTypes.UUIDV4 },
+	leadId: { type: DataTypes.BIGINT, allowNull: false, field: 'lead_id' },
+	officeRef: { type: DataTypes.STRING(40), allowNull: true, field: 'office_ref' },
+	meetingDate: { type: DataTypes.DATEONLY, allowNull: true, field: 'meeting_date' },
+	meetingTime: { type: DataTypes.STRING(20), allowNull: true, field: 'meeting_time' },
+	// created — завели в сетку, overbooked — завели в полный слот,
+	// no_slot / no_schedule / slot_unavailable / day_closed / no_office — не к чему привязать
+	outcome: { type: DataTypes.STRING(30), allowNull: false },
+	bitrixStatus: { type: DataTypes.STRING(20), allowNull: true, field: 'bitrix_status' },
+	bitrixUserId: { type: DataTypes.BIGINT, allowNull: true, field: 'bitrix_user_id' },
+	source: { type: DataTypes.STRING(30), allowNull: false },
+	appointmentId: { type: DataTypes.UUID, allowNull: true, field: 'appointment_id' },
+	flaggedAt: { type: DataTypes.DATE, allowNull: true, field: 'flagged_at' },
+	createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'), field: 'created_at' },
+}, {
+	tableName: 'crm_bypass_events',
+	updatedAt: false,
+	indexes: [{ fields: ['lead_id'] }, { fields: ['created_at'] }],
+});
+
 // Associations
 Office.hasMany(Schedule, { foreignKey: { name: 'office_id', allowNull: false } });
 Schedule.belongsTo(Office, { foreignKey: { name: 'office_id', allowNull: false } });
@@ -138,4 +163,4 @@ async function seedDefaultAdminIfEmpty() {
   console.log('Seeded default admin user:', email);
 }
 
-module.exports = { sequelize, Sequelize, DataTypes, Op, models: { Office, Schedule, Slot, Appointment, AppointmentHistory, Template, User, Setting }, seedDefaultAdminIfEmpty };
+module.exports = { sequelize, Sequelize, DataTypes, Op, models: { Office, Schedule, Slot, Appointment, AppointmentHistory, Template, User, Setting, CrmBypass }, seedDefaultAdminIfEmpty };

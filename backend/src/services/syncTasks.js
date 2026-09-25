@@ -1,9 +1,16 @@
 const dayjs = require('dayjs');
 const axios = require('axios');
 const { models, Op, Sequelize } = require('../lib/db');
-const { businessToday, businessNowParts, parseBusinessDateTime, slotStart, slotEnd } = require('../lib/time');
+const { businessToday, businessNowParts, slotStart } = require('../lib/time');
 const { hasRecentLocalStatusChange } = require('./localStatusGuard');
 const { recordAppointmentChange } = require('./appointmentHistory');
+const {
+  BITRIX_STATUS_MAPPING,
+  BITRIX_TRANSIENT_STATUSES,
+  decideFromLeadStatus,
+  slotCovers,
+  leadMeeting,
+} = require('./leadRules');
 
 // Фоновые изменения встреч раньше не попадали в журнал: из ~1 500 отмен за месяц
 // без записи в appointment_history нельзя было понять, отменил ли встречу
@@ -15,37 +22,16 @@ async function recordSyncChange(appointment, action, before, extra = {}) {
     action,
     oldValue: before,
     newValue: { status: appointment.status, date: appointment.date, timeSlot: appointment.timeSlot, office_id: appointment.office_id, ...extra },
-    actor: { type: 'system', id: null, source: extra.source || 'sync' },
+    actor: { type: 'system', id: null, source: extra.source || 'sync', ...(extra.bitrixUserId ? { bitrixUserId: extra.bitrixUserId } : {}) },
   });
 }
 
-// Статусы лида Битрикса → статусы встречи.
-//
-// Раньше здесь стояли '38' → completed, '39' → no_show, '40' → cancelled.
-// Статусов 38 и 39 на портале нет вовсе, а 40 — это «Не наши услуги».
-// Настоящие «Не пришел на встречу» (3) и «Находится в офисе» (4) в карту не
-// попадали, уходили в ветку «лид ушёл со стадий встречи» и превращали встречу
-// в cancelled: неявки и пришедших клиентов нельзя было отличить от отмен
-// (с 26.08 по 24.09 — 4 no_show на ~3 000 прошедших встреч).
-// Справочник: crm.status.list ENTITY_ID=STATUS.
-const BITRIX_STATUS_MAPPING = {
-  '2': 'pending',          // Встреча назначена
-  '37': 'confirmed',       // Встреча подтверждена
-  '3': 'no_show',          // Не пришел на встречу (ставит агент Битрикса через 5 мин после начала)
-  '4': 'completed',        // Находится в офисе
-  'CONVERTED': 'completed' // Обработка лида завершена (сделка «Офис» заведена)
-};
+// Карта стадий и правила «стадия лида → статус встречи» живут в leadRules.js:
+// их читают опрос, события Битрикса и суточная сверка.
 
-const { restUrl: getBitrixRestUrl } = require('../lib/bitrix');
+const { restUrl: getBitrixRestUrl, callBitrix } = require('../lib/bitrix');
 
-const LOCAL_STATUSES = ['pending','confirmed','completed','no_show','cancelled','rescheduled'];
-
-// Стадии, через которые лид проходит транзитом по вине самого приложения:
-// ensureLeadStage сначала переводит лид в IN_PROCESS и только затем ставит
-// целевую стадию. Раньше IN_PROCESS не был в маппинге, попадал в ветку
-// "лид ушёл со стадий встречи" и отменял живую запись. Такие стадии значат
-// "ещё не доехало", а не "встречи больше нет".
-const BITRIX_TRANSIENT_STATUSES = new Set(['IN_PROCESS']);
+const RETRY_DELAY_MS = () => Number(process.env.BITRIX_RETRY_DELAY_MS ?? 1000);
 
 // Fetch STATUS_ID for many leads at once. Returns a Map(leadId -> STATUS_ID);
 // leads whose batch request failed are simply absent from the map.
@@ -54,11 +40,13 @@ async function fetchLeadStatuses(leadIds) {
   for (let i = 0; i < leadIds.length; i += 50) {
     const chunk = leadIds.slice(i, i + 50);
     try {
-      const response = await axios.post(getBitrixRestUrl('crm.lead.list'), {
+      // Две попытки на пачку: одиночный сбой сети раньше выбрасывал из
+      // проверки сразу 50 встреч до следующего прогона.
+      const data = await callBitrix('crm.lead.list', {
         filter: { ID: chunk.map(Number) },
         select: ['ID', 'STATUS_ID']
-      }, { timeout: 15000, headers: { 'Content-Type': 'application/json' } });
-      for (const lead of response?.data?.result || []) {
+      }, { attempts: 2, retryDelayMs: RETRY_DELAY_MS() });
+      for (const lead of data?.result || []) {
         statusById.set(Number(lead.ID), lead.STATUS_ID);
       }
     } catch (error) {
@@ -66,6 +54,26 @@ async function fetchLeadStatuses(leadIds) {
     }
   }
   return statusById;
+}
+
+// Применить решение leadRules к встрече: сохранить, записать в журнал,
+// сбросить кеш сетки. Возвращает true, если встреча изменилась.
+async function applyDecision(appointment, decision, trace) {
+  if (!decision || decision.status === appointment.status) return false;
+  const before = { status: appointment.status };
+  await appointment.update({ status: decision.status });
+  await recordSyncChange(appointment, decision.action, before, trace);
+  try {
+    const { invalidateSlotsCache } = require('./slotsService');
+    const { broadcastSlotsUpdated } = require('../lib/ws');
+    if (appointment.office_id && appointment.date) {
+      await invalidateSlotsCache(appointment.office_id, appointment.date);
+      broadcastSlotsUpdated(appointment.office_id, appointment.date);
+    }
+  } catch (e) {
+    console.error('Service: не удалось сбросить кеш сетки', e?.message || e);
+  }
+  return true;
 }
 
 async function autoSyncStatuses() {
@@ -119,31 +127,15 @@ async function autoSyncStatuses() {
       continue;
     }
 
-    const endPart = appointment.timeSlot && String(appointment.timeSlot).includes('-')
-      ? slotEnd(appointment.timeSlot)
-      : '23:59';
-    const appointmentEnd = parseBusinessDateTime(appointment.date, endPart);
-    const isPastDue = appointmentEnd ? appointmentEnd.getTime() < Date.now() - 2 * 3600 * 1000 : false;
-
-    const before = { status: appointment.status };
-    const trace = { source: 'bitrix_status_sync', bitrixStatus };
-    if (LOCAL_STATUSES.includes(newStatus)) {
-      if (newStatus !== appointment.status) {
-        await appointment.update({ status: newStatus });
-        await recordSyncChange(appointment, `sync_${newStatus}`, before, trace);
-        updatedCount++;
-      } else if (isPastDue && ['pending', 'confirmed', 'rescheduled'].includes(appointment.status)) {
-        await appointment.update({ status: 'no_show' });
-        await recordSyncChange(appointment, 'sync_no_show', before, trace);
-        noShowCount++;
-      }
-    } else {
-      // Лид ушёл со стадий встречи в Bitrix (JUNK, LOSE, ...) — встреча не состоится
+    const decision = decideFromLeadStatus(appointment, bitrixStatus);
+    if (!decision) continue;
+    if (decision.status === 'cancelled') {
       console.log(`Service: лид ${leadId} в стадии ${bitrixStatus} — отменяю встречу ${appointment.id}`);
-      await appointment.update({ status: 'cancelled' });
-      await recordSyncChange(appointment, 'sync_cancelled', before, trace);
-      updatedCount++;
     }
+    const changed = await applyDecision(appointment, decision, { source: 'bitrix_status_sync', bitrixStatus });
+    if (!changed) continue;
+    if (decision.status === 'no_show' && newStatus !== 'no_show') noShowCount++;
+    else updatedCount++;
   }
 
   console.log(`Service status sync complete: ${updatedCount} updated, ${noShowCount} marked as no_show, ${skippedCount} skipped, ${guardedCount} protected (recent operator action)`);
@@ -285,21 +277,14 @@ async function fetchAndAnalyzeBitrixLeads() {
     try {
       const existingAppointment = existingLeadMap.get(String(lead.ID));
       const bitrixStatus = BITRIX_STATUS_MAPPING[lead.STATUS_ID] || 'pending';
-      const leadDateRaw = String(lead.UF_CRM_1655460588 || '');
-      const leadDate = leadDateRaw.includes('T')
-        ? leadDateRaw.slice(0, 10)
-        : dayjs(leadDateRaw).format('YYYY-MM-DD');
-
-      // В лиде Bitrix хранится только время начала («15:00»), а слот в
-      // приложении — интервал («15:00-15:30»). Сравнивать нужно по началу:
-      // сравнение сырых строк считало каждую встречу «изменившейся», и
-      // обновление раз в 5 минут затирало полный интервал коротким временем.
-      const leadTimeStart = slotStart(lead.UF_CRM_1657019494);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(leadDate) || !/^\d{1,2}:\d{2}$/.test(leadTimeStart)) {
+      const meeting = leadMeeting(lead);
+      if (!meeting) {
         // Лид на стадии встречи, но дата или время не заполнены — создавать
         // или переписывать по нему нечего.
         return;
       }
+      const leadDate = meeting.date;
+      const leadTimeStart = meeting.time;
 
       // Встречи с прошедшей датой не заводим: лид, застрявший в стадии
       // «Назначена встреча» со старой датой, превращался бы в вечный цикл
@@ -309,42 +294,38 @@ async function fetchAndAnalyzeBitrixLeads() {
         return;
       }
 
+      const row = {
+        ID: String(lead.ID),
+        STATUS_ID: lead.STATUS_ID,
+        UF_CRM_1675255265: lead.UF_CRM_1675255265,
+        UF_CRM_1725445029: lead.UF_CRM_1725445029,
+        UF_CRM_1725483092: lead.UF_CRM_1725483092,
+        UF_CRM_1655460588: lead.UF_CRM_1655460588,
+        UF_CRM_1657019494: lead.UF_CRM_1657019494,
+        bitrix_lead_id: lead.ID,
+        office_id: lead.UF_CRM_1675255265,
+        date: leadDate,
+        timeSlot: leadTimeStart,
+        status: bitrixStatus
+      };
+
       if (!existingAppointment) {
-        toCreate.push({
-          ID: String(lead.ID),
-          STATUS_ID: lead.STATUS_ID,
-          UF_CRM_1675255265: lead.UF_CRM_1675255265,
-          UF_CRM_1725445029: lead.UF_CRM_1725445029,
-          UF_CRM_1725483092: lead.UF_CRM_1725483092,
-          UF_CRM_1655460588: lead.UF_CRM_1655460588,
-          UF_CRM_1657019494: lead.UF_CRM_1657019494,
-          bitrix_lead_id: lead.ID,
-          office_id: lead.UF_CRM_1675255265,
-          date: leadDate,
-          timeSlot: lead.UF_CRM_1657019494,
-          status: bitrixStatus
-        });
+        toCreate.push(row);
       } else {
+        // В лиде Bitrix хранится только время начала («15:00»), а слот в
+        // приложении — интервал («15:00-15:30»). Сравниваем «слот покрывает
+        // время лида»: сравнение сырых строк считало каждую встречу
+        // «изменившейся», а время вне сетки (15:05) привязывается к слоту
+        // 15:00-15:30 и тоже не должно переписываться каждые 5 минут.
         const needsUpdate = (
           existingAppointment.status !== bitrixStatus ||
           existingAppointment.date !== leadDate ||
-          slotStart(existingAppointment.timeSlot) !== leadTimeStart
+          !slotCovers(existingAppointment.timeSlot, leadTimeStart)
         );
         if (needsUpdate) {
           toUpdate.push({
             id: existingAppointment.id,
-            ID: String(lead.ID),
-            STATUS_ID: lead.STATUS_ID,
-            UF_CRM_1675255265: lead.UF_CRM_1675255265,
-            UF_CRM_1725445029: lead.UF_CRM_1725445029,
-            UF_CRM_1725483092: lead.UF_CRM_1725483092,
-            UF_CRM_1655460588: lead.UF_CRM_1655460588,
-            UF_CRM_1657019494: lead.UF_CRM_1657019494,
-            bitrix_lead_id: lead.ID,
-            office_id: lead.UF_CRM_1675255265,
-            date: leadDate,
-            timeSlot: lead.UF_CRM_1657019494,
-            status: bitrixStatus,
+            ...row,
             currentStatus: existingAppointment.status,
             currentDate: existingAppointment.date,
             currentTime: existingAppointment.timeSlot
@@ -399,168 +380,194 @@ module.exports = {
   checkNoShowLeads
 };
 
+// Bitrix отдаёт только время начала («15:00»), а расписание и виджет живут
+// интервалами («15:00-15:30»). Ищем в расписании офиса слот с таким началом и
+// достраиваем интервал. Время вне сетки («15:05», «20:20» — 25 встреч за
+// 02–24.09) привязываем к слоту, который его покрывает: раньше такие встречи
+// пропускались, и сетка показывала свободное место, которого нет.
+async function resolveFullTimeSlot(officeId, date, rawTimeSlot) {
+  const normalized = String(rawTimeSlot || '').replace(/\s+/g, '');
+  if (normalized.includes('-')) return normalized;
+  const schedule = await models.Schedule.findOne({ where: { office_id: officeId, date } });
+  if (!schedule) return normalized;
+  const padded = normalized.padStart(5, '0');
+  const exact = await models.Slot.findOne({ where: { schedule_id: schedule.id, start: padded } });
+  if (exact) return `${exact.start}-${exact.end}`;
+  const all = await models.Slot.findAll({ where: { schedule_id: schedule.id } });
+  const covering = (all || []).find((sl) => slotCovers(`${sl.start}-${sl.end}`, padded));
+  return covering ? `${covering.start}-${covering.end}` : normalized;
+}
+
+// Локальный UUID офиса по ссылке из лида (UUID или числовой ID офиса Битрикса)
+async function resolveOfficeId(officeRef) {
+  if (!officeRef) return null;
+  const ref = String(officeRef);
+  const uuidLike = /^[0-9a-fA-F-]{36}$/i.test(ref);
+  if (uuidLike) {
+    const office = await models.Office.findByPk(ref);
+    if (office) return office.id;
+  }
+  const numeric = Number(ref);
+  if (Number.isFinite(numeric)) {
+    const office = await models.Office.findOne({ where: { bitrixOfficeId: numeric } });
+    if (office) return office.id;
+  }
+  return null;
+}
+
+function notifySlots(officeId, date) {
+  const { invalidateSlotsCache } = require('./slotsService');
+  const { broadcastSlotsUpdated } = require('../lib/ws');
+  return Promise.resolve(invalidateSlotsCache(officeId, date))
+    .then(() => broadcastSlotsUpdated(officeId, date))
+    .catch((e) => console.error('Service: не удалось сбросить кеш сетки', e?.message || e));
+}
+
+/**
+ * Завести встречу, назначенную в Битриксе мимо сетки.
+ * lead: { bitrix_lead_id, office_id (ссылка из лида), date, timeSlot, status, STATUS_ID }
+ * Возвращает { created, appointment } | { skipped: reason } | { exists } | { invalidOffice }.
+ */
+async function createAppointmentFromLead(lead, trace = {}) {
+  const { assertSlotBookable, BookingError } = require('./bookingGuard');
+  const { recordBypass } = require('./bypassLog');
+  const bypass = {
+    leadId: lead.bitrix_lead_id, officeRef: lead.office_id, date: lead.date, time: slotStart(lead.timeSlot),
+    bitrixStatus: lead.STATUS_ID, bitrixUserId: trace.bitrixUserId, source: trace.source || 'leads_sync',
+  };
+  const localOfficeId = await resolveOfficeId(lead.office_id);
+  if (!localOfficeId) {
+    await recordBypass({ ...bypass, outcome: 'no_office' });
+    return { invalidOffice: true };
+  }
+  const fullTimeSlot = await resolveFullTimeSlot(localOfficeId, lead.date, lead.timeSlot);
+  const exists = await models.Appointment.findOne({
+    where: {
+      bitrix_lead_id: lead.bitrix_lead_id,
+      office_id: localOfficeId,
+      date: lead.date,
+      timeSlot: { [Op.in]: [fullTimeSlot, slotStart(fullTimeSlot)] }
+    }
+  });
+  if (exists) return { exists: true, appointment: exists };
+
+  // Прошедшие даты и горизонт записи здесь не ограничиваем: CRM может
+  // легитимно прислать запись задним числом.
+  //
+  // Полный слот НЕ повод пропускать встречу. Встреча, назначенная в
+  // Битриксе мимо шахматки, уже существует (стадия 2 + дата/время лида —
+  // канонический факт), и клиент придёт независимо от того, покажет ли
+  // её сетка. Раньше такие лиды пропускались (84 лида с 02.09 по 25.09):
+  // сетка показывала свободные места, которых нет, и операторы
+  // дописывали в переполненный слот ещё людей. Теперь встреча заводится,
+  // слот честно показывает «мест нет», перебор виден в логе.
+  // День без расписания по-прежнему пропускается: такую запись не к чему
+  // привязать, и она мешала бы применению шаблона
+  // (scheduleRewrite.findOrphanedAppointments).
+  let overbooked = false;
+  try {
+    await assertSlotBookable({
+      officeId: localOfficeId,
+      date: lead.date,
+      timeSlot: fullTimeSlot,
+      allowPast: true,
+      enforceHorizon: false
+    });
+  } catch (guardError) {
+    if (guardError instanceof BookingError && guardError.reason === 'slot_full') {
+      overbooked = true;
+      console.warn(`OVERBOOKED_FROM_CRM lead=${lead.bitrix_lead_id} office=${localOfficeId} ${lead.date} ${fullTimeSlot}: встреча назначена в Битриксе в полный слот`);
+    } else if (guardError instanceof BookingError) {
+      console.warn(`Service: пропускаю лид ${lead.bitrix_lead_id} — ${guardError.reason}: ${guardError.message}`);
+      await recordBypass({ ...bypass, outcome: guardError.reason });
+      return { skipped: guardError.reason };
+    } else {
+      throw guardError;
+    }
+  }
+
+  const createdAppt = await models.Appointment.create({
+    bitrix_lead_id: lead.bitrix_lead_id,
+    office_id: localOfficeId,
+    date: lead.date,
+    timeSlot: fullTimeSlot,
+    status: lead.status || 'pending',
+    createdBy: 0
+  });
+  await recordSyncChange(createdAppt, overbooked ? 'created_from_crm_overbooked' : 'created_from_crm', null, {
+    source: 'leads_sync', bitrixStatus: lead.STATUS_ID, ...trace,
+  });
+  await recordBypass({ ...bypass, outcome: overbooked ? 'overbooked' : 'created', appointmentId: createdAppt.id });
+  await notifySlots(localOfficeId, lead.date);
+  console.log(`Service: Created appointment for lead ${lead.bitrix_lead_id}, invalidated cache for office ${localOfficeId}, date ${lead.date}`);
+  return { created: true, overbooked, appointment: createdAppt };
+}
+
+/**
+ * Переписать встречу по лиду (дата/время/офис/статус из CRM).
+ * Возвращает true, если встреча изменилась.
+ */
+async function updateAppointmentFromLead(appt, lead, trace = {}) {
+  // Оператор только что менял встречу в виджете, а до Bitrix это ещё
+  // могло не доехать — не затираем его решение состоянием CRM
+  // (та же защита, что в autoSyncStatuses).
+  if (await hasRecentLocalStatusChange(appt.id)) return false;
+  const prev = { office_id: appt.office_id, date: appt.date };
+  const before = { status: appt.status, date: appt.date, timeSlot: appt.timeSlot, office_id: appt.office_id };
+  if (lead.status !== undefined) appt.status = lead.status;
+  if (lead.date !== undefined) appt.date = lead.date;
+  // Re-resolve office in case Bitrix office changed
+  const localOfficeId = await resolveOfficeId(lead.office_id);
+  if (localOfficeId) appt.office_id = localOfficeId;
+  if (lead.timeSlot !== undefined && !(appt.date === before.date && appt.office_id === before.office_id && slotCovers(appt.timeSlot, slotStart(lead.timeSlot)))) {
+    const resolved = await resolveFullTimeSlot(appt.office_id, appt.date, lead.timeSlot);
+    // Если слот в расписании не нашёлся, не деградируем полный
+    // интервал до короткого «HH:MM» при неизменном начале.
+    if (resolved.includes('-') || slotStart(resolved) !== slotStart(appt.timeSlot)) {
+      appt.timeSlot = resolved;
+    }
+  }
+  const changed = before.status !== appt.status || before.date !== appt.date
+    || before.timeSlot !== appt.timeSlot || String(before.office_id) !== String(appt.office_id);
+  if (!changed) return false;
+  await appt.save();
+  await recordSyncChange(appt, 'updated_from_crm', before, { source: 'leads_sync', bitrixStatus: lead.STATUS_ID, ...trace });
+  if (prev.office_id && prev.date) await notifySlots(prev.office_id, prev.date);
+  if (appt.office_id && appt.date) await notifySlots(appt.office_id, appt.date);
+  console.log(`Service: Updated appointment ${appt.id} for lead ${lead.bitrix_lead_id}, invalidated cache for office ${appt.office_id}, date ${appt.date}`);
+  return true;
+}
+
 // Create or update appointments in DB based on Bitrix leads
 async function syncMissingAppointments({ applyUpdates = true } = {}) {
   const analysis = await fetchAndAnalyzeBitrixLeads();
-
-  // Lazy imports to avoid circular deps at module load
-  const { invalidateSlotsCache } = require('./slotsService');
-  const { broadcastSlotsUpdated } = require('../lib/ws');
-  const { assertSlotBookable, BookingError } = require('./bookingGuard');
 
   let created = 0;
   let updated = 0;
   const invalidOfficeRefs = [];
   const skipped = [];
 
-  // Bitrix отдаёт только время начала («15:00»), а расписание и виджет живут
-  // интервалами («15:00-15:30»). Ищем в расписании офиса слот с таким началом
-  // и достраиваем интервал; иначе assertSlotBookable не находил слот по паре
-  // start/end (end получался равным start) и молча пропускал каждый лид.
-  async function resolveFullTimeSlot(officeId, date, rawTimeSlot) {
-    const normalized = String(rawTimeSlot || '').replace(/\s+/g, '');
-    if (normalized.includes('-')) return normalized;
-    const schedule = await models.Schedule.findOne({ where: { office_id: officeId, date } });
-    if (!schedule) return normalized;
-    const slot = await models.Slot.findOne({ where: { schedule_id: schedule.id, start: normalized } });
-    return slot ? `${slot.start}-${slot.end}` : normalized;
-  }
-
-  // Helper: resolve local office UUID by provided office ref (uuid or Bitrix numeric)
-  async function resolveOfficeId(officeRef) {
-    if (!officeRef) return null;
-    const ref = String(officeRef);
-    const uuidLike = /^[0-9a-fA-F-]{36}$/i.test(ref);
-    if (uuidLike) {
-      const office = await models.Office.findByPk(ref);
-      if (office) return office.id;
-    }
-    const numeric = Number(ref);
-    if (Number.isFinite(numeric)) {
-      const office = await models.Office.findOne({ where: { bitrixOfficeId: numeric } });
-      if (office) return office.id;
-    }
-    return null;
-  }
-
-  // Create new ones
   console.log(`Service: Starting bulk creation of ${analysis.toCreate?.reduce((sum, group) => sum + (group.leads?.length || 0), 0) || 0} appointments`);
   for (const group of (analysis.toCreate || [])) {
-    console.log(`Service: Processing group for office ${group.officeId} with ${group.leads?.length || 0} leads`);
     for (const lead of group.leads || []) {
       try {
-        const localOfficeId = await resolveOfficeId(lead.office_id);
-        if (!localOfficeId) {
-          invalidOfficeRefs.push({ officeRef: lead.office_id, bitrix_lead_id: lead.bitrix_lead_id });
-          continue;
-        }
-        const fullTimeSlot = await resolveFullTimeSlot(localOfficeId, lead.date, lead.timeSlot);
-        const exists = await models.Appointment.findOne({
-          where: {
-            bitrix_lead_id: lead.bitrix_lead_id,
-            office_id: localOfficeId,
-            date: lead.date,
-            timeSlot: { [Op.in]: [fullTimeSlot, slotStart(fullTimeSlot)] }
-          }
-        });
-        if (exists) {
-          // Keep for potential update step below
-          continue;
-        }
-
-        // Прошедшие даты и горизонт записи здесь не ограничиваем: CRM может
-        // легитимно прислать запись задним числом.
-        //
-        // Полный слот НЕ повод пропускать встречу. Встреча, назначенная в
-        // Битриксе мимо шахматки, уже существует (стадия 2 + дата/время лида —
-        // канонический факт), и клиент придёт независимо от того, покажет ли
-        // её сетка. Раньше такие лиды пропускались (84 лида с 02.09 по 25.09):
-        // сетка показывала свободные места, которых нет, и операторы
-        // дописывали в переполненный слот ещё людей. Теперь встреча заводится,
-        // слот честно показывает «мест нет», перебор виден в логе.
-        // Слот вне сетки и день без расписания по-прежнему пропускаются:
-        // такую запись нельзя привязать к слоту, и она мешала бы применению
-        // шаблона (scheduleRewrite.findOrphanedAppointments).
-        let overbooked = false;
-        try {
-          await assertSlotBookable({
-            officeId: localOfficeId,
-            date: lead.date,
-            timeSlot: fullTimeSlot,
-            allowPast: true,
-            enforceHorizon: false
-          });
-        } catch (guardError) {
-          if (guardError instanceof BookingError && guardError.reason === 'slot_full') {
-            overbooked = true;
-            console.warn(`OVERBOOKED_FROM_CRM lead=${lead.bitrix_lead_id} office=${localOfficeId} ${lead.date} ${fullTimeSlot}: встреча назначена в Битриксе в полный слот`);
-          } else if (guardError instanceof BookingError) {
-            skipped.push({ bitrix_lead_id: lead.bitrix_lead_id, date: lead.date, timeSlot: lead.timeSlot, reason: guardError.reason });
-            console.warn(`Service: пропускаю лид ${lead.bitrix_lead_id} — ${guardError.reason}: ${guardError.message}`);
-            continue;
-          } else {
-            throw guardError;
-          }
-        }
-
-        const createdAppt = await models.Appointment.create({
-          bitrix_lead_id: lead.bitrix_lead_id,
-          office_id: localOfficeId,
-          date: lead.date,
-          timeSlot: fullTimeSlot,
-          status: lead.status || 'pending',
-          createdBy: 0
-        });
-        await recordSyncChange(createdAppt, overbooked ? 'created_from_crm_overbooked' : 'created_from_crm', null, { source: 'leads_sync', bitrixStatus: lead.STATUS_ID });
-        await invalidateSlotsCache(localOfficeId, lead.date);
-        broadcastSlotsUpdated(localOfficeId, lead.date);
-        console.log(`Service: Created appointment for lead ${lead.bitrix_lead_id}, invalidated cache for office ${localOfficeId}, date ${lead.date}`);
-        created++;
+        const result = await createAppointmentFromLead(lead);
+        if (result.invalidOffice) invalidOfficeRefs.push({ officeRef: lead.office_id, bitrix_lead_id: lead.bitrix_lead_id });
+        else if (result.skipped) skipped.push({ bitrix_lead_id: lead.bitrix_lead_id, date: lead.date, timeSlot: lead.timeSlot, reason: result.skipped });
+        else if (result.created) created++;
       } catch (e) {
         console.error('Service: failed to create appointment from lead', lead?.bitrix_lead_id, e?.message || e);
       }
     }
   }
 
-  // Apply updates to existing appointments if requested
   if (applyUpdates) {
     for (const group of (analysis.toUpdate || [])) {
       for (const lead of group.leads || []) {
         try {
           const appt = await models.Appointment.findByPk(lead.id);
           if (!appt) continue;
-          // Оператор только что менял встречу в виджете, а до Bitrix это ещё
-          // могло не доехать — не затираем его решение состоянием CRM
-          // (та же защита, что в autoSyncStatuses).
-          if (await hasRecentLocalStatusChange(appt.id)) continue;
-          const prev = { office_id: appt.office_id, date: appt.date };
-          const before = { status: appt.status, date: appt.date, timeSlot: appt.timeSlot, office_id: appt.office_id };
-          if (lead.status !== undefined) appt.status = lead.status;
-          if (lead.date !== undefined) appt.date = lead.date;
-          // Re-resolve office in case Bitrix office changed
-          const localOfficeId = await resolveOfficeId(lead.office_id);
-          if (localOfficeId) appt.office_id = localOfficeId;
-          if (lead.timeSlot !== undefined) {
-            const resolved = await resolveFullTimeSlot(appt.office_id, appt.date, lead.timeSlot);
-            // Если слот в расписании не нашёлся, не деградируем полный
-            // интервал до короткого «HH:MM» при неизменном начале.
-            if (resolved.includes('-') || slotStart(resolved) !== slotStart(appt.timeSlot)) {
-              appt.timeSlot = resolved;
-            }
-          }
-          await appt.save();
-          await recordSyncChange(appt, 'updated_from_crm', before, { source: 'leads_sync', bitrixStatus: lead.STATUS_ID });
-          // Invalidate caches for old and new dates
-          if (prev.office_id && prev.date) {
-            await invalidateSlotsCache(prev.office_id, prev.date);
-            broadcastSlotsUpdated(prev.office_id, prev.date);
-          }
-          if (appt.office_id && appt.date) {
-            await invalidateSlotsCache(appt.office_id, appt.date);
-            broadcastSlotsUpdated(appt.office_id, appt.date);
-          }
-          console.log(`Service: Updated appointment ${lead.id} for lead ${lead.bitrix_lead_id}, invalidated cache for office ${appt.office_id}, date ${appt.date}`);
-          updated++;
+          if (await updateAppointmentFromLead(appt, lead)) updated++;
         } catch (e) {
           console.error('Service: failed to update appointment from lead', lead?.id, e?.message || e);
         }
@@ -577,6 +584,12 @@ async function syncMissingAppointments({ applyUpdates = true } = {}) {
 }
 
 module.exports.syncMissingAppointments = syncMissingAppointments;
+module.exports.createAppointmentFromLead = createAppointmentFromLead;
+module.exports.updateAppointmentFromLead = updateAppointmentFromLead;
+module.exports.resolveOfficeId = resolveOfficeId;
+module.exports.applyDecision = applyDecision;
+module.exports.fetchLeadStatuses = fetchLeadStatuses;
+module.exports.recordSyncChange = recordSyncChange;
 
 // Backfill function removed - no longer automatically updating Bitrix office fields
 
@@ -600,7 +613,7 @@ async function checkNoShowLeads({ daysBack = 3 } = {}) {
         [Op.not]: null
       }
     },
-    attributes: ['id', 'bitrix_lead_id', 'date', 'timeSlot', 'office_id']
+    attributes: ['id', 'bitrix_lead_id', 'date', 'timeSlot', 'office_id', 'status']
   });
   
   console.log(`Service: Found ${noShowAppointments.length} no-show appointments to check`);
@@ -636,45 +649,14 @@ async function checkNoShowLeads({ daysBack = 3 } = {}) {
           continue;
         }
 
-        // Без подстановки 'pending' по умолчанию: лид в «Перезвонить» или НДЗ —
-        // не повод возвращать неявку в активную встречу.
-        const bitrixStatus = BITRIX_STATUS_MAPPING[leadStatus] || null;
-
-        // Встреча, которая уже закончилась, помечена неявкой обоснованно.
-        // Раньше проверки на это не было, и две задачи тянули запись в разные
-        // стороны: autoExpireAppointments раз в час ставила no_show, а этот
-        // прогон раз в 30 минут возвращал pending, потому что лид всё ещё
-        // висел в стадии 2. Статус менялся сам по себе дважды в час, и каждая
-        // смена рассылала WS-событие всем клиентам.
-        //
-        // Восстанавливаем только будущие встречи, а для прошедших — лишь
-        // терминальный статус из CRM ('completed'), который неявкой не является.
-        const endPart = appointment.timeSlot && String(appointment.timeSlot).includes('-')
-          ? slotEnd(appointment.timeSlot)
-          : '23:59';
-        const appointmentEnd = parseBusinessDateTime(appointment.date, endPart);
-        const alreadyFinished = appointmentEnd ? appointmentEnd.getTime() <= Date.now() : false;
-
-        if (alreadyFinished && bitrixStatus !== 'completed') {
-          continue;
-        }
-
-        // Если статус в Bitrix24 активный (не отменен и не "не пришел"), восстанавливаем appointment
-        if (['pending', 'confirmed', 'completed', 'rescheduled'].includes(bitrixStatus)) {
-          console.log(`Service: Restoring appointment ${appointment.id} for lead ${appointment.bitrix_lead_id} from no_show to ${bitrixStatus}`);
-          
-          const before = { status: appointment.status };
-          appointment.status = bitrixStatus;
-          await appointment.save();
-          await recordSyncChange(appointment, `restored_${bitrixStatus}`, before, { source: 'no_show_check', bitrixStatus: leadStatus });
-          
-          // Инвалидируем кеш
-          const { invalidateSlotsCache } = require('./slotsService');
-          const { broadcastSlotsUpdated } = require('../lib/ws');
-          
-          await invalidateSlotsCache(appointment.office_id, appointment.date);
-          broadcastSlotsUpdated(appointment.office_id, appointment.date);
-          
+        // Правило одно на все пути (leadRules.decideFromLeadStatus): прошедшую
+        // неявку возвращает только приход (4 / CONVERTED), будущую — стадии
+        // встречи 2/37. Лид в «Перезвонить» или НДЗ — не повод возвращать
+        // неявку в активные. Раньше две задачи тянули запись в разные стороны:
+        // autoExpireAppointments ставила no_show, этот прогон возвращал pending.
+        const decision = decideFromLeadStatus(appointment, leadStatus);
+        if (decision && await applyDecision(appointment, decision, { source: 'no_show_check', bitrixStatus: leadStatus })) {
+          console.log(`Service: Restoring appointment ${appointment.id} for lead ${appointment.bitrix_lead_id} from no_show to ${decision.status}`);
           restored++;
         }
       } catch (error) {

@@ -140,6 +140,55 @@ router.post('/dedupe', allowCronOrAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Сверка последних дней с Битриксом. dry_run: true — только отчёт.
+router.post('/reconcile', allowCronOrAdmin, async (req, res, next) => {
+  try {
+    const { reconcileRecentAppointments } = require('../services/reconcile');
+    const days = Math.min(31, Math.max(1, Number(req.body?.days) || 7));
+    const report = await reconcileRecentAppointments({ daysBack: days, dryRun: req.body?.dry_run !== false });
+    res.json({ data: report });
+  } catch (e) { next(e); }
+});
+
+// Отчёт последней сверки (крон или ручной запуск)
+router.get('/reconcile/last', allowCronOrAdmin, async (_req, res, next) => {
+  try {
+    const { lastReport } = require('../services/reconcile');
+    res.json({ data: await lastReport() });
+  } catch (e) { next(e); }
+});
+
+// Очередь событий Битрикса: сколько пришло, обработано, упало
+router.get('/events/stats', allowCronOrAdmin, (_req, res) => {
+  const { getStats } = require('../services/bitrixEvents');
+  res.json({ data: { enabled: !!process.env.BITRIX_EVENTS_TOKEN, ...getStats() } });
+});
+
+// Продление расписания вперёд. dry_run: true — только отчёт.
+router.post('/schedule-rollforward', allowCronOrAdmin, async (req, res, next) => {
+  try {
+    const { rollForwardSchedules } = require('../services/scheduleRollForward');
+    const report = await rollForwardSchedules({ dryRun: req.body?.dry_run !== false });
+    res.json({ data: report });
+  } catch (e) { next(e); }
+});
+
+// Назначения мимо сетки: по дням, исходам и сотрудникам Битрикса
+router.get('/bypass', allowCronOrAdmin, async (req, res, next) => {
+  try {
+    const from = String(req.query.from || dayjs().subtract(30, 'day').format('YYYY-MM-DD')).slice(0, 10);
+    const to = String(req.query.to || dayjs().format('YYYY-MM-DD')).slice(0, 10);
+    const rows = await models.CrmBypass.findAll({
+      where: { createdAt: { [Op.between]: [new Date(`${from}T00:00:00+03:00`), new Date(`${to}T23:59:59+03:00`)] } },
+      order: [['createdAt', 'DESC']],
+      limit: 2000,
+      raw: true,
+    });
+    const count = (key) => rows.reduce((acc, r) => { const k = String(r[key] ?? '—'); acc[k] = (acc[k] || 0) + 1; return acc; }, {});
+    res.json({ data: { from, to, total: rows.length, byOutcome: count('outcome'), byUser: count('bitrixUserId'), rows: rows.slice(0, 500) } });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
 
 // Маршрут /backfill-lead-offices удалён: он импортировал backfillLeadOffices,
