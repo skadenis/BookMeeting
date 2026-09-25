@@ -146,6 +146,22 @@ function resolveLeadId(req) {
 	return Number.isFinite(fromBody) && fromBody > 0 ? fromBody : null;
 }
 
+// Активная запись лида ровно в этот офис, дату и слот (оба формата слота)
+async function findSameActiveBooking({ leadId, officeId, date, timeSlot, transaction }) {
+	const full = String(timeSlot || '').replace(/\s+/g, '');
+	const start = full.split('-')[0];
+	return models.Appointment.findOne({
+		where: {
+			bitrix_lead_id: leadId,
+			office_id: officeId,
+			date,
+			status: ['pending', 'confirmed'],
+			timeSlot: { [Op.in]: [full, start] },
+		},
+		transaction,
+	});
+}
+
 function normalizeDateString(value) {
 	if (!value) return null;
 	const raw = String(value).trim();
@@ -240,9 +256,29 @@ router.post('/', [
 		// без транзакции два одновременных бронирования прочитали бы одну и ту же
 		// занятость и оба прошли бы.
 		let appointment;
+		let alreadyBooked = false;
 		const cancelledBefore = [];
 		try {
 			appointment = await sequelize.transaction(async (tx) => {
+				// Все записи одного лида — строго по очереди. Блокировка строки
+				// слота не спасала от двух одновременных записей одного лида в
+				// РАЗНЫЕ слоты: обе транзакции не видели чужую запись и обе
+				// создавали активную встречу.
+				await sequelize.query('SELECT pg_advisory_xact_lock(CAST(:key AS bigint))', {
+					replacements: { key: String(lead_id) },
+					transaction: tx,
+				});
+
+				// Повторная запись того же лида в тот же слот (второй клик,
+				// повтор запроса) — не новая встреча. Раньше она отменяла только
+				// что созданную запись, создавала такую же и слала в Битрикс
+				// второй круг «IN_PROCESS → 2» с повторным запуском роботов стадии.
+				const sameSlot = await findSameActiveBooking({ leadId: lead_id, officeId: office_id, date: newDate, timeSlot: time_slot, transaction: tx });
+				if (sameSlot) {
+					alreadyBooked = true;
+					return sameSlot;
+				}
+
 				await assertSlotBookable({
 					officeId: office_id,
 					date: newDate,
@@ -308,6 +344,15 @@ router.post('/', [
 			}
 			throw e;
 		}
+
+		if (alreadyBooked) {
+			return res.status(200).json({ data: await models.Appointment.findByPk(appointment.id, { include: [{ model: models.Office }] }), meta: { alreadyBooked: true } });
+		}
+
+		// Защищаем свежую запись от пятиминутной синхронизации лидов: пока
+		// Битрикс не принял новые дату и время, лид ещё несёт старые, и
+		// syncMissingAppointments переносил запись оператора обратно.
+		await markLocalStatusChange(appointment.id, 'pending');
 
 		// Оповещения — только после успешного коммита транзакции
 		for (const c of cancelledBefore) {
@@ -388,8 +433,13 @@ router.post('/', [
 					
 					const response = await postToBitrixWithRetry(url, requestData);
 					console.log('✅ Ответ от Bitrix при создании встречи:', response.status, response.data);
+					await clearLocalStatusChange(appointment.id);
 				} catch (e) {
-					console.error('Bitrix lead update failed on appointment creation:', e?.response?.data || e?.message || e);
+					// Тот же маркер, что у подтверждения: запись есть в шахматке, но не в CRM
+					console.error(
+						`⛔ BITRIX_SYNC_FAILED create appointment=${appointment.id} lead=${appointment.bitrix_lead_id}:`,
+						e?.response?.data || e?.message || e
+					);
 				}
 			});
 		} else if (appointment.bitrix_lead_id) {
@@ -600,7 +650,10 @@ router.put('/:id', [
 					const r = await postToBitrixWithRetry(url, requestData);
 					console.log('✅ Ответ от Bitrix при отмене встречи:', r.status, r.data);
 				} catch (e) {
-					console.error('Bitrix lead update failed on cancellation:', e?.response?.data || e?.message || e);
+					console.error(
+						`⛔ BITRIX_SYNC_FAILED cancel appointment=${appointment.id} lead=${appointment.bitrix_lead_id}:`,
+						e?.response?.data || e?.message || e
+					);
 				}
 			});
 		} else if (status === 'cancelled' && appointment.bitrix_lead_id) {

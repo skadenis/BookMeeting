@@ -9,6 +9,15 @@ jest.mock('../../../src/lib/db', () => ({
 
 jest.mock('axios');
 
+// Метка «оператор только что менял встречу» живёт в Redis; в юнит-тестах
+// Redis нет, и настоящий клиент вешал тест на переподключении.
+jest.mock('../../../src/services/localStatusGuard', () => ({
+  hasRecentLocalStatusChange: jest.fn().mockResolvedValue(false)
+}));
+jest.mock('../../../src/services/appointmentHistory', () => ({
+  recordAppointmentChange: jest.fn().mockResolvedValue(null)
+}));
+
 const axios = require('axios');
 const { models } = require('../../../src/lib/db');
 const { autoSyncStatuses, fetchAndAnalyzeBitrixLeads } = require('../../../src/services/syncTasks');

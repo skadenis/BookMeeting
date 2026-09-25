@@ -23,6 +23,7 @@ const apiRouter = require('./routes/index');
 const authRouter = require('./routes/auth');
 const adminUsersRouter = require('./routes/adminUsers');
 const adminSettingsRouter = require('./routes/adminSettings');
+const exportRouter = require('./routes/export');
 // const { seedIfEmpty } = require('./seed');
 
 const PORT = Number(process.env.PORT || 4000);
@@ -208,6 +209,9 @@ function createApp() {
 	app.use('/api/admin/settings', adminSettingsRouter);
 	// Secure sync service under admin auth or X-Cron-Token (handled inside router)
 	app.use('/api/admin/sync', syncServiceRouter);
+
+	// Выгрузка для платформы — свой ключ EXPORT_TOKEN, до bitrixAuth
+	app.use('/api/export', exportRouter);
 
 	// Public routes (protected by bitrixAuthMiddleware)
 	app.use('/api', bitrixAuthMiddleware);
