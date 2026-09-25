@@ -164,15 +164,6 @@ router.get('/events/stats', allowCronOrAdmin, (_req, res) => {
   res.json({ data: { enabled: !!process.env.BITRIX_EVENTS_TOKEN, ...getStats() } });
 });
 
-// Продление расписания вперёд. dry_run: true — только отчёт.
-router.post('/schedule-rollforward', allowCronOrAdmin, async (req, res, next) => {
-  try {
-    const { rollForwardSchedules } = require('../services/scheduleRollForward');
-    const report = await rollForwardSchedules({ dryRun: req.body?.dry_run !== false });
-    res.json({ data: report });
-  } catch (e) { next(e); }
-});
-
 // Назначения мимо сетки: по дням, исходам и сотрудникам Битрикса
 router.get('/bypass', allowCronOrAdmin, async (req, res, next) => {
   try {

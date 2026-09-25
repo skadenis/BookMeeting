@@ -7,7 +7,7 @@
 // пришедший за месяц остались «отменёнными»).
 //
 // Теперь три пути ведут к одним правилам (leadRules):
-//   1. reconcileLead / reconcileOfficeDeal — по событию Битрикса сразу;
+//   1. applyLeadState / applyOfficeDeal — по событиям Битрикса (пачками, bitrixEvents.js);
 //   2. прежний опрос (syncTasks) — страховка, если событие потерялось;
 //   3. reconcileRecentAppointments — раз в сутки сверяет последние 7 дней и
 //      отчитывается о каждом расхождении.
@@ -46,22 +46,11 @@ function businessDateOf(value) {
 
 /**
  * Лид изменился в Битриксе: привести его встречи к текущему состоянию лида.
+ * lead — строка crm.lead.get / crm.lead.list (STATUS_ID, поля встречи, MODIFY_BY_ID).
  */
-async function reconcileLead(leadId, { source = 'bitrix_event', event = null } = {}) {
-	const id = Number(leadId);
+async function applyLeadState(lead, { source = 'bitrix_event', event = null } = {}) {
+	const id = Number(lead?.ID);
 	if (!Number.isFinite(id) || id <= 0) return { ok: false, reason: 'bad_id' };
-
-	let data;
-	try {
-		data = await callBitrix('crm.lead.get', { id }, { attempts: 3, retryDelayMs: RETRY_DELAY_MS() });
-	} catch (e) {
-		// Удалённый лид Битрикс отдаёт как 400 «Not found» — повторять нечего
-		if (e?.response?.status === 400) return { ok: false, reason: 'not_found' };
-		throw e;
-	}
-	const lead = data?.result;
-	if (!lead) return { ok: false, reason: 'not_found' };
-
 	const stage = String(lead.STATUS_ID || '');
 	const bitrixUserId = Number(lead.MODIFY_BY_ID) || null;
 	const trace = { source, bitrixStatus: stage, bitrixUserId, ...(event ? { event } : {}) };
@@ -69,7 +58,7 @@ async function reconcileLead(leadId, { source = 'bitrix_event', event = null } =
 	const today = businessToday();
 
 	// 1. Лид на стадии встречи — встреча должна быть в сетке (в том числе
-	// назначенная в карточке мимо шахматки).
+	// назначенная или перенесённая в карточке мимо шахматки).
 	if (MEETING_STAGES.has(stage)) {
 		const meeting = leadMeeting(lead);
 		if (meeting && meeting.date >= today) {
@@ -138,29 +127,28 @@ async function markVisit(leadId, visitDate, trace, { dryRun = false } = {}) {
 	return { changed: true, change };
 }
 
-async function reconcileOfficeDeal(dealId, { source = 'bitrix_event', event = null } = {}) {
-	const id = Number(dealId);
-	if (!Number.isFinite(id) || id <= 0) return { ok: false, reason: 'bad_id' };
-	let data;
-	try {
-		data = await callBitrix('crm.deal.get', { id }, { attempts: 3, retryDelayMs: RETRY_DELAY_MS() });
-	} catch (e) {
-		if (e?.response?.status === 400) return { ok: false, reason: 'not_found' };
-		throw e;
-	}
-	const deal = data?.result;
-	if (!deal) return { ok: false, reason: 'not_found' };
-	if (String(deal.CATEGORY_ID) !== OFFICE_DEAL_CATEGORY || !Number(deal.LEAD_ID)) {
-		return { ok: true, ignored: true };
-	}
-	const visitDate = businessDateOf(deal.DATE_CREATE);
+/**
+ * Заведена сделка «Офис» — клиент пришёл. deal — строка crm.deal.list
+ * (ID, LEAD_ID, CONTACT_ID, DATE_CREATE, CATEGORY_ID). Без LEAD_ID встреча
+ * ищется по контакту, если он записан во встрече.
+ */
+async function applyOfficeDeal(deal, { source = 'bitrix_event', event = null } = {}) {
+	const id = Number(deal?.ID);
+	if (deal?.CATEGORY_ID !== undefined && String(deal.CATEGORY_ID) !== OFFICE_DEAL_CATEGORY) return { ok: true, ignored: true };
+	const visitDate = businessDateOf(deal?.DATE_CREATE);
 	if (!visitDate) return { ok: false, reason: 'bad_date' };
-	const trace = { source, bitrixDealId: id, bitrixUserId: Number(deal.CREATED_BY_ID) || null, ...(event ? { event } : {}) };
-	const r = await markVisit(deal.LEAD_ID, visitDate, trace);
-	if (r.visitWithoutBooking) {
-		console.log(`VISIT_WITHOUT_BOOKING lead=${deal.LEAD_ID} deal=${id} date=${visitDate}: клиент пришёл без записи в шахматке`);
+	let leadId = Number(deal.LEAD_ID) || null;
+	if (!leadId && Number(deal.CONTACT_ID)) {
+		const byContact = await models.Appointment.findOne({ where: { bitrix_contact_id: Number(deal.CONTACT_ID), date: visitDate, bitrix_lead_id: { [Op.not]: null } } });
+		leadId = byContact ? Number(byContact.bitrix_lead_id) : null;
 	}
-	return { ok: true, leadId: Number(deal.LEAD_ID), date: visitDate, ...r };
+	if (!leadId) return { ok: true, ignored: true, reason: 'no_lead' };
+	const trace = { source, bitrixDealId: id, ...(event ? { event } : {}) };
+	const r = await markVisit(leadId, visitDate, trace);
+	if (r.visitWithoutBooking) {
+		console.log(`VISIT_WITHOUT_BOOKING lead=${leadId} deal=${id} date=${visitDate}: клиент пришёл без записи в шахматке`);
+	}
+	return { ok: true, leadId, date: visitDate, ...r };
 }
 
 // Сделки «Офис» с даты from (по Минску) постранично: Map(leadId → Set(дата визита))
@@ -296,8 +284,8 @@ async function lastReport() {
 }
 
 module.exports = {
-	reconcileLead,
-	reconcileOfficeDeal,
+	applyLeadState,
+	applyOfficeDeal,
 	reconcileRecentAppointments,
 	markVisit,
 	fetchOfficeVisits,

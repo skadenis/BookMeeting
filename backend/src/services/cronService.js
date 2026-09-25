@@ -133,24 +133,10 @@ class CronService {
       }
     }, { scheduled: false, timezone: 'Europe/Minsk' });
 
-    // Продление расписания на окно записи: без него расписание кончалось
-    // на дате последнего ручного применения шаблона.
-    const rollForwardJob = cron.schedule(process.env.SCHEDULE_ROLLFORWARD_CRON || '10 2 * * *', async () => {
-      try {
-        if (process.env.SCHEDULE_ROLLFORWARD === 'false') return;
-        const { rollForwardSchedules } = require('./scheduleRollForward');
-        const report = await rollForwardSchedules();
-        console.log('Schedule roll-forward done:', { created: report.created.length, noSource: report.noSource.length });
-      } catch (error) {
-        console.error('Schedule roll-forward cron error:', error.message);
-      }
-    }, { scheduled: false, timezone: 'Europe/Minsk' });
-
     this.register('leads-sync', leadsSyncJob);
     this.register('dedupe', dedupeJob);
     this.register('no-show-leads', noShowLeadsJob);
     this.register('reconcile', reconcileJob);
-    this.register('schedule-rollforward', rollForwardJob);
 
     for (const [name, job] of this.jobs) {
       job.start();

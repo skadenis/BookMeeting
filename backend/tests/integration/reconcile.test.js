@@ -16,7 +16,7 @@ const { createApp } = require('../../src/index');
 const { resetDatabase, closeDatabase, models } = require('../helpers/db');
 const events = require('../../src/services/bitrixEvents');
 const { reconcileRecentAppointments } = require('../../src/services/reconcile');
-const { rollForwardSchedules } = require('../../src/services/scheduleRollForward');
+const { syncMissingAppointments } = require('../../src/services/syncTasks');
 const { businessToday } = require('../../src/lib/time');
 
 const TODAY = businessToday();
@@ -37,12 +37,23 @@ axios.post.mockImplementation(async (url, params) => {
     return { data: { result: { ID: String(params.id), ...lead } } };
   }
   if (method === 'crm.lead.list') {
+    if (params.filter?.STATUS_ID) {
+      // опрос назначенных встреч (syncMissingAppointments)
+      if (Number(params.start || 0) > 0) return { data: { result: [] } };
+      const st = params.filter.STATUS_ID.map(String);
+      return { data: { result: Object.entries(bx.leads).filter(([, l]) => st.includes(String(l.STATUS_ID))).map(([ID, l]) => ({ ID, ...l })) } };
+    }
     const ids = (params.filter?.ID || []).map(Number);
-    return { data: { result: ids.filter((id) => bx.leads[id]).map((id) => ({ ID: String(id), STATUS_ID: bx.leads[id].STATUS_ID })) } };
+    return { data: { result: ids.filter((id) => bx.leads[id]).map((id) => ({ ID: String(id), ...bx.leads[id] })) } };
   }
   if (method === 'crm.deal.get') {
     const deal = bx.deals[params.id];
     return { data: { result: deal ? { ID: String(params.id), ...deal } : null } };
+  }
+  if (method === 'crm.deal.list' && params.filter?.ID) {
+    const ids = params.filter.ID.map(String);
+    return { data: { result: Object.entries(bx.deals).map(([ID, d]) => ({ ID, ...d }))
+      .filter((d) => ids.includes(d.ID) && String(d.CATEGORY_ID) === String(params.filter.CATEGORY_ID)) } };
   }
   if (method === 'crm.deal.list') {
     if (bx.dealListFails) { const e = new Error('Bitrix down'); e.response = { status: 502 }; throw e; }
@@ -66,10 +77,14 @@ async function scheduleFor(date, { capacity = 2, slots = [['10:00', '10:30'], ['
   return schedule;
 }
 
+// Стандартный исходящий вебхук портала; окно склейки закрываем вручную
 async function sendEvent(query) {
-  const res = await request(app).post(`/api/bitrix-events?token=hook-secret&${query}`);
+  const [kind, id] = query.split('=');
+  const event = kind === 'deal_id' ? 'ONCRMDEALADD' : 'ONCRMLEADUPDATE';
+  const res = await request(app).post('/api/bitrix-events').type('form')
+    .send(`event=${event}&data[FIELDS][ID]=${id}&auth[application_token]=hook-secret`);
   expect(res.status).toBe(202);
-  await events.idle();
+  await events.flush();
 }
 
 const history = async (appointmentId) => models.AppointmentHistory.findAll({ where: { appointment_id: appointmentId }, order: [['createdAt', 'ASC']], raw: true });
@@ -89,38 +104,40 @@ afterAll(async () => {
   await closeDatabase();
 });
 
-describe('событие Битрикса: встреча назначена в карточке мимо сетки', () => {
-  it('заводит встречу в сетку сразу, пишет автора из Битрикса и учёт «мимо сетки»', async () => {
+describe('встреча назначена или перенесена в карточке мимо сетки', () => {
+  it('новое назначение: событие по лиду без встречи в шахматке отсеивается без запроса в Битрикс, встречу заводит опрос', async () => {
     await scheduleFor(day(1));
     bx.leads[5001] = { STATUS_ID: '2', UF_CRM_1655460588: `${day(1)}T03:00:00+03:00`, UF_CRM_1657019494: '15:00', UF_CRM_1675255265: '774', MODIFY_BY_ID: '295' };
 
     await sendEvent('lead_id=5001');
+    expect(bx.calls.filter((c) => c.method.startsWith('crm.lead'))).toHaveLength(0);
+    expect(events.getStats().leadsFiltered).toBe(1);
 
+    await syncMissingAppointments();
     const appts = await models.Appointment.findAll({ where: { bitrix_lead_id: 5001 } });
     expect(appts).toHaveLength(1);
     expect(appts[0]).toMatchObject({ date: day(1), timeSlot: '15:00-15:30', status: 'pending' });
     const [h] = await history(appts[0].id);
     expect(h.action).toBe('created_from_crm');
-    expect(h.newValue.actor).toMatchObject({ type: 'system', source: 'bitrix_event', bitrixUserId: 295 });
     const bypass = await models.CrmBypass.findAll({ raw: true });
-    expect(bypass).toEqual([expect.objectContaining({ leadId: '5001', outcome: 'created', bitrixUserId: '295', source: 'bitrix_event' })]);
+    expect(bypass).toEqual([expect.objectContaining({ leadId: '5001', outcome: 'created', source: 'leads_sync' })]);
   });
 
-  it('повтор и дубль события не плодят встречи и записи журнала', async () => {
+  it('перенос в карточке встречи из сетки: событие переносит её сразу и пишет, кто правил в Битриксе', async () => {
     await scheduleFor(day(1));
-    bx.leads[5002] = { STATUS_ID: '2', UF_CRM_1655460588: `${day(1)}T03:00:00+03:00`, UF_CRM_1657019494: '10:00', UF_CRM_1675255265: '774' };
+    await scheduleFor(day(2));
+    const a = await models.Appointment.create({ office_id: office.id, bitrix_lead_id: 5002, date: day(1), timeSlot: '10:00-10:30', status: 'pending', createdBy: 288 });
+    bx.leads[5002] = { STATUS_ID: '2', UF_CRM_1655460588: `${day(2)}T03:00:00+03:00`, UF_CRM_1657019494: '15:00', UF_CRM_1675255265: '774', MODIFY_BY_ID: '327' };
 
     await sendEvent('lead_id=5002');
     await sendEvent('lead_id=5002');
-    const res = await request(app).post('/api/bitrix-events').type('form')
-      .send('event=ONCRMLEADUPDATE&data[FIELDS][ID]=5002&auth[application_token]=hook-secret');
-    expect(res.status).toBe(202);
-    await events.idle();
 
-    const appts = await models.Appointment.findAll({ where: { bitrix_lead_id: 5002 } });
-    expect(appts).toHaveLength(1);
-    expect(await history(appts[0].id)).toHaveLength(1);
-    expect(await models.CrmBypass.count()).toBe(1);
+    await a.reload();
+    expect(a).toMatchObject({ date: day(2), timeSlot: '15:00-15:30' });
+    const hs = await history(a.id);
+    expect(hs.map((h) => h.action)).toEqual(['updated_from_crm']);
+    expect(hs[0].newValue.actor).toMatchObject({ source: 'bitrix_event', bitrixUserId: 327 });
+    expect(bx.calls.filter((c) => c.method === 'crm.lead.list')).toHaveLength(2);
   });
 
   it('в полный слот — встреча заводится как перебор, сетка показывает «мест нет»', async () => {
@@ -128,18 +145,20 @@ describe('событие Битрикса: встреча назначена в 
     await models.Appointment.create({ office_id: office.id, bitrix_lead_id: 1, date: day(1), timeSlot: '10:00-10:30', status: 'pending', createdBy: 288 });
     bx.leads[5003] = { STATUS_ID: '2', UF_CRM_1655460588: `${day(1)}T03:00:00+03:00`, UF_CRM_1657019494: '10:00', UF_CRM_1675255265: '774' };
 
-    await sendEvent('lead_id=5003');
+    await syncMissingAppointments();
 
     expect(await models.Appointment.count({ where: { date: day(1), timeSlot: '10:00-10:30', status: 'pending' } })).toBe(2);
     expect((await models.CrmBypass.findOne({ raw: true })).outcome).toBe('overbooked');
   });
 
-  it('день без расписания — встречи нет, но назначение учтено', async () => {
+  it('день без расписания — встречи нет, назначение учтено один раз при повторных прогонах', async () => {
     bx.leads[5004] = { STATUS_ID: '2', UF_CRM_1655460588: `${day(2)}T03:00:00+03:00`, UF_CRM_1657019494: '11:00', UF_CRM_1675255265: '774' };
 
-    await sendEvent('lead_id=5004');
+    await syncMissingAppointments();
+    await syncMissingAppointments();
 
     expect(await models.Appointment.count()).toBe(0);
+    expect(await models.CrmBypass.count()).toBe(1);
     expect((await models.CrmBypass.findOne({ raw: true })).outcome).toBe('no_schedule');
   });
 });
@@ -278,37 +297,6 @@ describe('суточная сверка последних 7 дней', () => {
   });
 });
 
-describe('продление расписания', () => {
-  it('берёт самую частую раскладку того же дня недели, разовые дни не тиражирует, существующие не трогает', async () => {
-    // для завтра: 1 и 3 недели назад — обычный день, 2 недели назад — короткий разовый
-    await scheduleFor(day(1 - 7), { capacity: 4, slots: [['09:00', '09:30'], ['09:30', '10:00']], customized: true });
-    await scheduleFor(day(1 - 14), { capacity: 4, slots: [['09:00', '09:30']], customized: true });
-    await scheduleFor(day(1 - 21), { capacity: 4, slots: [['09:00', '09:30'], ['09:30', '10:00']], customized: true });
-    // для послезавтра неделю назад офис закрывали — берём две недели назад
-    const closed = await scheduleFor(day(2 - 7), { capacity: 9, slots: [['12:00', '12:30']] });
-    await closed.update({ isWorkingDay: false });
-    await scheduleFor(day(2 - 14), { capacity: 3, slots: [['10:00', '10:30']] });
-    // сегодня уже есть — не трогаем
-    await scheduleFor(TODAY, { capacity: 1, slots: [['18:00', '18:30']] });
-
-    const dry = await rollForwardSchedules({ extraDays: 0, dryRun: true });
-    expect(dry.created.map((c) => c.date)).toEqual(expect.arrayContaining([day(1), day(2)]));
-    expect(await models.Schedule.count({ where: { office_id: office.id, date: day(1) } })).toBe(0);
-
-    await rollForwardSchedules({ extraDays: 0 });
-
-    const slotsOf = async (date) => {
-      const sch = await models.Schedule.findOne({ where: { office_id: office.id, date } });
-      return sch ? (await models.Slot.findAll({ where: { schedule_id: sch.id }, order: [['start', 'ASC']], raw: true })).map((s) => `${s.start}-${s.end}x${s.capacity}`) : null;
-    };
-    expect(await slotsOf(day(1))).toEqual(['09:00-09:30x4', '09:30-10:00x4']);
-    expect(await slotsOf(day(2))).toEqual(['10:00-10:30x3']);
-    expect(await slotsOf(TODAY)).toEqual(['18:00-18:30x1']);
-    // день без образца (3 дня вперёд) остаётся пустым
-    expect(await slotsOf(day(3))).toBeNull();
-  });
-});
-
 describe('журнал в админке', () => {
   it('показывает, кто менял встречу: оператор, событие Битрикса с автором', async () => {
     await scheduleFor(TODAY);
@@ -326,14 +314,13 @@ describe('журнал в админке', () => {
 
   it('список назначений мимо сетки в админке', async () => {
     await scheduleFor(day(1));
-    bx.leads[5101] = { STATUS_ID: '2', UF_CRM_1655460588: ru(day(1)), UF_CRM_1657019494: '15:05', UF_CRM_1675255265: '774', MODIFY_BY_ID: '327' };
-    await sendEvent('lead_id=5101');
+    bx.leads[5101] = { STATUS_ID: '2', UF_CRM_1655460588: ru(day(1)), UF_CRM_1657019494: '15:05', UF_CRM_1675255265: '774' };
+    await syncMissingAppointments();
 
     const res = await request(app).get('/api/admin/sync/bypass').set('Authorization', `Bearer ${adminToken()}`);
 
     expect(res.status).toBe(200);
     expect(res.body.data.byOutcome).toEqual({ created: 1 });
-    expect(res.body.data.byUser).toEqual({ 327: 1 });
     // 15:05 вне сетки привязано к слоту 15:00-15:30
     expect((await models.Appointment.findOne({ where: { bitrix_lead_id: 5101 }, raw: true })).timeSlot).toBe('15:00-15:30');
   });

@@ -17,8 +17,8 @@ process.env.CORS_ORIGIN = 'http://localhost:5173';
 if (process.env.DISABLE_REDIS === undefined) process.env.DISABLE_REDIS = 'true';
 // Повторы вызовов Битрикса без пауз
 process.env.BITRIX_RETRY_DELAY_MS = '0';
-process.env.BITRIX_EVENTS_MIN_INTERVAL_MS = '0';
-process.env.BITRIX_EVENTS_RETRY_MS = '10';
+// Окно склейки событий в тестах закрывается вручную (flush)
+process.env.BITRIX_EVENTS_WINDOW_MS = '600000';
 
 // Increase timeout for integration tests
 jest.setTimeout(30000);
