@@ -1,6 +1,29 @@
 const cron = require('node-cron');
 const axios = require('axios');
-const { autoSyncStatuses, autoExpireAppointments, dedupeAppointments, fetchAndAnalyzeBitrixLeads, syncMissingAppointments } = require('./syncTasks');
+const { autoSyncStatuses, autoExpireAppointments, dedupeAppointments, syncMissingAppointments } = require('./syncTasks');
+
+// Расписание фоновых задач (решение владельца 26.09: «и события, и общая
+// сверка раз в час»). Все значения — через env, по умолчанию:
+//  - опрос Битрикса (статусы сегодняшних встреч и встречи из карточки) — раз в
+//    5 минут, пока события Битрикса не включены; с BITRIX_EVENTS_TOKEN — раз в
+//    30 минут, как страховка к событиям;
+//  - сверка раз в час за вчера и сегодня плюс будущие встречи;
+//  - ночная сверка за 7 дней.
+function schedules(env = process.env) {
+	const withEvents = !!env.BITRIX_EVENTS_TOKEN;
+	const poll = withEvents
+		? (env.POLL_CRON_WITH_EVENTS || '*/30 * * * *')
+		: (env.POLL_CRON || env.LEADS_SYNC_CRON || '*/5 * * * *');
+	return {
+		withEvents,
+		statusSync: poll,
+		leadsSync: poll,
+		reconcileHourly: env.RECONCILE_CRON || '7 * * * *',
+		reconcileHourlyDays: Number(env.RECONCILE_DAYS || 1),
+		reconcileNightly: env.RECONCILE_NIGHTLY_CRON || '15 4 * * *',
+		reconcileNightlyDays: Number(env.RECONCILE_NIGHTLY_DAYS || 7),
+	};
+}
 
 class CronService {
   constructor() {
@@ -14,7 +37,7 @@ class CronService {
 
   // Запуск автоматической синхронизации статусов каждые 5 минут
   startAutoSync() {
-    const job = cron.schedule('*/5 * * * *', async () => {
+    const job = cron.schedule(schedules().statusSync, async () => {
       try {
         console.log('Running automatic status sync (direct)...');
         const result = await autoSyncStatuses();
@@ -37,7 +60,7 @@ class CronService {
       try {
         console.log('Running automatic appointment expiration (direct)...');
         const result = await autoExpireAppointments();
-        console.log(`Auto expire completed: ${result.expired} appointments expired`);
+        console.log(`Auto expire completed: ${result.no_show} appointments expired`);
         
       } catch (error) {
         console.error('Auto expire cron error:', error.message);
@@ -56,17 +79,18 @@ class CronService {
       console.log('Cron jobs already started, skipping');
       return;
     }
-    console.log('Starting cron jobs...');
+    const plan = schedules();
+    console.log('Starting cron jobs...', plan);
 
     this.register('auto-sync', this.startAutoSync());
     this.register('auto-expire', this.startAutoExpire());
 
-    // Синхронизация лидов для админской страницы.
+    // Встречи, назначенные или перенесённые в карточке лида.
     //
     // Раньше стояло '* * * * *' — раз в минуту, и лог при старте честно писал
     // «(DEBUG MODE)». В проде это 1440 полных обходов crm.lead.list в сутки.
-    // Значение по умолчанию — раз в 5 минут, переопределяется LEADS_SYNC_CRON.
-    const leadsSyncJob = cron.schedule(process.env.LEADS_SYNC_CRON || '*/5 * * * *', async () => {
+    // Расписание — schedules().leadsSync.
+    const leadsSyncJob = cron.schedule(plan.leadsSync, async () => {
       try {
         if (process.env.ENABLE_LEADS_SYNC !== 'true') {
           return; // feature is disabled unless explicitly enabled
@@ -76,8 +100,10 @@ class CronService {
           console.warn('Leads sync skipped: BITRIX_REST_URL is not set');
           return;
         }
-        const analysis = await fetchAndAnalyzeBitrixLeads();
-        console.log('Admin leads sync analyze:', { toCreate: analysis?.toCreate?.length || 0, toUpdate: analysis?.toUpdate?.length || 0 });
+        // Раньше перед syncMissingAppointments отдельно звался
+        // fetchAndAnalyzeBitrixLeads только ради строки в логе, а
+        // syncMissingAppointments сам вызывает его ещё раз: полный обход лидов
+        // шёл дважды (≈1 150 лишних запросов в Битрикс в сутки).
         const apply = await syncMissingAppointments({ applyUpdates: true });
         console.log('Admin leads sync applied:', apply);
       } catch (error) {
@@ -119,24 +145,26 @@ class CronService {
     // локальными переменными и запускались, но stopAll() итерируется по Map и
     // останавливал только auto-sync и auto-expire. После SIGTERM старый
     // контейнер продолжал писать в БД во время запуска нового.
-    // Суточная сверка последних 7 дней с Битриксом: пришёл / не пришёл по
-    // сделкам «Офис» и стадиям лида. Страховка к событиям Битрикса и опросу —
-    // исправляет всё, что они пропустили, и пишет отчёт (RECONCILE_DRIFT).
-    const reconcileJob = cron.schedule(process.env.RECONCILE_CRON || '15 4 * * *', async () => {
+    // Сверка с Битриксом: пришёл / не пришёл по сделкам «Офис» и стадиям
+    // лида, отказы и переносы будущих встреч в карточке. Страховка к событиям
+    // Битрикса и опросу — исправляет всё, что они пропустили, и пишет отчёт
+    // (RECONCILE_DRIFT). Раз в час — вчера и сегодня, ночью — 7 дней.
+    const reconcileJob = (expr, daysBack, label) => cron.schedule(expr, async () => {
       try {
         if (process.env.ENABLE_LEADS_SYNC !== 'true' || !process.env.BITRIX_REST_URL) return;
         const { reconcileRecentAppointments } = require('./reconcile');
-        const report = await reconcileRecentAppointments({ daysBack: Number(process.env.RECONCILE_DAYS || 7) });
-        console.log('Reconcile done:', { changes: report.changes, byReason: report.byReason, error: report.error || null });
+        const report = await reconcileRecentAppointments({ daysBack });
+        console.log(`Reconcile ${label} done:`, { changes: report.changes, byReason: report.byReason, skipped: report.skipped || null, error: report.error || null });
       } catch (error) {
-        console.error('Reconcile cron error:', error.message);
+        console.error(`Reconcile ${label} cron error:`, error.message);
       }
     }, { scheduled: false, timezone: 'Europe/Minsk' });
 
     this.register('leads-sync', leadsSyncJob);
     this.register('dedupe', dedupeJob);
     this.register('no-show-leads', noShowLeadsJob);
-    this.register('reconcile', reconcileJob);
+    this.register('reconcile-hourly', reconcileJob(plan.reconcileHourly, plan.reconcileHourlyDays, 'hourly'));
+    this.register('reconcile-nightly', reconcileJob(plan.reconcileNightly, plan.reconcileNightlyDays, 'nightly'));
 
     for (const [name, job] of this.jobs) {
       job.start();
@@ -179,3 +207,4 @@ class CronService {
 }
 
 module.exports = new CronService();
+module.exports.schedules = schedules;

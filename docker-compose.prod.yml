@@ -34,10 +34,16 @@ services:
       BITRIX_EVENTS_WINDOW_MS: ${BITRIX_EVENTS_WINDOW_MS:-15000}
       BITRIX_EVENTS_LOOKBACK_HOURS: ${BITRIX_EVENTS_LOOKBACK_HOURS:-24}
       BYPASS_FLAG_MODE: ${BYPASS_FLAG_MODE:-}
-      RECONCILE_CRON: ${RECONCILE_CRON:-15 4 * * *}
-      RECONCILE_DAYS: ${RECONCILE_DAYS:-7}
+      # Сверка с Битриксом: раз в час — вчера, сегодня и будущие встречи; ночью — 7 дней
+      RECONCILE_CRON: ${RECONCILE_CRON:-7 * * * *}
+      RECONCILE_DAYS: ${RECONCILE_DAYS:-1}
+      RECONCILE_NIGHTLY_CRON: ${RECONCILE_NIGHTLY_CRON:-15 4 * * *}
+      RECONCILE_NIGHTLY_DAYS: ${RECONCILE_NIGHTLY_DAYS:-7}
       BITRIX_ALLOWED_DOMAINS: ${BITRIX_ALLOWED_DOMAINS:-}
-      LEADS_SYNC_CRON: ${LEADS_SYNC_CRON:-*/5 * * * *}
+      # Опрос Битрикса (статусы сегодняшних встреч, встречи из карточки):
+      # пока не задан BITRIX_EVENTS_TOKEN — POLL_CRON, с событиями — POLL_CRON_WITH_EVENTS
+      POLL_CRON: ${POLL_CRON:-*/5 * * * *}
+      POLL_CRON_WITH_EVENTS: ${POLL_CRON_WITH_EVENTS:-*/30 * * * *}
       RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-60000}
       # 12 операторов офиса делят один NAT-адрес, лимит считается на IP
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-3000}

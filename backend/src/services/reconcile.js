@@ -178,8 +178,22 @@ async function fetchOfficeVisits(fromIso) {
 /**
  * Сверка последних daysBack дней: находит и исправляет расхождения шахматки с
  * Битриксом, возвращает отчёт. dryRun — только отчёт, без записи.
+ *
+ * future — ещё и живые встречи после сегодняшнего дня: клиент отказался или
+ * перенёс в карточке лида (лид ушёл в «Перезвонить», «Не актуально»…), а
+ * опрос смотрит только сегодняшние встречи. За 26.08–25.09 так 103 встречи из
+ * 159 отменённых в карточке держали место в сетке от 1 до 5+ дней (218
+ * слото-дней) и освобождались только в день встречи.
  */
-async function reconcileRecentAppointments({ daysBack = 7, dryRun = false, now = Date.now() } = {}) {
+let running = null;
+async function reconcileRecentAppointments(opts = {}) {
+	// Часовая и ночная сверки не должны идти одновременно
+	if (running) return { skipped: 'already_running' };
+	running = reconcileOnce(opts);
+	try { return await running; } finally { running = null; }
+}
+
+async function reconcileOnce({ daysBack = 7, dryRun = false, now = Date.now(), future = true } = {}) {
 	const startedAt = new Date().toISOString();
 	const today = businessToday(new Date(now));
 	const from = addDays(today, -Math.max(0, Number(daysBack) || 7));
@@ -211,8 +225,15 @@ async function reconcileRecentAppointments({ daysBack = 7, dryRun = false, now =
 	for (const set of visits.values()) report.visits += set.size;
 
 	const todays = appointments.filter((a) => a.date === today && ACTIVE.includes(a.status));
-	const statusById = todays.length
-		? await fetchLeadStatuses([...new Set(todays.map((a) => Number(a.bitrix_lead_id)))])
+	const upcoming = future
+		? await models.Appointment.findAll({
+			where: { bitrix_lead_id: { [Op.not]: null }, date: { [Op.gt]: today }, status: { [Op.in]: ACTIVE } },
+			order: [['date', 'ASC']],
+		})
+		: [];
+	const toAsk = [...todays, ...upcoming];
+	const statusById = toAsk.length
+		? await fetchLeadStatuses([...new Set(toAsk.map((a) => Number(a.bitrix_lead_id)))])
 		: new Map();
 
 	const trace = { source: 'reconcile' };
@@ -254,6 +275,21 @@ async function reconcileRecentAppointments({ daysBack = 7, dryRun = false, now =
 		// «Выполнена» без сделки «Офис» в тот же день — не исправляем (визит мог
 		// быть заведён иначе), но показываем в отчёте.
 		if (appointment.status === 'completed') note('completed_without_office_deal');
+	}
+
+	// Будущие встречи: лид ушёл со стадий встречи — отмена (место в сетке
+	// освобождается сразу, а не в день встречи); лид уже в офисе — пришёл раньше.
+	report.future = upcoming.length;
+	for (const appointment of upcoming) {
+		const leadId = Number(appointment.bitrix_lead_id);
+		if (!statusById.has(leadId)) { note('future_no_bitrix_answer'); continue; }
+		if (await hasRecentLocalStatusChange(appointment.id)) { note('future_guarded'); continue; }
+		const bitrixStatus = statusById.get(leadId);
+		const decision = decideFromLeadStatus(appointment, bitrixStatus, now);
+		if (!decision) continue;
+		const change = { appointmentId: appointment.id, leadId, date: appointment.date, from: appointment.status, to: decision.status, bitrixStatus };
+		if (!dryRun) await applyDecision(appointment, { ...decision, action: `reconcile_${decision.status}` }, { ...trace, bitrixStatus });
+		push(`future_${decision.status}`, change);
 	}
 
 	report.finishedAt = new Date().toISOString();

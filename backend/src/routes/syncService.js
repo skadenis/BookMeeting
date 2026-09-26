@@ -124,7 +124,7 @@ router.get('/completed-stats', allowCronOrAdmin, async (req, res, next) => {
 router.post('/auto-expire', allowCronOrAdmin, async (req, res, next) => {
   try {
     const result = await autoExpireAppointments();
-    res.json({ data: { ...result, message: `Помечено как просроченные: ${result.expired} встреч` } });
+    res.json({ data: { ...result, message: `Помечено как просроченные: ${result.no_show} встреч` } });
   } catch (e) {
     console.error('Auto expire error:', e);
     next(e);
