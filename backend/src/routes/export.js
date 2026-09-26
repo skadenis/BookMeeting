@@ -33,6 +33,16 @@ const CLOSING = {
 	sync_completed: 'bitrix_status',
 	expired_no_show: 'auto_expire',
 	restored_completed: 'bitrix_status',
+	// Закрыта оператором после начала встречи (отмена или перезапись) — статус no_show
+	cancelled_after_start: 'operator',
+	no_show_by_rebooking: 'operator',
+	// Сверка и исправление истории. Без этого отказ в карточке, закрытый
+	// сверкой заранее, платформа после даты встречи считала бы неявкой.
+	reconcile_cancelled: 'bitrix_status',
+	reconcile_no_show: 'bitrix_status',
+	reconcile_completed: 'bitrix_status',
+	repair_no_show: 'bitrix_status',
+	repair_cancelled: 'bitrix_status',
 };
 
 function summarizeHistory(events) {
@@ -44,7 +54,8 @@ function summarizeHistory(events) {
 	for (const e of sorted) {
 		if (CLOSING[e.action]) {
 			closedBy = CLOSING[e.action];
-			closedAt = new Date(e.createdAt).toISOString();
+			// Исправление истории пишется позже события; момент события — eventAt
+			closedAt = new Date(e.newValue?.eventAt || e.createdAt).toISOString();
 			bitrixStatus = e.newValue?.bitrixStatus ?? null;
 		}
 	}

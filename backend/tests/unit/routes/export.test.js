@@ -80,6 +80,19 @@ describe('summarizeHistory', () => {
     expect(s.closedBy).toBe('operator');
   });
 
+  it('отказ в карточке, закрытый сверкой до встречи, — закрыт стадией лида с моментом закрытия', () => {
+    const s = summarizeHistory([
+      { action: 'created', createdAt: '2026-09-01T00:00:00Z' },
+      { action: 'reconcile_cancelled', createdAt: '2026-09-02T00:00:00Z', newValue: { bitrixStatus: 'PROCESSED' } },
+    ]);
+    expect(s).toMatchObject({ closedBy: 'bitrix_status', closedAt: '2026-09-02T00:00:00.000Z', closingBitrixStatus: 'PROCESSED' });
+  });
+
+  it('отмена и перезапись после начала встречи — закрыл оператор, а не перезапись (платформа не выкинет неявку как «перенос»)', () => {
+    expect(summarizeHistory([{ action: 'no_show_by_rebooking', createdAt: '2026-09-02T00:00:00Z' }]).closedBy).toBe('operator');
+    expect(summarizeHistory([{ action: 'cancelled_after_start', createdAt: '2026-09-02T00:00:00Z' }]).closedBy).toBe('operator');
+  });
+
   it('старые записи без журнала — источник неизвестен', () => {
     expect(summarizeHistory([])).toEqual({ source: null, overbooked: false, closedBy: null, closedAt: null, closingBitrixStatus: null });
   });

@@ -17,7 +17,7 @@ describe('mapLeadStatus', () => {
 
 describe('decideFromLeadStatus: активная встреча', () => {
   it('3 «Не пришёл» → неявка', () => {
-    expect(decideFromLeadStatus(appt(), '3', NOW)).toEqual({ status: 'no_show', action: 'sync_no_show' });
+    expect(decideFromLeadStatus(appt({ timeSlot: '11:30-12:00' }), '3', NOW)).toEqual({ status: 'no_show', action: 'sync_no_show' });
   });
 
   it('4 «Находится в офисе» → пришёл', () => {
@@ -48,6 +48,21 @@ describe('decideFromLeadStatus: активная встреча', () => {
     expect(decideFromLeadStatus(appt(), '40', NOW)).toEqual({ status: 'cancelled', action: 'sync_cancelled' });
   });
 
+  it('встреча началась, лид уже в «НДЗ 1» (агент поставил 3, робот сразу увёл дальше) — неявка, а не отмена', () => {
+    // 12:00 — встреча 11:30-12:30 идёт; опрос не застал стадию 3
+    expect(decideFromLeadStatus(appt({ timeSlot: '11:30-12:30' }), '1', NOW)).toEqual({ status: 'no_show', action: 'sync_no_show' });
+    expect(decideFromLeadStatus(appt({ timeSlot: '12:00-12:30' }), 'PROCESSED', NOW)).toEqual({ status: 'no_show', action: 'sync_no_show' });
+  });
+
+  it('клиент отказался до начала встречи («Перезвонить») — отмена', () => {
+    expect(decideFromLeadStatus(appt({ timeSlot: '12:30-13:00' }), 'PROCESSED', NOW)).toEqual({ status: 'cancelled', action: 'sync_cancelled' });
+    expect(decideFromLeadStatus(appt({ date: '2026-09-27' }), '36', NOW)).toEqual({ status: 'cancelled', action: 'sync_cancelled' });
+  });
+
+  it('стадия 3 у лида при встрече, которая ещё не началась, — хвост прошлой встречи, не трогать', () => {
+    expect(decideFromLeadStatus(appt({ date: '2026-09-27' }), '3', NOW)).toBeNull();
+  });
+
   it('лид ушёл со стадий встречи после её конца (прогрев после неявки) — неявка, а не отмена', () => {
     expect(decideFromLeadStatus(appt({ timeSlot: '10:00-10:30' }), '35', NOW)).toEqual({ status: 'no_show', action: 'sync_no_show' });
   });
@@ -61,6 +76,11 @@ describe('decideFromLeadStatus: неявка', () => {
   it('опоздавшего клиента приняли — пришёл', () => {
     expect(decideFromLeadStatus(appt({ status: 'no_show', timeSlot: '10:00-10:30' }), 'CONVERTED', NOW))
       .toEqual({ status: 'completed', action: 'restored_completed' });
+  });
+
+  it('вчерашняя неявка, клиент пришёл сегодня по новой записи (лид CONVERTED) — вчера остаётся неявкой', () => {
+    expect(decideFromLeadStatus(appt({ status: 'no_show', date: '2026-09-24', timeSlot: '10:00-10:30' }), 'CONVERTED', NOW)).toBeNull();
+    expect(decideFromLeadStatus(appt({ status: 'no_show', date: '2026-09-22', timeSlot: '10:00-10:30' }), '4', NOW)).toBeNull();
   });
 
   it('прошедшая неявка при стадии 2 остаётся неявкой (нет качелей с авто-истечением)', () => {

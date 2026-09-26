@@ -11,6 +11,16 @@ const { broadcastSlotsUpdated, broadcastAppointmentUpdated } = require('../lib/w
 const { CONFIRM_WINDOW_HOURS, evaluateConfirmWindow } = require('../lib/confirmWindow');
 const { BUSINESS_TZ } = require('../lib/time');
 const { markLocalStatusChange, clearLocalStatusChange } = require('../services/localStatusGuard');
+const { appointmentStart } = require('../services/leadRules');
+
+// Встреча уже началась: клиента ждали в офисе. Закрыть её после начала — это
+// неявка, а не отмена и не перенос. За 26.08–25.09 так 85 неявок стали
+// «отменена оператором» (оператор жал «Отменить» после неявки, чтобы
+// перезвонить) и 17 — «отменена перезаписью».
+function hasStarted(appt, now = Date.now()) {
+	const start = appointmentStart(appt);
+	return !!start && start.getTime() <= now;
+}
 
 const router = Router();
 
@@ -299,11 +309,12 @@ router.post('/', [
 				});
 				for (const appt of activeAppointments) {
 					const before = snapshot(appt);
-					appt.status = 'cancelled';
+					const started = hasStarted(appt);
+					appt.status = started ? 'no_show' : 'cancelled';
 					await appt.save({ transaction: tx });
 					await recordAppointmentChange({
 						appointmentId: appt.id,
-						action: 'cancelled_by_rebooking',
+						action: started ? 'no_show_by_rebooking' : 'cancelled_by_rebooking',
 						oldValue: before,
 						newValue: snapshot(appt),
 						req,
@@ -528,7 +539,11 @@ router.put('/:id', [
 					});
 				}
 
-				if (status) appointment.status = status;
+				// «Отменить» после начала живой встречи — неявка. Битрикс
+				// получает ту же отмену (лид в работу, дата очищается).
+				const cancelAfterStart = status === 'cancelled' && !isReschedule
+					&& ['pending', 'confirmed'].includes(appointment.status) && hasStarted(appointment);
+				if (status) appointment.status = cancelAfterStart ? 'no_show' : status;
 				appointment.date = nextDate;
 				appointment.timeSlot = nextTimeSlot;
 				appointment.office_id = nextOfficeId;
@@ -536,7 +551,7 @@ router.put('/:id', [
 
 				await recordAppointmentChange({
 					appointmentId: appointment.id,
-					action: isReschedule ? 'rescheduled' : `status_${appointment.status}`,
+					action: isReschedule ? 'rescheduled' : (cancelAfterStart ? 'cancelled_after_start' : `status_${appointment.status}`),
 					oldValue: before,
 					newValue: snapshot(appointment),
 					req,

@@ -6,7 +6,7 @@
 // Битрикса и суточная сверка. Модуль чистый — без БД и сети, поэтому правила
 // проверяются тестами напрямую.
 
-const { parseBusinessDateTime, slotStart, slotEnd } = require('../lib/time');
+const { parseBusinessDateTime, slotStart, slotEnd, businessToday } = require('../lib/time');
 
 // Статусы лида Битрикса → статусы встречи. Справочник: crm.status.list ENTITY_ID=STATUS.
 // Раньше стояли '38' → completed, '39' → no_show, '40' → cancelled: стадий 38 и
@@ -34,6 +34,11 @@ function mapLeadStatus(bitrixStatus) {
 	return BITRIX_STATUS_MAPPING[String(bitrixStatus)] || null;
 }
 
+function appointmentStart(appointment) {
+	const start = slotStart(String(appointment.timeSlot || ''));
+	return /^\d{1,2}:\d{2}$/.test(start) ? parseBusinessDateTime(appointment.date, start) : null;
+}
+
 function appointmentEnd(appointment) {
 	const slot = String(appointment.timeSlot || '');
 	const end = slot.includes('-') ? slotEnd(slot) : '23:59';
@@ -50,28 +55,42 @@ function decideFromLeadStatus(appointment, bitrixStatus, now = Date.now()) {
 	if (BITRIX_TRANSIENT_STATUSES.has(stage)) return null;
 
 	const mapped = mapLeadStatus(stage);
+	const start = appointmentStart(appointment);
 	const end = appointmentEnd(appointment);
+	const started = start ? start.getTime() <= now : false;
 	const finished = end ? end.getTime() <= now : false;
 	const pastDue = end ? end.getTime() < now - PAST_DUE_MS : false;
 
 	if (ACTIVE.has(appointment.status)) {
 		if (mapped) {
+			// «Не пришёл» у лида при встрече, которая ещё не началась, —
+			// хвост прошлой встречи, а не эта неявка.
+			if (mapped === 'no_show' && !started) return null;
 			if (mapped !== appointment.status) return { status: mapped, action: `sync_${mapped}` };
 			if (pastDue) return { status: 'no_show', action: 'sync_no_show' };
 			return null;
 		}
-		// Лид ушёл со стадий встречи. До конца встречи это отказ (брак,
-		// перезвонить…) — встреча не состоится. После конца — лид уже уехал
-		// дальше по роботам (неявка → прогрев), а визита не было: это неявка,
-		// а не отмена. Раньше такие встречи становились «отменена».
-		if (finished) return { status: 'no_show', action: 'sync_no_show' };
+		// Лид ушёл со стадий встречи. До начала встречи это отказ или перенос
+		// (перезвонить, не актуально…) — встреча не состоится. После начала —
+		// неявка: агент Битрикса ставит «Не пришел» через 5 минут после начала,
+		// а роботы в ту же секунду уводят лид дальше (НДЗ 1, Перезвонить), и
+		// опрос раз в 5 минут стадию 3 почти не застаёт. Раньше граница стояла
+		// на конце встречи, и за 26.08–25.09 так «отменёнными» оказались бы
+		// 744 из 1 740 неявок.
+		if (started) return { status: 'no_show', action: 'sync_no_show' };
 		return { status: 'cancelled', action: 'sync_cancelled' };
 	}
 
 	if (appointment.status === 'no_show') {
 		// Опоздавший клиент: агент Битрикса поставил «не пришёл», потом клиента
-		// всё-таки приняли — это приход.
-		if (mapped === 'completed') return { status: 'completed', action: 'restored_completed' };
+		// всё-таки приняли в тот же день — это приход. Только для сегодняшней
+		// встречи: стадия лида говорит о «сейчас», а не о дне прошлой встречи.
+		// Клиент, не пришедший вчера и принятый сегодня по новой записи, делал
+		// вчерашнюю неявку «пришёл» (70 неявок за месяц в окне 3 дней). Приход в
+		// прошлые дни решает сверка по сделке «Офис» в день встречи.
+		if (mapped === 'completed') {
+			return appointment.date === businessToday(new Date(now)) ? { status: 'completed', action: 'restored_completed' } : null;
+		}
 		// Встреча ещё не прошла, а её пометили неявкой — вернуть в активные.
 		if ((mapped === 'pending' || mapped === 'confirmed') && !finished) {
 			return { status: mapped, action: `restored_${mapped}` };
@@ -121,5 +140,6 @@ module.exports = {
 	decideFromLeadStatus,
 	slotCovers,
 	leadMeeting,
+	appointmentStart,
 	appointmentEnd,
 };

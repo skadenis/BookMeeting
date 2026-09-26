@@ -63,7 +63,8 @@ describe('autoSyncStatuses: стадии лида на портале', () => {
     ['CONVERTED', 'completed'],
     ['37', 'confirmed']
   ])('стадия %s → %s', async (stage, expected) => {
-    const appointment = makeAppointment();
+    // «Не пришёл» относится только к начавшейся встрече
+    const appointment = makeAppointment(stage === '3' ? { timeSlot: '00:00-00:30' } : {});
     models.Appointment.findAll.mockResolvedValue([appointment]);
     axios.post.mockResolvedValue({ data: { result: [{ ID: '12345', STATUS_ID: stage }] } });
 
@@ -83,7 +84,7 @@ describe('autoSyncStatuses: стадии лида на портале', () => {
   });
 
   it('пишет в журнал, что встречу закрыла синхронизация, и стадию Битрикса', async () => {
-    const appointment = makeAppointment();
+    const appointment = makeAppointment({ timeSlot: '00:00-00:30' });
     models.Appointment.findAll.mockResolvedValue([appointment]);
     axios.post.mockResolvedValue({ data: { result: [{ ID: '12345', STATUS_ID: '3' }] } });
 
