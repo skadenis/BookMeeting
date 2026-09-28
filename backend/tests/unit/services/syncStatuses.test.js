@@ -19,7 +19,7 @@ jest.mock('../../../src/services/appointmentHistory', () => ({
 }));
 jest.mock('../../../src/services/slotsService', () => ({ invalidateSlotsCache: jest.fn() }));
 jest.mock('../../../src/services/bypassLog', () => ({ recordBypass: jest.fn().mockResolvedValue(null) }));
-jest.mock('../../../src/lib/ws', () => ({ broadcastSlotsUpdated: jest.fn() }));
+jest.mock('../../../src/lib/ws', () => ({ broadcastSlotsUpdated: jest.fn(), broadcastAppointmentUpdated: jest.fn() }));
 jest.mock('../../../src/services/bookingGuard', () => {
   class BookingError extends Error {
     constructor(reason, message) { super(message); this.reason = reason; }

@@ -24,6 +24,15 @@ async function recordSyncChange(appointment, action, before, extra = {}) {
     newValue: { status: appointment.status, date: appointment.date, timeSlot: appointment.timeSlot, office_id: appointment.office_id, ...extra },
     actor: { type: 'system', id: null, source: extra.source || 'sync', ...(extra.bitrixUserId ? { bitrixUserId: extra.bitrixUserId } : {}) },
   });
+  // Открытая у оператора шахматка перечитывает встречу лида только по
+  // appointment.updated. Фоновые изменения его не слали: встреча, заведённая
+  // опросом из карточки, не появлялась с кнопкой «Подтвердить», пока окно
+  // не открыть заново (28.09).
+  try {
+    require('../lib/ws').broadcastAppointmentUpdated(appointment);
+  } catch (e) {
+    console.error('Service: не удалось оповестить об изменении встречи', e?.message || e);
+  }
 }
 
 // Карта стадий и правила «стадия лида → статус встречи» живут в leadRules.js:
