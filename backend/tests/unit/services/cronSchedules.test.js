@@ -16,9 +16,9 @@ describe('schedules', () => {
     });
   });
 
-  it('с BITRIX_EVENTS_TOKEN опрос — страховка раз в 30 минут', () => {
-    const plan = schedules({ BITRIX_EVENTS_TOKEN: 'x', POLL_CRON: '*/5 * * * *' });
-    expect(plan).toMatchObject({ withEvents: true, statusSync: '*/30 * * * *', leadsSync: '*/30 * * * *' });
+  it('с BITRIX_EVENTS_TOKEN опрос тоже раз в 5 минут: назначения мимо сетки заводит только он', () => {
+    const plan = schedules({ BITRIX_EVENTS_TOKEN: 'x', POLL_CRON: '*/15 * * * *' });
+    expect(plan).toMatchObject({ withEvents: true, statusSync: '*/5 * * * *', leadsSync: '*/5 * * * *' });
   });
 
   it('всё переопределяется через env', () => {

@@ -441,15 +441,27 @@ async function createAppointmentFromLead(lead, trace = {}) {
     return { invalidOffice: true };
   }
   const fullTimeSlot = await resolveFullTimeSlot(localOfficeId, lead.date, lead.timeSlot);
-  const exists = await models.Appointment.findOne({
+  const sameSlot = await models.Appointment.findAll({
     where: {
       bitrix_lead_id: lead.bitrix_lead_id,
       office_id: localOfficeId,
       date: lead.date,
       timeSlot: { [Op.in]: [fullTimeSlot, slotStart(fullTimeSlot)] }
-    }
+    },
+    order: [['createdAt', 'ASC']]
   });
+  const exists = sameSlot.find((a) => a.status !== 'cancelled');
   if (exists) return { exists: true, appointment: exists };
+  // Отменённая запись на то же время — не повод считать встречу заведённой.
+  // Лид ушёл со стадий встречи (сетка отменила запись), а потом его вернули
+  // в «Встреча назначена» на те же дату и время: раньше отменённая запись
+  // находилась здесь, новая не заводилась, и сетка до самой встречи
+  // показывала свободное место без кнопки «Подтвердить» (лиды 366163,
+  // 367368, 28.09). Возвращаем ту же запись, а не заводим вторую: ночная
+  // чистка дублей оставила бы старую, отменённую.
+  const cancelled = sameSlot[0] || null;
+  // Оператор только что отменил её в виджете, а Битрикс ещё не догнал
+  if (cancelled && await hasRecentLocalStatusChange(cancelled.id)) return { exists: true, appointment: cancelled };
 
   // Прошедшие даты и горизонт записи здесь не ограничиваем: CRM может
   // легитимно прислать запись задним числом.
@@ -484,6 +496,19 @@ async function createAppointmentFromLead(lead, trace = {}) {
     } else {
       throw guardError;
     }
+  }
+
+  if (cancelled) {
+    const before = { status: cancelled.status, date: cancelled.date, timeSlot: cancelled.timeSlot, office_id: cancelled.office_id };
+    cancelled.status = lead.status || 'pending';
+    await cancelled.save();
+    await recordSyncChange(cancelled, overbooked ? 'restored_from_crm_overbooked' : 'restored_from_crm', before, {
+      source: 'leads_sync', bitrixStatus: lead.STATUS_ID, ...trace,
+    });
+    await recordBypass({ ...bypass, outcome: overbooked ? 'overbooked' : 'created', appointmentId: cancelled.id });
+    await notifySlots(localOfficeId, lead.date);
+    console.log(`Service: Restored cancelled appointment ${cancelled.id} for lead ${lead.bitrix_lead_id}`);
+    return { created: true, restored: true, overbooked, appointment: cancelled };
   }
 
   const createdAppt = await models.Appointment.create({

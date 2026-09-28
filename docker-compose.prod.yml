@@ -43,7 +43,7 @@ services:
       # Опрос Битрикса (статусы сегодняшних встреч, встречи из карточки):
       # пока не задан BITRIX_EVENTS_TOKEN — POLL_CRON, с событиями — POLL_CRON_WITH_EVENTS
       POLL_CRON: ${POLL_CRON:-*/5 * * * *}
-      POLL_CRON_WITH_EVENTS: ${POLL_CRON_WITH_EVENTS:-*/30 * * * *}
+      POLL_CRON_WITH_EVENTS: ${POLL_CRON_WITH_EVENTS:-*/5 * * * *}
       RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-60000}
       # 12 операторов офиса делят один NAT-адрес, лимит считается на IP
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-3000}

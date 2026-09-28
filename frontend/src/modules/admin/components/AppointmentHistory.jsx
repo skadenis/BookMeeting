@@ -11,6 +11,8 @@ const ACTION_LABELS = {
   created: 'Запись в сетке',
   created_from_crm: 'Назначена в Битриксе мимо сетки — заведена в сетку',
   created_from_crm_overbooked: 'Назначена в Битриксе в полный слот — заведена сверх мест',
+  restored_from_crm: 'Снова назначена в Битриксе на то же время — восстановлена',
+  restored_from_crm_overbooked: 'Снова назначена в Битриксе на то же время — восстановлена сверх мест',
   updated_from_crm: 'Изменена в карточке Битрикса',
   rescheduled: 'Перенос',
   cancelled_by_rebooking: 'Отменена перезаписью на другой слот',

@@ -151,6 +151,20 @@ describe('встреча назначена или перенесена в ка�
     expect((await models.CrmBypass.findOne({ raw: true })).outcome).toBe('overbooked');
   });
 
+  it('лид ушёл со стадии встречи и вернулся на те же дату и время — отменённая запись восстанавливается, дубля нет', async () => {
+    await scheduleFor(day(1));
+    const a = await models.Appointment.create({ office_id: office.id, bitrix_lead_id: 5005, date: day(1), timeSlot: '15:00-15:30', status: 'cancelled', createdBy: 295 });
+    bx.leads[5005] = { STATUS_ID: '37', UF_CRM_1655460588: `${day(1)}T03:00:00+03:00`, UF_CRM_1657019494: '15:00', UF_CRM_1675255265: '774' };
+
+    await syncMissingAppointments();
+    await syncMissingAppointments();
+
+    const appts = await models.Appointment.findAll({ where: { bitrix_lead_id: 5005 } });
+    expect(appts).toHaveLength(1);
+    expect(appts[0]).toMatchObject({ id: a.id, status: 'confirmed', timeSlot: '15:00-15:30' });
+    expect((await history(a.id)).map((h) => h.action)).toEqual(['restored_from_crm']);
+  });
+
   it('день без расписания — встречи нет, назначение учтено один раз при повторных прогонах', async () => {
     bx.leads[5004] = { STATUS_ID: '2', UF_CRM_1655460588: `${day(2)}T03:00:00+03:00`, UF_CRM_1657019494: '11:00', UF_CRM_1675255265: '774' };
 
